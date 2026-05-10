@@ -2,6 +2,64 @@
   let configState = null;
   let loading = false;
   let loadError = "";
+  let addInterfaceType = "BackboneInterface";
+  let addInterfaceOutgoing = true;
+  let lastAddedInterfaceName = "";
+
+  const PRESET_DEFAULTS = {
+    AutoInterface: {
+      mode: "",
+      bitrate: "",
+      announce_interval: "",
+      outgoing: true,
+    },
+    BackboneInterface: {
+      mode: "boundary",
+      bitrate: 128000,
+      announce_interval: 15,
+      outgoing: true,
+    },
+    TCPClientInterface: {
+      mode: "boundary",
+      bitrate: 128000,
+      announce_interval: 15,
+      outgoing: true,
+    },
+    TCPServerInterface: {
+      mode: "gateway",
+      bitrate: 128000,
+      announce_interval: 720,
+      outgoing: true,
+      listen_ip: "0.0.0.0",
+      listen_port: 4242,
+    },
+    UDPInterface: {
+      mode: "boundary",
+      bitrate: 128000,
+      announce_interval: 15,
+      outgoing: true,
+      listen_ip: "0.0.0.0",
+    },
+    I2PInterface: {
+      mode: "boundary",
+      bitrate: 128000,
+      announce_interval: 15,
+      outgoing: true,
+      connectable: true,
+    },
+    PipeInterface: {
+      mode: "",
+      bitrate: "",
+      announce_interval: "",
+      outgoing: true,
+    },
+    CustomInterface: {
+      mode: "",
+      bitrate: "",
+      announce_interval: "",
+      outgoing: true,
+    },
+  };
 
   function render() {
     const block = document.createElement("section");
@@ -36,6 +94,7 @@
     if (configState === null) {
       loading = true;
       fetchRnsConfig();
+
       const status = document.createElement("div");
       status.className = "settings-hint";
       status.textContent = "Loading Reticulum config...";
@@ -142,13 +201,10 @@
     title.textContent = "[reticulum]";
     section.appendChild(title);
 
-    const grid = document.createElement("div");
-    grid.className = "rns-field-grid";
-
     const fields = configState.schema?.reticulum_fields || [];
 
     for (const field of fields) {
-      grid.appendChild(
+      section.appendChild(
         renderFieldControl({
           field,
           value: configState.reticulum?.[field.key],
@@ -159,7 +215,6 @@
       );
     }
 
-    section.appendChild(grid);
     return section;
   }
 
@@ -167,20 +222,11 @@
     const section = document.createElement("div");
     section.className = "rns-section";
 
-    const header = document.createElement("div");
-    header.className = "rns-section-header";
-
     const title = document.createElement("h3");
     title.textContent = "[interfaces]";
-    header.appendChild(title);
+    section.appendChild(title);
 
-    const addButton = document.createElement("button");
-    addButton.type = "button";
-    addButton.textContent = "Add interface";
-    addButton.onclick = addInterface;
-    header.appendChild(addButton);
-
-    section.appendChild(header);
+    section.appendChild(renderAddInterfacePanel());
 
     const interfaces = Array.isArray(configState.interfaces) ? configState.interfaces : [];
 
@@ -191,9 +237,72 @@
     return section;
   }
 
+  function renderAddInterfacePanel() {
+    const panel = document.createElement("div");
+    panel.className = "rns-add-interface-panel";
+
+    const typeField = document.createElement("label");
+    typeField.className = "rns-field";
+
+    const typeLabel = document.createElement("span");
+    typeLabel.textContent = "New interface type";
+    typeField.appendChild(typeLabel);
+
+    const select = document.createElement("select");
+    const types = configState.schema?.supported_interface_types || ["BackboneInterface"];
+
+    for (const type of types) {
+      const option = document.createElement("option");
+      option.value = type;
+      option.textContent = type;
+
+      if (type === addInterfaceType) {
+        option.selected = true;
+      }
+
+      select.appendChild(option);
+    }
+
+    select.onchange = () => {
+      addInterfaceType = select.value;
+    };
+
+    typeField.appendChild(select);
+    panel.appendChild(typeField);
+
+    const outgoingField = document.createElement("label");
+    outgoingField.className = "rns-boolean-line";
+
+    const outgoingLabel = document.createElement("span");
+    outgoingLabel.textContent = "Outgoing";
+    outgoingField.appendChild(outgoingLabel);
+
+    const outgoingInput = document.createElement("input");
+    outgoingInput.type = "checkbox";
+    outgoingInput.checked = addInterfaceOutgoing;
+    outgoingInput.onchange = () => {
+      addInterfaceOutgoing = outgoingInput.checked;
+    };
+
+    outgoingField.appendChild(outgoingInput);
+    panel.appendChild(outgoingField);
+
+    const addButton = document.createElement("button");
+    addButton.type = "button";
+    addButton.textContent = "Add interface";
+    addButton.onclick = addInterface;
+    panel.appendChild(addButton);
+
+    return panel;
+  }
+
   function renderInterfaceCard(index, iface) {
     const card = document.createElement("div");
     card.className = "rns-interface-card";
+
+    if (iface.name === lastAddedInterfaceName) {
+      card.id = "last-added-interface";
+    }
 
     const header = document.createElement("div");
     header.className = "rns-interface-header";
@@ -202,26 +311,44 @@
     title.textContent = `[[${iface.name || "Unnamed Interface"}]]`;
     header.appendChild(title);
 
+    card.appendChild(header);
+
+    const enabledField = findField(configState.schema?.common_interface_fields || [], "enabled");
+
+    if (enabledField !== null) {
+      card.appendChild(
+        renderFieldControl({
+          field: enabledField,
+          value: iface.enabled,
+          onChange: (value) => {
+            iface.enabled = value;
+          },
+        })
+      );
+    }
+
+    const removeRow = document.createElement("div");
+    removeRow.className = "rns-remove-row";
+
     const removeButton = document.createElement("button");
     removeButton.type = "button";
     removeButton.textContent = "Remove";
     removeButton.onclick = () => removeInterface(index);
-    header.appendChild(removeButton);
 
-    card.appendChild(header);
+    removeRow.appendChild(removeButton);
+    card.appendChild(removeRow);
 
     const commonTitle = document.createElement("div");
     commonTitle.className = "rns-subtitle";
     commonTitle.textContent = "Common fields";
     card.appendChild(commonTitle);
 
-    const commonGrid = document.createElement("div");
-    commonGrid.className = "rns-field-grid";
-
-    const commonFields = configState.schema?.common_interface_fields || [];
+    const commonFields = (configState.schema?.common_interface_fields || []).filter(
+      (field) => field.key !== "enabled"
+    );
 
     for (const field of commonFields) {
-      commonGrid.appendChild(
+      card.appendChild(
         renderFieldControl({
           field,
           value: iface[field.key],
@@ -237,21 +364,16 @@
       );
     }
 
-    card.appendChild(commonGrid);
-
     const typeName = iface.type || "AutoInterface";
     const typeTitle = document.createElement("div");
     typeTitle.className = "rns-subtitle";
     typeTitle.textContent = `${typeName} fields`;
     card.appendChild(typeTitle);
 
-    const typeGrid = document.createElement("div");
-    typeGrid.className = "rns-field-grid";
-
     const typeFields = configState.schema?.interface_type_fields?.[typeName] || [];
 
     for (const field of typeFields) {
-      typeGrid.appendChild(
+      card.appendChild(
         renderFieldControl({
           field,
           value: iface[field.key],
@@ -262,7 +384,6 @@
       );
     }
 
-    card.appendChild(typeGrid);
     return card;
   }
 
@@ -291,29 +412,31 @@
   }
 
   function renderFieldControl({ field, value, onChange }) {
-    const wrapper = document.createElement("label");
-    wrapper.className = "rns-field";
-
-    const label = document.createElement("span");
-    label.textContent = field.label || field.key;
-    wrapper.appendChild(label);
-
     const type = field.type || "text";
 
     if (type === "boolean") {
-      const checkboxRow = document.createElement("div");
-      checkboxRow.className = "rns-checkbox-row";
+      const wrapper = document.createElement("label");
+      wrapper.className = "rns-boolean-line";
+
+      const label = document.createElement("span");
+      label.textContent = field.label || field.key;
+      wrapper.appendChild(label);
 
       const input = document.createElement("input");
       input.type = "checkbox";
       input.checked = Boolean(value);
       input.onchange = () => onChange(input.checked);
 
-      checkboxRow.appendChild(input);
-      wrapper.appendChild(checkboxRow);
-
+      wrapper.appendChild(input);
       return wrapper;
     }
+
+    const wrapper = document.createElement("label");
+    wrapper.className = "rns-field";
+
+    const label = document.createElement("span");
+    label.textContent = field.label || field.key;
+    wrapper.appendChild(label);
 
     if (type === "select") {
       const select = document.createElement("select");
@@ -363,19 +486,31 @@
       configState.interfaces = [];
     }
 
-    const types = configState.schema?.supported_interface_types || ["AutoInterface"];
-    const interfaceType = types.includes("AutoInterface") ? "AutoInterface" : types[0];
-    const interfaceNumber = configState.interfaces.length + 1;
+    const interfaceType = addInterfaceType || "BackboneInterface";
+    const name = buildNewInterfaceName(interfaceType, addInterfaceOutgoing);
 
     const iface = {
-      name: `${interfaceType} ${interfaceNumber}`,
+      name,
       type: interfaceType,
       enabled: false,
+      outgoing: addInterfaceOutgoing,
     };
 
     applyInterfaceTypeDefaults(iface);
     configState.interfaces.push(iface);
+    lastAddedInterfaceName = name;
     rerenderSettings();
+
+    window.setTimeout(() => {
+      const element = document.querySelector("#last-added-interface");
+
+      if (element !== null) {
+        element.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+      }
+    }, 0);
   }
 
   function removeInterface(index) {
@@ -389,7 +524,7 @@
 
   function applyInterfaceTypeDefaults(iface) {
     if (iface.name === undefined || iface.name === "") {
-      iface.name = `${iface.type || "Interface"} ${Date.now()}`;
+      iface.name = buildNewInterfaceName(iface.type || "Interface", Boolean(iface.outgoing));
     }
 
     if (iface.enabled === undefined) {
@@ -410,6 +545,40 @@
         iface[field.key] = "";
       }
     }
+
+    const defaults = PRESET_DEFAULTS[iface.type] || {};
+
+    for (const [key, value] of Object.entries(defaults)) {
+      iface[key] = value;
+    }
+  }
+
+  function buildNewInterfaceName(interfaceType, outgoing) {
+    const direction = outgoing ? "Outgoing" : "Incoming";
+    const baseName = `${direction}${interfaceType}New`;
+    const interfaces = Array.isArray(configState?.interfaces) ? configState.interfaces : [];
+
+    if (!interfaces.some((iface) => iface.name === baseName)) {
+      return baseName;
+    }
+
+    let index = 2;
+
+    while (interfaces.some((iface) => iface.name === `${baseName}${index}`)) {
+      index += 1;
+    }
+
+    return `${baseName}${index}`;
+  }
+
+  function findField(fields, key) {
+    for (const field of fields) {
+      if (field.key === key) {
+        return field;
+      }
+    }
+
+    return null;
   }
 
   function rerenderSettings() {
