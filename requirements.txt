@@ -1,0 +1,4 @@
+# Skeleton intentionally uses only Python standard library.
+# Later, a selected runtime can provide real RNS/LXMF:
+# rns==1.2.5
+# lxmf==0.9.4

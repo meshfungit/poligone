@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>FriendlyNode</title>
+    <link rel="icon" type="image/png" sizes="16x16" href="assets/icons/favicon-16x16.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="assets/icons/favicon-32x32.png">
+    <link rel="icon" href="assets/icons/favicon.ico">
+    <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png">
+    <link rel="manifest" href="site.webmanifest">
+    <link rel="stylesheet" href="assets/css/app.css">
+  </head>
+  <body>
+    <div class="app">
+      <aside>
+        <div class="brand">
+          <img src="assets/icons/friendlynode-logo.png" alt="FriendlyNode">
+          <div>
+            <strong>FriendlyNode</strong>
+            <span>Reticulum desktop/web shell</span>
+          </div>
+        </div>
+        <nav aria-label="Main navigation"></nav>
+
+	  <div class="sidebar-engine">
+		<div class="sidebar-separator"></div>
+		<div class="sidebar-status" id="engine-status">engine: stub</div>
+		<button type="button" id="restart-reticulum">Restart Reticulum</button>
+	  </div>
+      </aside>
+
+      <main>
+        <div class="topbar">
+          <h1>Messages</h1>
+          <div class="actions">
+          </div>
+        </div>
+
+        <section class="grid" aria-label="Transport summary">
+          <div class="card"><div class="label">Runtime</div><div class="value">stub</div></div>
+          <div class="card"><div class="label">RNS</div><div class="value">stub-rns</div></div>
+          <div class="card"><div class="label">Interfaces</div><div class="value">0</div></div>
+          <div class="card"><div class="label">Peers</div><div class="value">0</div></div>
+        </section>
+
+        <section id="content"></section>
+      </main>
+    </div>
+    <script src="assets/js/app.js"></script>
+  </body>
+</html>

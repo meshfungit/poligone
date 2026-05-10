@@ -1,0 +1,1 @@
+"""FriendlyNode package."""

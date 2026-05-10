@@ -1,0 +1,46 @@
+# Python virtual environments
+.venv/
+.venv-*/
+venv/
+
+# FriendlyNode local runtime state
+data/config/friendlynode.json
+data/config/reticulum/
+data/db/
+data/logs/
+data/identities/
+data/attachments/
+data/nomadnet-pages/
+
+# Local Python environments
+.venv/
+.venv-*/
+venv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# PyCharm / IDE
+.idea/
+*.iml
+
+# Runtime-local data
+data/db/*
+data/logs/*
+data/identities/*
+data/attachments/*
+!data/db/.gitkeep
+!data/logs/.gitkeep
+!data/identities/.gitkeep
+!data/attachments/.gitkeep
+
+# Local Reticulum runtimes and copied upstream sources
+runtimes/*/venv/
+runtimes/*/src/
+runtimes/*/__pycache__/
+
+# OS files
+.DS_Store
+Thumbs.db

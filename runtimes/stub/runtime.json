@@ -1,0 +1,9 @@
+{
+  "name": "stub",
+  "label": "Built-in Stub Runtime",
+  "kind": "stub",
+  "enabled": true,
+  "python": null,
+  "source_path": null,
+  "description": "Internal placeholder runtime used before real Reticulum is connected."
+}
