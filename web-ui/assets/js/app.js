@@ -28,7 +28,7 @@ const rows = {
   ],
   Logs: [
     ["Time", "Level", "Source", "Message"],
-    ["-", "info", "ui", "FriendlyNode UI stub loaded"],
+    ["-", "info", "ui", "FriendlyNode UI loaded"],
   ],
   Settings: [
     ["Setting", "Value"],
@@ -86,6 +86,59 @@ function renderTable(tab) {
   return table;
 }
 
+function renderSettings() {
+  const wrapper = document.createElement("div");
+
+  const runtimeBlock = document.createElement("section");
+  runtimeBlock.className = "settings-block";
+
+  const title = document.createElement("h2");
+  title.textContent = "Runtime";
+  runtimeBlock.appendChild(title);
+
+  const runtime = currentStatus?.runtime || {};
+  const activeRuntime = runtime.active || "stub";
+  const availableRuntimes = Array.isArray(runtime.available) ? runtime.available : [];
+
+  const row = document.createElement("div");
+  row.className = "settings-row";
+
+  const select = document.createElement("select");
+  select.id = "runtime-select";
+
+  for (const item of availableRuntimes) {
+    const option = document.createElement("option");
+    option.value = item.name;
+    option.textContent = `${item.name} — ${item.label || item.kind || "runtime"}`;
+
+    if (item.name === activeRuntime) {
+      option.selected = true;
+    }
+
+    select.appendChild(option);
+  }
+
+  const button = document.createElement("button");
+  button.type = "button";
+  button.id = "select-runtime";
+  button.textContent = "Apply runtime";
+  button.onclick = selectRuntimeFromUi;
+
+  row.appendChild(select);
+  row.appendChild(button);
+  runtimeBlock.appendChild(row);
+
+  const hint = document.createElement("div");
+  hint.className = "settings-hint";
+  hint.textContent = "Changing runtime saves controller config and restarts the Reticulum engine.";
+  runtimeBlock.appendChild(hint);
+
+  wrapper.appendChild(runtimeBlock);
+  wrapper.appendChild(renderTable("Settings"));
+
+  return wrapper;
+}
+
 function render(tab = "Messages") {
   renderNav(tab);
 
@@ -93,6 +146,12 @@ function render(tab = "Messages") {
 
   const content = document.querySelector("#content");
   content.innerHTML = "";
+
+  if (tab === "Settings") {
+    content.appendChild(renderSettings());
+    return;
+  }
+
   content.appendChild(renderTable(tab));
 }
 
@@ -124,21 +183,21 @@ function updateSummaryCards(status) {
   }
 
   rows.Transport = [
-  ["Field", "Value"],
-  ["Controller", status.controller?.running ? "running" : "stopped"],
-  ["Engine", engine.running ? "running" : "stopped"],
-  ["RNS", rns.running ? "running" : "stopped"],
-  ["Using stubs", String(Boolean(rns.using_stubs))],
-  ["Active runtime", runtime.active || "-"],
-  ["Runtime count", String(availableRuntimes.length)],
-  ["Engine runtime name", engineRuntime.name || "-"],
-  ["Engine runtime python", engineRuntime.python_path || "-"],
-  ["Engine runtime source", engineRuntime.source_path || "-"],
-  ["RNS version", rns.rns_version || "-"],
-  ["LXMF version", rns.lxmf_version || "-"],
-  ["Config dir", rns.config_dir || "-"],
-  ["Web root", status.controller?.web_root || "-"],
-];
+    ["Field", "Value"],
+    ["Controller", status.controller?.running ? "running" : "stopped"],
+    ["Engine", engine.running ? "running" : "stopped"],
+    ["RNS", rns.running ? "running" : "stopped"],
+    ["Using stubs", String(Boolean(rns.using_stubs))],
+    ["Active runtime", runtime.active || "-"],
+    ["Runtime count", String(availableRuntimes.length)],
+    ["Engine runtime name", engineRuntime.name || "-"],
+    ["Engine runtime python", engineRuntime.python_path || "-"],
+    ["Engine runtime source", engineRuntime.source_path || "-"],
+    ["RNS version", rns.rns_version || "-"],
+    ["LXMF version", rns.lxmf_version || "-"],
+    ["Config dir", rns.config_dir || "-"],
+    ["Web root", status.controller?.web_root || "-"],
+  ];
 
   rows.Settings = [
     ["Setting", "Value"],
@@ -164,6 +223,10 @@ function updateSummaryCards(status) {
   ];
 }
 
+function getActiveTab() {
+  return document.querySelector("nav button.active")?.textContent || "Messages";
+}
+
 async function fetchStatus() {
   const response = await fetch("/api/status", {
     method: "GET",
@@ -179,10 +242,10 @@ async function fetchStatus() {
   currentStatus = await response.json();
   updateSummaryCards(currentStatus);
 
-  const activeTab = document.querySelector("nav button.active")?.textContent || "Messages";
+  const activeTab = getActiveTab();
 
-  if (activeTab === "Transport" || activeTab === "Logs") {
-  render(activeTab);
+  if (activeTab === "Transport" || activeTab === "Logs" || activeTab === "Settings") {
+    render(activeTab);
   }
 }
 
@@ -207,20 +270,15 @@ async function restartReticulum() {
     }
 
     currentStatus = await response.json();
-	updateSummaryCards(currentStatus);
+    updateSummaryCards(currentStatus);
 
-	const activeTab = document.querySelector("nav button.active")?.textContent || "Messages";
+    const activeTab = getActiveTab();
 
-	if (activeTab === "Transport" || activeTab === "Logs") {
-	  render(activeTab);
-	}
+    if (activeTab === "Transport" || activeTab === "Logs" || activeTab === "Settings") {
+      render(activeTab);
+    }
   } catch (error) {
-    rows.Logs.unshift([
-      new Date().toISOString(),
-      "error",
-      "ui",
-      error instanceof Error ? error.message : String(error),
-    ]);
+    appendUiError(error);
     render("Logs");
   } finally {
     if (button !== null) {
@@ -228,6 +286,58 @@ async function restartReticulum() {
       button.textContent = "Restart Reticulum";
     }
   }
+}
+
+async function selectRuntimeFromUi() {
+  const select = document.querySelector("#runtime-select");
+  const button = document.querySelector("#select-runtime");
+
+  if (select === null) {
+    return;
+  }
+
+  if (button !== null) {
+    button.disabled = true;
+    button.textContent = "Applying...";
+  }
+
+  try {
+    const response = await fetch("/api/runtime/select", {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        name: select.value,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Runtime selection failed: HTTP ${response.status}`);
+    }
+
+    currentStatus = await response.json();
+    updateSummaryCards(currentStatus);
+    render("Settings");
+  } catch (error) {
+    appendUiError(error);
+    render("Logs");
+  } finally {
+    if (button !== null) {
+      button.disabled = false;
+      button.textContent = "Apply runtime";
+    }
+  }
+}
+
+function appendUiError(error) {
+  rows.Logs.unshift([
+    new Date().toISOString(),
+    "error",
+    "ui",
+    error instanceof Error ? error.message : String(error),
+  ]);
 }
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -240,12 +350,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   fetchStatus().catch((error) => {
-    rows.Logs.unshift([
-      new Date().toISOString(),
-      "error",
-      "ui",
-      error instanceof Error ? error.message : String(error),
-    ]);
+    appendUiError(error);
     render("Logs");
   });
 });
