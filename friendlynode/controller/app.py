@@ -1,11 +1,12 @@
 """Controller application object."""
 
 from __future__ import annotations
-
+from typing import Any
 from friendlynode.config.app_config import AppConfig
 from friendlynode.controller.engine_supervisor import EngineSupervisor
 from friendlynode.controller.runtime_manager import RuntimeInfo, RuntimeManager
 from friendlynode.controller.state_cache import StateCache
+from friendlynode.config.rns_config_editor import load_rns_config, save_rns_config
 
 
 class ControllerApp:
@@ -68,6 +69,15 @@ class ControllerApp:
         self.state.append_log("info", "controller", "Reticulum restart completed")
 
         return runtime
+
+    def get_rns_config(self) -> dict[str, object]:
+        parsed_config = load_rns_config(self.config.rns_config_dir)
+        return parsed_config.to_dict()
+
+    def save_rns_config(self, payload: dict[str, object]) -> dict[str, object]:
+        parsed_config = save_rns_config(self.config.rns_config_dir, payload)
+        self.state.append_log("info", "rns-config", "Reticulum config saved")
+        return parsed_config.to_dict()
 
     def _apply_active_runtime(self) -> RuntimeInfo:
         runtime = self.runtime_manager.get_runtime(self.config.engine_name)

@@ -62,7 +62,9 @@ class ControllerHttpServer:
                 if parsed.path == "/api/config":
                     self._send_json(self._build_config_response())
                     return
-
+                if parsed.path == "/api/rns-config":
+                    self._send_json(app.get_rns_config())
+                    return
                 self._serve_static(parsed.path)
 
             def do_POST(self) -> None:
@@ -71,6 +73,11 @@ class ControllerHttpServer:
                 if parsed.path == "/api/reticulum/restart":
                     app.restart_reticulum()
                     self._send_json(self._build_status_response())
+                    return
+
+                if parsed.path == "/api/rns-config":
+                    payload = self._read_json_body()
+                    self._send_json(app.save_rns_config(payload))
                     return
 
                 if parsed.path == "/api/runtime/select":
