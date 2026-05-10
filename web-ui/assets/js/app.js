@@ -134,8 +134,12 @@ function renderSettings() {
   runtimeBlock.appendChild(hint);
 
   wrapper.appendChild(runtimeBlock);
-  wrapper.appendChild(renderTable("Settings"));
 
+  if (window.FriendlyNodeRnsConfigEditor !== undefined) {
+  wrapper.appendChild(window.FriendlyNodeRnsConfigEditor.render());
+    }
+
+  wrapper.appendChild(renderTable("Settings"));
   return wrapper;
 }
 
@@ -354,3 +358,4 @@ document.addEventListener("DOMContentLoaded", () => {
     render("Logs");
   });
 });
+window.render = render;
