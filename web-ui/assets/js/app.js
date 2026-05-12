@@ -9,6 +9,8 @@ let contactModalState = null;
 let clearMessagesState = null;
 const expandedClientDetails = new Set();
 let messageDraft = "";
+let symbolPaletteOpen = false;
+let messageEditorSelection = null;
 
 const rows = {
   Client: [
@@ -337,7 +339,7 @@ function renderMessageThread(contact, messages) {
   for (const message of messages) {
     const bubble = document.createElement("div");
     bubble.className = message.direction === "outbound" ? "message-bubble outbound" : "message-bubble inbound";
-    bubble.textContent = message.content || "";
+    bubble.appendChild(renderMessageContent(message.content || ""));
     list.appendChild(bubble);
   }
 
@@ -354,30 +356,826 @@ function renderMessageComposer(contact) {
     sendMessage(contact);
   };
 
-  const input = document.createElement("textarea");
-  input.rows = 1;
-  input.placeholder = "Message";
-  input.value = messageDraft;
+  const editor = document.createElement("div");
+  editor.className = "message-editor";
+
+  const input = document.createElement("div");
+  input.className = "message-rich-input";
+  input.contentEditable = "true";
+  input.setAttribute("role", "textbox");
+  input.setAttribute("aria-label", "Message");
+  input.dataset.placeholder = "Message";
+  renderMessageEditorContent(input, messageDraft);
+  window.setTimeout(() => resizeMessageInput(input), 0);
   input.oninput = () => {
-    messageDraft = input.value;
+    messageDraft = serializeMessageEditor(input);
+    rememberMessageEditorSelection(input);
+    resizeMessageInput(input);
   };
+  input.onkeyup = () => rememberMessageEditorSelection(input);
+  input.onmouseup = () => rememberMessageEditorSelection(input);
+  input.onblur = () => rememberMessageEditorSelection(input);
   input.onkeydown = (event) => {
-    if (event.key === "Enter" && !event.shiftKey) {
+    if (event.key === "Enter" && !event.shiftKey && !event.ctrlKey) {
       event.preventDefault();
       sendMessage(contact);
+      return;
+    }
+
+    if (event.key === "Enter") {
+      event.preventDefault();
+      document.execCommand("insertLineBreak");
+      messageDraft = serializeMessageEditor(input);
+      resizeMessageInput(input);
     }
   };
-  composer.appendChild(input);
+  editor.appendChild(input);
+  composer.appendChild(editor);
+
+  const paletteButton = document.createElement("button");
+  paletteButton.type = "button";
+  paletteButton.className = "message-symbol-button";
+  paletteButton.title = "Symbols";
+  paletteButton.setAttribute("aria-label", "Open symbol palette");
+  paletteButton.textContent = "\u263A";
+  paletteButton.onclick = () => {
+    symbolPaletteOpen = !symbolPaletteOpen;
+    render("Client");
+  };
+  composer.appendChild(paletteButton);
 
   const button = document.createElement("button");
   button.type = "submit";
   button.className = "send-message-button";
   button.title = "Send";
   button.setAttribute("aria-label", "Send message");
-  button.innerHTML = '<span aria-hidden="true">➤</span>';
+  button.textContent = "\u27A4";
   composer.appendChild(button);
 
+  if (symbolPaletteOpen) {
+    composer.appendChild(renderMessageSymbolPalette(input));
+  }
+
   return composer;
+}
+
+function renderMessageSymbolPalette(input) {
+  const palette = document.createElement("div");
+  palette.className = "message-symbol-palette";
+  const micron = window.FriendlyNodeMicron;
+  const groups = micron && Array.isArray(micron.symbolGroups) ? micron.symbolGroups : [];
+
+  for (const group of groups) {
+    const groupBlock = document.createElement("div");
+    groupBlock.className = "message-symbol-group";
+
+    const title = document.createElement("div");
+    title.className = "message-symbol-group-title";
+    title.textContent = group.name;
+    groupBlock.appendChild(title);
+
+    const grid = document.createElement("div");
+    grid.className = "message-symbol-grid";
+
+    for (const symbol of group.symbols) {
+      const symbolInsert = getMessageSymbolInsert(symbol);
+      const symbolLabel = typeof symbol === "string" ? symbol : symbol.label;
+      const symbolTitle = typeof symbol === "string" ? symbol : symbol.title || symbolInsert;
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = symbolInsert.length > 3 ? "wide" : "";
+      item.textContent = symbolLabel;
+      item.title = symbolTitle;
+
+      if (typeof symbol !== "string") {
+        if (symbol.color) {
+          item.style.color = symbol.color;
+        }
+
+        if (symbol.background) {
+          item.style.backgroundColor = symbol.background;
+        }
+      }
+
+      item.onmousedown = (event) => {
+        event.preventDefault();
+        rememberMessageEditorSelection(input);
+      };
+      item.onclick = () => {
+        restoreMessageEditorSelection(input);
+        applyMessageSymbol(input, symbol);
+      };
+      grid.appendChild(item);
+    }
+
+    groupBlock.appendChild(grid);
+    palette.appendChild(groupBlock);
+  }
+
+  return palette;
+}
+
+function getMessageSymbolInsert(symbol) {
+  if (typeof symbol === "string") {
+    return symbol;
+  }
+
+  return symbol.insert || symbol.block || symbol.linePrefix || symbol.style || `${symbol.before || ""}${symbol.after || ""}`;
+}
+
+function applyMessageSymbol(input, symbol) {
+  if (typeof symbol === "string") {
+    insertMessageText(input, symbol);
+    return;
+  }
+
+  if (symbol.style) {
+    applyMessageStyle(input, symbol);
+    return;
+  }
+
+  if (symbol.linePrefix) {
+    prefixMessageLine(input, symbol.linePrefix, symbol.placeholder || "");
+    return;
+  }
+
+  if (symbol.block) {
+    insertMessageBlock(input, symbol.block);
+    return;
+  }
+
+  insertMessageText(input, symbol.insert || "");
+}
+
+function insertMessageText(input, text) {
+  input.focus();
+  document.execCommand("insertText", false, text);
+  messageDraft = serializeMessageEditor(input);
+  resizeMessageInput(input);
+}
+
+function applyMessageStyle(input, symbol) {
+  const selection = getEditorSelectionOffsets(input);
+
+  if (selection === null || selection.start === selection.end) {
+    input.focus();
+    return;
+  }
+
+  messageDraft = serializeMessageEditor(input);
+  const rawRange = visibleSelectionToRawRange(messageDraft, selection.start, selection.end);
+  const transformed = symbol.style === "reset"
+    ? resetInlineStyle(messageDraft, rawRange.start, rawRange.end)
+    : toggleInlineStyle(messageDraft, rawRange.start, rawRange.end, symbol);
+  messageDraft = transformed.text;
+  renderMessageEditorContent(input, messageDraft);
+  input.focus();
+  resizeMessageInput(input);
+}
+
+function prefixMessageLine(input, prefix, placeholder) {
+  if (prefix === ">") {
+    toggleHeadingLine(input, placeholder);
+    return;
+  }
+
+  const selection = getEditorSelectionOffsets(input);
+  const value = serializeMessageEditor(input);
+  const rawRange = getEditorRawLineRange(value, selection);
+  const lineStart = rawRange.start;
+  const lineEndIndex = value.indexOf("\n", rawRange.end);
+  const lineEnd = lineEndIndex === -1 ? value.length : lineEndIndex;
+  const selectedBlock = value.slice(lineStart, lineEnd);
+  const block = selectedBlock || placeholder;
+  const prefixed = block
+    .split("\n")
+    .map((line) => applyLinePrefix(line, prefix))
+    .join("\n");
+
+  messageDraft = `${value.slice(0, lineStart)}${prefixed}${value.slice(lineEnd)}`;
+  renderMessageEditorContent(input, messageDraft);
+  input.focus();
+  resizeMessageInput(input);
+}
+
+function toggleHeadingLine(input, placeholder) {
+  const selection = getEditorSelectionOffsets(input);
+  const value = serializeMessageEditor(input);
+  const rawRange = getEditorRawLineRange(value, selection);
+  const lineStart = rawRange.start;
+  const lineEndIndex = value.indexOf("\n", rawRange.end);
+  const lineEnd = lineEndIndex === -1 ? value.length : lineEndIndex;
+  const selectedBlock = value.slice(lineStart, lineEnd);
+  const block = selectedBlock || placeholder;
+  const toggled = block
+    .split("\n")
+    .map((line) => {
+      if (line.startsWith(">")) {
+        return line.replace(/^>+\s*/, "");
+      }
+
+      return `>${line}`;
+    })
+    .join("\n");
+
+  messageDraft = `${value.slice(0, lineStart)}${toggled}${value.slice(lineEnd)}`;
+  renderMessageEditorContent(input, messageDraft);
+  input.focus();
+  resizeMessageInput(input);
+}
+
+function applyLinePrefix(line, prefix) {
+  const withoutAlignment = line.replace(/^`[clra]/, "");
+
+  if (line.startsWith(prefix)) {
+    return withoutAlignment;
+  }
+
+  return `${prefix}${withoutAlignment}`;
+}
+
+function getEditorRawLineRange(source, selection) {
+  const visibleOffset = selection === null ? getVisibleLength(source) : Math.min(selection.start, selection.end);
+  const rawOffset = visibleOffsetToRawOffset(source, visibleOffset);
+  const lineStart = source.lastIndexOf("\n", Math.max(0, rawOffset - 1)) + 1;
+  const lineEndIndex = source.indexOf("\n", rawOffset);
+
+  return {
+    start: lineStart,
+    end: lineEndIndex === -1 ? source.length : lineEndIndex,
+  };
+}
+
+function visibleOffsetToRawOffset(source, visibleOffset) {
+  const parsed = parseInlineStyleText(source);
+
+  if (visibleOffset <= 0) {
+    return 0;
+  }
+
+  const char = parsed.chars[Math.min(visibleOffset, parsed.chars.length) - 1];
+  return char ? char.rawEnd : source.length;
+}
+
+function getVisibleLength(source) {
+  return parseInlineStyleText(source).chars.length;
+}
+
+function insertMessageBlock(input, block) {
+  const selection = getEditorSelectionOffsets(input);
+  const value = getMessagePlainText(input);
+  const start = selection === null ? value.length : selection.start;
+  const end = selection === null ? start : selection.end;
+  const before = value.slice(0, start);
+  const after = value.slice(end);
+  const prefix = before === "" || before.endsWith("\n") ? "" : "\n";
+  const suffix = after === "" || after.startsWith("\n") ? "" : "\n";
+  const text = `${prefix}${block}${suffix}`;
+  messageDraft = `${before}${text}${after}`;
+  renderMessageEditorContent(input, messageDraft);
+  input.focus();
+  resizeMessageInput(input);
+}
+
+function renderMessageEditorContent(input, source) {
+  input.replaceChildren();
+
+  if (source === "") {
+    return;
+  }
+
+  input.appendChild(renderMessageContent(source));
+}
+
+function serializeMessageEditor(input) {
+  const content = input.querySelector(".micron-content");
+  const root = content || input;
+  const lines = [];
+  const lineNodes = Array.from(root.querySelectorAll(".micron-line"));
+
+  if (lineNodes.length === 0) {
+    return getMessagePlainText(input);
+  }
+
+  for (const line of lineNodes) {
+    lines.push(`${serializeMessageLinePrefix(line)}${serializeMessageInlineNode(line)}`);
+  }
+
+  return lines.join("\n");
+}
+
+function serializeMessageLinePrefix(line) {
+  if (line.classList.contains("micron-heading")) {
+    return ">";
+  }
+
+  if (line.classList.contains("micron-align-c")) {
+    return "`c";
+  }
+
+  if (line.classList.contains("micron-align-r")) {
+    return "`r";
+  }
+
+  if (line.classList.contains("micron-align-a")) {
+    return "`a";
+  }
+
+  return "";
+}
+
+function serializeMessageInlineNode(root) {
+  const state = createInlineStyleState();
+  const output = [];
+
+  function appendToken(token) {
+    output.push(token);
+  }
+
+  function walk(node, inherited) {
+    if (node.nodeType === Node.TEXT_NODE) {
+      applyInlineStyleTransition(state, inherited, appendToken);
+      output.push(escapeInlineVisibleText(node.nodeValue || ""));
+      return;
+    }
+
+    if (node.nodeType !== Node.ELEMENT_NODE) {
+      return;
+    }
+
+    const next = mergeElementInlineState(inherited, node);
+
+    for (const child of Array.from(node.childNodes)) {
+      walk(child, next);
+    }
+  }
+
+  for (const child of Array.from(root.childNodes)) {
+    walk(child, createInlineStyleState());
+  }
+
+  applyInlineStyleTransition(state, createInlineStyleState(), appendToken);
+  return output.join("");
+}
+
+function mergeElementInlineState(baseState, node) {
+  const state = cloneInlineStyleState(baseState);
+
+  if (node.classList.contains("micron-bold") || node.tagName === "B" || node.tagName === "STRONG") {
+    state.bold = true;
+  }
+
+  if (node.classList.contains("micron-italic") || node.tagName === "I" || node.tagName === "EM") {
+    state.italic = true;
+  }
+
+  if (node.classList.contains("micron-underline") || node.tagName === "U") {
+    state.underline = true;
+  }
+
+  if (node.style.color !== "") {
+    state.foreground = cssColorToMicronColor(node.style.color);
+  }
+
+  if (node.style.backgroundColor !== "") {
+    state.background = cssColorToMicronColor(node.style.backgroundColor);
+  }
+
+  return state;
+}
+
+function getMessagePlainText(input) {
+  return input.innerText.replace(/\r\n/g, "\n").replace(/\n$/, "");
+}
+
+function getEditorSelectionOffsets(input) {
+  const selection = window.getSelection();
+
+  if (selection === null || selection.rangeCount === 0) {
+    return null;
+  }
+
+  const range = selection.getRangeAt(0);
+
+  if (!input.contains(range.startContainer) || !input.contains(range.endContainer)) {
+    return null;
+  }
+
+  return {
+    start: getEditorTextOffset(input, range.startContainer, range.startOffset),
+    end: getEditorTextOffset(input, range.endContainer, range.endOffset),
+  };
+}
+
+function getEditorTextOffset(root, node, offset) {
+  const range = document.createRange();
+  range.selectNodeContents(root);
+  range.setEnd(node, offset);
+  return range.toString().length;
+}
+
+function visibleSelectionToRawRange(source, visibleStart, visibleEnd) {
+  const parsed = parseInlineStyleText(source);
+  const startIndex = Math.min(visibleStart, visibleEnd);
+  const endIndex = Math.max(visibleStart, visibleEnd);
+  const startChar = parsed.chars[startIndex];
+  const endChar = parsed.chars[endIndex - 1];
+
+  return {
+    start: startChar ? startChar.rawStart : source.length,
+    end: endChar ? endChar.rawEnd : source.length,
+  };
+}
+
+function rememberMessageEditorSelection(input) {
+  messageEditorSelection = getEditorSelectionOffsets(input);
+}
+
+function restoreMessageEditorSelection(input) {
+  if (messageEditorSelection === null) {
+    return;
+  }
+
+  setEditorSelectionOffsets(input, messageEditorSelection.start, messageEditorSelection.end);
+}
+
+function setEditorSelectionOffsets(input, start, end) {
+  const rangeStart = findEditorDomPoint(input, start);
+  const rangeEnd = findEditorDomPoint(input, end);
+
+  if (rangeStart === null || rangeEnd === null) {
+    return;
+  }
+
+  const range = document.createRange();
+  range.setStart(rangeStart.node, rangeStart.offset);
+  range.setEnd(rangeEnd.node, rangeEnd.offset);
+
+  const selection = window.getSelection();
+
+  if (selection === null) {
+    return;
+  }
+
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
+
+function findEditorDomPoint(root, targetOffset) {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let offset = targetOffset;
+  let lastText = null;
+
+  while (true) {
+    const node = walker.nextNode();
+
+    if (node === null) {
+      break;
+    }
+
+    lastText = node;
+
+    if (offset <= node.nodeValue.length) {
+      return {
+        node,
+        offset,
+      };
+    }
+
+    offset -= node.nodeValue.length;
+  }
+
+  if (lastText !== null) {
+    return {
+      node: lastText,
+      offset: lastText.nodeValue.length,
+    };
+  }
+
+  return {
+    node: root,
+    offset: 0,
+  };
+}
+
+function cssColorToMicronColor(value) {
+  const rgb = String(value).match(/^rgb\((\d+),\s*(\d+),\s*(\d+)\)$/);
+
+  if (rgb === null) {
+    return "";
+  }
+
+  return rgb.slice(1)
+    .map((part) => Number(part).toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function toggleInlineStyle(source, selectionStart, selectionEnd, symbol) {
+  const parsed = parseInlineStyleText(source);
+  const visibleStart = findVisibleStart(parsed.chars, selectionStart);
+  const visibleEnd = findVisibleEnd(parsed.chars, selectionEnd);
+
+  if (visibleStart >= visibleEnd) {
+    return {
+      text: source,
+      selectionStart,
+      selectionEnd,
+    };
+  }
+
+  for (let index = visibleStart; index < visibleEnd; index += 1) {
+    const charState = parsed.chars[index].state;
+
+    if (symbol.style === "foreground" || symbol.style === "background") {
+      const key = symbol.style;
+      const colorCode = symbol.colorCode || "";
+      charState[key] = normalizeColorCode(charState[key]) === normalizeColorCode(colorCode) ? "" : colorCode;
+    } else {
+      charState[symbol.style] = !charState[symbol.style];
+    }
+  }
+
+  return serializeInlineStyleText(parsed.chars, visibleStart, visibleEnd);
+}
+
+function resetInlineStyle(source, selectionStart, selectionEnd) {
+  const parsed = parseInlineStyleText(source);
+  const visibleStart = findVisibleStart(parsed.chars, selectionStart);
+  const visibleEnd = findVisibleEnd(parsed.chars, selectionEnd);
+
+  if (visibleStart >= visibleEnd) {
+    return {
+      text: source,
+      selectionStart,
+      selectionEnd,
+    };
+  }
+
+  for (let index = visibleStart; index < visibleEnd; index += 1) {
+    parsed.chars[index].state = createInlineStyleState();
+  }
+
+  return serializeInlineStyleText(parsed.chars, visibleStart, visibleEnd);
+}
+
+function parseInlineStyleText(source) {
+  const chars = [];
+  const state = createInlineStyleState();
+  let index = 0;
+
+  while (index < source.length) {
+    const char = source[index];
+
+    if (char === "\\" && index + 1 < source.length) {
+      chars.push({
+        value: source[index + 1],
+        rawStart: index,
+        rawEnd: index + 2,
+        state: cloneInlineStyleState(state),
+      });
+      index += 2;
+      continue;
+    }
+
+    if (char === "`" && index + 1 < source.length) {
+      const command = source[index + 1];
+
+      if (command === "`") {
+        Object.assign(state, createInlineStyleState());
+        index += 2;
+        continue;
+      }
+
+      if (command === "!") {
+        state.bold = !state.bold;
+        index += 2;
+        continue;
+      }
+
+      if (command === "*") {
+        state.italic = !state.italic;
+        index += 2;
+        continue;
+      }
+
+      if (command === "_") {
+        state.underline = !state.underline;
+        index += 2;
+        continue;
+      }
+
+      if (command === "f") {
+        state.foreground = "";
+        index += 2;
+        continue;
+      }
+
+      if (command === "b") {
+        state.background = "";
+        index += 2;
+        continue;
+      }
+
+      if (command === "F" || command === "B") {
+        const color = readInlineColorCode(source, index + 2);
+
+        if (color.value !== "") {
+          if (command === "F") {
+            state.foreground = color.value;
+          } else {
+            state.background = color.value;
+          }
+
+          index = color.nextIndex;
+          continue;
+        }
+      }
+    }
+
+    chars.push({
+      value: char,
+      rawStart: index,
+      rawEnd: index + 1,
+      state: cloneInlineStyleState(state),
+    });
+    index += 1;
+  }
+
+  return { chars };
+}
+
+function serializeInlineStyleText(chars, selectedVisibleStart, selectedVisibleEnd) {
+  let output = "";
+  let selectionStart = 0;
+  let selectionEnd = 0;
+  const current = createInlineStyleState();
+
+  for (let index = 0; index < chars.length; index += 1) {
+    applyInlineStyleTransition(current, chars[index].state, (token) => {
+      output += token;
+    });
+
+    if (index === selectedVisibleStart) {
+      selectionStart = output.length;
+    }
+
+    output += escapeInlineVisibleChar(chars[index].value);
+
+    if (index + 1 === selectedVisibleEnd) {
+      selectionEnd = output.length;
+    }
+  }
+
+  applyInlineStyleTransition(current, createInlineStyleState(), (token) => {
+    output += token;
+  });
+
+  return {
+    text: output,
+    selectionStart,
+    selectionEnd,
+  };
+}
+
+function applyInlineStyleTransition(current, next, append) {
+  if (current.foreground !== next.foreground) {
+    if (current.foreground !== "") {
+      append("`f");
+    }
+
+    if (next.foreground !== "") {
+      append(`\`F${next.foreground}`);
+    }
+
+    current.foreground = next.foreground;
+  }
+
+  if (current.background !== next.background) {
+    if (current.background !== "") {
+      append("`b");
+    }
+
+    if (next.background !== "") {
+      append(`\`B${next.background}`);
+    }
+
+    current.background = next.background;
+  }
+
+  for (const key of ["bold", "italic", "underline"]) {
+    if (current[key] !== next[key]) {
+      append(getInlineBooleanStyleToken(key));
+      current[key] = next[key];
+    }
+  }
+}
+
+function getInlineBooleanStyleToken(style) {
+  if (style === "bold") {
+    return "`!";
+  }
+
+  if (style === "italic") {
+    return "`*";
+  }
+
+  if (style === "underline") {
+    return "`_";
+  }
+
+  return "";
+}
+
+function findVisibleStart(chars, rawSelectionStart) {
+  const index = chars.findIndex((char) => char.rawEnd > rawSelectionStart);
+  return index === -1 ? chars.length : index;
+}
+
+function findVisibleEnd(chars, rawSelectionEnd) {
+  const index = chars.findIndex((char) => char.rawStart >= rawSelectionEnd);
+  return index === -1 ? chars.length : index;
+}
+
+function readInlineColorCode(text, startIndex) {
+  let index = startIndex;
+  let value = "";
+
+  while (index < text.length && value.length < 6 && /[0-9a-fA-F]/.test(text[index])) {
+    value += text[index];
+    index += 1;
+  }
+
+  if (value.length === 3 || value.length === 4 || value.length === 6) {
+    return {
+      value,
+      nextIndex: index,
+    };
+  }
+
+  return {
+    value: "",
+    nextIndex: startIndex,
+  };
+}
+
+function normalizeColorCode(colorCode) {
+  return String(colorCode || "").toLowerCase();
+}
+
+function createInlineStyleState() {
+  return {
+    bold: false,
+    italic: false,
+    underline: false,
+    foreground: "",
+    background: "",
+  };
+}
+
+function cloneInlineStyleState(state) {
+  return {
+    bold: state.bold,
+    italic: state.italic,
+    underline: state.underline,
+    foreground: state.foreground,
+    background: state.background,
+  };
+}
+
+function escapeInlineVisibleChar(char) {
+  if (char === "`" || char === "\\") {
+    return `\\${char}`;
+  }
+
+  return char;
+}
+
+function escapeInlineVisibleText(text) {
+  return String(text).split("").map(escapeInlineVisibleChar).join("");
+}
+
+function renderMessageContent(source, options = {}) {
+  const micron = window.FriendlyNodeMicron;
+
+  if (micron && typeof micron.render === "function") {
+    return micron.render(source, options);
+  }
+
+  const fallback = document.createElement("div");
+  fallback.className = "micron-content";
+  fallback.textContent = String(source);
+  return fallback;
+}
+
+function resizeMessageInput(input) {
+  const messageList = document.querySelector(".message-list");
+  const listHeight = messageList instanceof HTMLElement ? messageList.clientHeight : 240;
+  const maxHeight = Math.max(48, Math.floor(listHeight / 3));
+
+  input.style.height = "auto";
+  input.style.maxHeight = `${maxHeight}px`;
+  input.style.height = `${Math.min(input.scrollHeight, maxHeight)}px`;
+  input.style.overflowY = input.scrollHeight > maxHeight ? "auto" : "hidden";
 }
 
 function renderSettings() {
@@ -987,6 +1785,7 @@ async function sendMessage(contact) {
     }
 
     messageDraft = "";
+    symbolPaletteOpen = false;
     await fetchStatus();
     render("Client");
   } catch (error) {
@@ -1142,6 +1941,11 @@ document.addEventListener("keydown", (event) => {
 
   if (contactMenuState !== null) {
     contactMenuState = null;
+    render("Client");
+  }
+
+  if (symbolPaletteOpen) {
+    symbolPaletteOpen = false;
     render("Client");
   }
 });

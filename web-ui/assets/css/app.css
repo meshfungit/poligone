@@ -420,7 +420,6 @@ tr:last-child td { border-bottom: 0; }
   max-width: 100%;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  min-height: 420px;
   border: 1px solid var(--line);
   border-radius: 10px;
   overflow: hidden;
@@ -429,8 +428,7 @@ tr:last-child td { border-bottom: 0; }
 
 .client-thread-panel {
   min-width: 0;
-  display: flex;
-  flex-direction: column;
+  display: block;
   background: var(--bg);
 }
 
@@ -469,7 +467,8 @@ tr:last-child td { border-bottom: 0; }
 
 .message-list {
   min-width: 0;
-  flex: 1;
+  max-height: min(48vh, 460px);
+  min-height: 220px;
   overflow: auto;
   padding: 14px;
 }
@@ -486,6 +485,70 @@ tr:last-child td { border-bottom: 0; }
   line-height: 1.35;
 }
 
+.micron-content {
+  white-space: normal;
+}
+
+.micron-line {
+  min-height: 1.35em;
+  white-space: pre-wrap;
+}
+
+.micron-align-c {
+  text-align: center;
+}
+
+.micron-align-r {
+  text-align: right;
+}
+
+.micron-align-l,
+.micron-align-a {
+  text-align: left;
+}
+
+.micron-heading {
+  font-weight: 700;
+}
+
+.micron-heading-2 {
+  padding-left: 10px;
+}
+
+.micron-heading-3,
+.micron-heading-4,
+.micron-heading-5,
+.micron-heading-6 {
+  padding-left: 18px;
+}
+
+.micron-literal {
+  font-family: Consolas, "Courier New", monospace;
+}
+
+.micron-divider {
+  border-top: 1px solid currentColor;
+  opacity: 0.65;
+  margin: 7px 0;
+}
+
+.micron-bold {
+  font-weight: 700;
+}
+
+.micron-italic {
+  font-style: italic;
+}
+
+.micron-underline {
+  text-decoration: underline;
+}
+
+.micron-selected {
+  background: rgba(55, 201, 139, 0.3);
+  border-radius: 3px;
+}
+
 .message-bubble.inbound {
   background: var(--panel);
 }
@@ -497,29 +560,61 @@ tr:last-child td { border-bottom: 0; }
 }
 
 .message-composer {
+  position: relative;
+  min-height: 62px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 8px;
   border-top: 1px solid var(--line);
   background: var(--panel);
   padding: 10px;
 }
 
-.message-composer textarea {
+.message-editor {
   min-width: 0;
-  max-height: 120px;
-  resize: vertical;
-  background: var(--bg);
-  color: var(--text);
+}
+
+.message-rich-input {
+  min-width: 0;
+  min-height: 42px;
+  max-height: 150px;
+  overflow: auto;
   border: 1px solid var(--line);
   border-radius: 10px;
+  background: var(--bg);
+  color: var(--text);
   padding: 9px 10px;
   font: inherit;
   line-height: 1.35;
+  white-space: pre-wrap;
 }
 
-.message-composer textarea:focus {
+.message-rich-input:empty::before {
+  content: attr(data-placeholder);
+  color: var(--muted);
+}
+
+.message-rich-input:focus {
   outline: none;
+  border-color: var(--accent);
+}
+
+.message-symbol-button {
+  width: 42px;
+  height: 42px;
+  align-self: end;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--panel2);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.message-symbol-button:hover {
   border-color: var(--accent);
 }
 
@@ -540,6 +635,61 @@ tr:last-child td { border-bottom: 0; }
 
 .send-message-button:hover {
   filter: brightness(1.08);
+}
+
+.message-symbol-palette {
+  position: absolute;
+  right: 8px;
+  bottom: calc(100% + 8px);
+  z-index: 12;
+  width: min(460px, calc(100vw - 36px));
+  max-height: min(320px, 48vh);
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  padding: 10px;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.35);
+}
+
+.message-symbol-group + .message-symbol-group {
+  margin-top: 10px;
+}
+
+.message-symbol-group-title {
+  color: var(--muted);
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+
+.message-symbol-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(46px, 1fr));
+  gap: 6px;
+}
+
+.message-symbol-grid button {
+  min-height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel2);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.message-symbol-grid button.wide {
+  grid-column: span 2;
+  min-width: 0;
+}
+
+.message-symbol-grid button:hover {
+  border-color: var(--accent);
 }
 
 .contact-menu-dismiss {
@@ -625,13 +775,16 @@ tr:last-child td { border-bottom: 0; }
     width: 100%;
     max-width: 100%;
     display: block;
-    min-height: 360px;
   }
 
   .client-thread-panel {
     width: 100%;
     max-width: 100%;
-    min-height: 360px;
+  }
+
+  .message-list {
+    max-height: min(52vh, 420px);
+    min-height: 180px;
   }
 
   .client-thread-header {
