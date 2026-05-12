@@ -1,8 +1,13 @@
-const tabs = ["Messages", "Peers", "NomadNet", "Interfaces", "Transport", "Logs", "Settings"];
+const tabs = ["Client", "Messages", "Peers", "NomadNet", "Interfaces", "Transport", "Logs", "Settings"];
 
 let currentStatus = null;
+let clientEditorState = null;
 
 const rows = {
+  Client: [
+    ["Name", "Identity", "LXMF destination", "Runtime", "Enabled"],
+    ["Default Client", "-", "-", "shared", "no"],
+  ],
   Messages: [
     ["Peer", "Hash", "Last message", "Unread", "Hops", "Status"],
     ["stub-peer", "001122...", "No messages yet", "0", "-", "offline"],
@@ -86,6 +91,102 @@ function renderTable(tab) {
   return table;
 }
 
+function renderClient() {
+  const wrapper = document.createElement("div");
+  const block = document.createElement("section");
+  block.className = "settings-block";
+
+  const title = document.createElement("h2");
+  title.textContent = "Client";
+  block.appendChild(title);
+
+  const hint = document.createElement("div");
+  hint.className = "settings-hint";
+  hint.textContent = "Client accounts are separate from transport settings. LXMF startup is not wired yet.";
+  block.appendChild(hint);
+
+  const clientsData = currentStatus?.clients || {};
+  const clients = Array.isArray(clientsData.clients) ? clientsData.clients : [];
+
+  const actionRow = document.createElement("div");
+  actionRow.className = "settings-row client-actions";
+
+  const addButton = document.createElement("button");
+  addButton.type = "button";
+  addButton.textContent = "AddClient";
+  addButton.onclick = openNewClientEditor;
+  actionRow.appendChild(addButton);
+  block.appendChild(actionRow);
+
+  const table = document.createElement("table");
+  const thead = document.createElement("thead");
+  const headerRow = document.createElement("tr");
+
+  for (const heading of ["Name", "Identity", "LXMF destination", "Runtime", "Enabled", "Actions"]) {
+    const th = document.createElement("th");
+    th.textContent = heading;
+    headerRow.appendChild(th);
+  }
+
+  thead.appendChild(headerRow);
+  table.appendChild(thead);
+
+  const tbody = document.createElement("tbody");
+
+  if (clients.length === 0) {
+    const row = document.createElement("tr");
+    const cell = document.createElement("td");
+    cell.colSpan = 6;
+    cell.textContent = "No client accounts loaded";
+    row.appendChild(cell);
+    tbody.appendChild(row);
+  }
+
+  for (const client of clients) {
+    const row = document.createElement("tr");
+
+    for (const value of [
+      client.display_name || client.id || "-",
+      client.identity_hash || "-",
+      client.lxmf_destination_hash || "-",
+      client.runtime_mode || "-",
+      client.enabled ? "yes" : "no",
+    ]) {
+      const cell = document.createElement("td");
+      cell.textContent = value;
+      row.appendChild(cell);
+    }
+
+    const actions = document.createElement("td");
+    actions.className = "client-row-actions";
+
+    const editButton = document.createElement("button");
+    editButton.type = "button";
+    editButton.textContent = "Edit";
+    editButton.onclick = () => openClientEditor(client);
+    actions.appendChild(editButton);
+
+    const removeButton = document.createElement("button");
+    removeButton.type = "button";
+    removeButton.textContent = "Remove";
+    removeButton.onclick = () => removeClient(client);
+    actions.appendChild(removeButton);
+
+    row.appendChild(actions);
+    tbody.appendChild(row);
+  }
+
+  table.appendChild(tbody);
+  block.appendChild(table);
+  wrapper.appendChild(block);
+
+  if (clientEditorState !== null) {
+    wrapper.appendChild(renderClientEditor());
+  }
+
+  return wrapper;
+}
+
 function renderSettings() {
   const wrapper = document.createElement("div");
 
@@ -156,6 +257,11 @@ function render(tab = "Messages") {
     return;
   }
 
+  if (tab === "Client") {
+    content.appendChild(renderClient());
+    return;
+  }
+
   content.appendChild(renderTable(tab));
 }
 
@@ -213,6 +319,18 @@ function updateSummaryCards(status) {
     ]),
   ];
 
+  const clients = Array.isArray(status.clients?.clients) ? status.clients.clients : [];
+  rows.Client = [
+    ["Name", "Identity", "LXMF destination", "Runtime", "Enabled"],
+    ...clients.map((client) => [
+      client.display_name || client.id || "-",
+      client.identity_hash || "-",
+      client.lxmf_destination_hash || "-",
+      client.runtime_mode || "-",
+      client.enabled ? "yes" : "no",
+    ]),
+  ];
+
   rows.Logs = [
     ["Time", "Level", "Source", "Message"],
     ...logs
@@ -248,7 +366,7 @@ async function fetchStatus() {
 
   const activeTab = getActiveTab();
 
-  if (activeTab === "Transport" || activeTab === "Logs" || activeTab === "Settings") {
+  if (activeTab === "Client" || activeTab === "Transport" || activeTab === "Logs" || activeTab === "Settings") {
     render(activeTab);
   }
 }
@@ -278,7 +396,7 @@ async function restartReticulum() {
 
     const activeTab = getActiveTab();
 
-    if (activeTab === "Transport" || activeTab === "Logs" || activeTab === "Settings") {
+    if (activeTab === "Client" || activeTab === "Transport" || activeTab === "Logs" || activeTab === "Settings") {
       render(activeTab);
     }
   } catch (error) {
@@ -333,6 +451,203 @@ async function selectRuntimeFromUi() {
       button.textContent = "Apply runtime";
     }
   }
+}
+
+async function openNewClientEditor() {
+  try {
+    const response = await fetch("/api/clients/draft", {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Client draft request failed: HTTP ${response.status}`);
+    }
+
+    clientEditorState = await response.json();
+    render("Client");
+  } catch (error) {
+    appendUiError(error);
+    render("Logs");
+  }
+}
+
+function openClientEditor(client) {
+  clientEditorState = { ...client };
+  render("Client");
+}
+
+async function saveClientFromEditor() {
+  if (clientEditorState === null) {
+    return;
+  }
+
+  try {
+    const response = await fetch("/api/clients", {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(clientEditorState),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Client save failed: HTTP ${response.status}`);
+    }
+
+    clientEditorState = null;
+    await fetchStatus();
+    render("Client");
+  } catch (error) {
+    appendUiError(error);
+    render("Logs");
+  }
+}
+
+async function removeClient(client) {
+  const clientId = client.id || "";
+
+  if (clientId === "" || !window.confirm(`Remove client ${client.display_name || clientId}?`)) {
+    return;
+  }
+
+  try {
+    const response = await fetch(`/api/clients/${encodeURIComponent(clientId)}`, {
+      method: "DELETE",
+      headers: {
+        Accept: "application/json",
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Client remove failed: HTTP ${response.status}`);
+    }
+
+    await fetchStatus();
+    render("Client");
+  } catch (error) {
+    appendUiError(error);
+    render("Logs");
+  }
+}
+
+function renderClientEditor() {
+  const overlay = document.createElement("div");
+  overlay.className = "client-editor-overlay";
+
+  const dialog = document.createElement("section");
+  dialog.className = "client-editor";
+
+  const title = document.createElement("h2");
+  title.textContent = "Client editor";
+  dialog.appendChild(title);
+
+  dialog.appendChild(
+    renderClientEditorField("Display name", "display_name", "text")
+  );
+  dialog.appendChild(
+    renderClientEditorField("Client id", "id", "text", true)
+  );
+  dialog.appendChild(
+    renderClientEditorField("Identity hash", "identity_hash", "text", true)
+  );
+  dialog.appendChild(
+    renderClientEditorField("LXMF destination hash", "lxmf_destination_hash", "text", true)
+  );
+
+  const runtimeField = document.createElement("label");
+  runtimeField.className = "rns-field";
+
+  const runtimeLabel = document.createElement("span");
+  runtimeLabel.textContent = "Runtime mode";
+  runtimeField.appendChild(runtimeLabel);
+
+  const runtimeSelect = document.createElement("select");
+  const runtimeModes = currentStatus?.clients?.schema?.runtime_modes || ["shared", "isolated"];
+
+  for (const mode of runtimeModes) {
+    const option = document.createElement("option");
+    option.value = mode;
+    option.textContent = mode;
+
+    if (clientEditorState.runtime_mode === mode) {
+      option.selected = true;
+    }
+
+    runtimeSelect.appendChild(option);
+  }
+
+  runtimeSelect.onchange = () => {
+    clientEditorState.runtime_mode = runtimeSelect.value;
+  };
+  runtimeField.appendChild(runtimeSelect);
+  dialog.appendChild(runtimeField);
+
+  const enabledField = document.createElement("label");
+  enabledField.className = "rns-boolean-line";
+
+  const enabledLabel = document.createElement("span");
+  enabledLabel.textContent = "Enable client";
+  enabledField.appendChild(enabledLabel);
+
+  const enabledInput = document.createElement("input");
+  enabledInput.type = "checkbox";
+  enabledInput.checked = Boolean(clientEditorState.enabled);
+  enabledInput.onchange = () => {
+    clientEditorState.enabled = enabledInput.checked;
+  };
+  enabledField.appendChild(enabledInput);
+  dialog.appendChild(enabledField);
+
+  dialog.appendChild(
+    renderClientEditorField("External config path", "config_path", "text")
+  );
+
+  const actions = document.createElement("div");
+  actions.className = "settings-row client-editor-actions";
+
+  const saveButton = document.createElement("button");
+  saveButton.type = "button";
+  saveButton.textContent = "Save";
+  saveButton.onclick = saveClientFromEditor;
+  actions.appendChild(saveButton);
+
+  const cancelButton = document.createElement("button");
+  cancelButton.type = "button";
+  cancelButton.textContent = "Cancel";
+  cancelButton.onclick = () => {
+    clientEditorState = null;
+    render("Client");
+  };
+  actions.appendChild(cancelButton);
+
+  dialog.appendChild(actions);
+  overlay.appendChild(dialog);
+  return overlay;
+}
+
+function renderClientEditorField(labelText, key, type = "text", readonly = false) {
+  const field = document.createElement("label");
+  field.className = "rns-field";
+
+  const label = document.createElement("span");
+  label.textContent = labelText;
+  field.appendChild(label);
+
+  const input = document.createElement("input");
+  input.type = type;
+  input.value = clientEditorState?.[key] === undefined || clientEditorState?.[key] === null
+    ? ""
+    : String(clientEditorState[key]);
+  input.readOnly = readonly;
+  input.oninput = () => {
+    clientEditorState[key] = input.value;
+  };
+  field.appendChild(input);
+  return field;
 }
 
 function appendUiError(error) {

@@ -65,6 +65,9 @@ class ControllerHttpServer:
                 if parsed.path == "/api/rns-config":
                     self._send_json(app.get_rns_config())
                     return
+                if parsed.path == "/api/clients":
+                    self._send_json(app.list_clients())
+                    return
                 self._serve_static(parsed.path)
 
             def do_POST(self) -> None:
@@ -95,6 +98,28 @@ class ControllerHttpServer:
                     self._send_json(self._build_status_response())
                     return
 
+                if parsed.path == "/api/clients/draft":
+                    self._send_json(app.build_client_draft())
+                    return
+
+                if parsed.path == "/api/clients":
+                    payload = self._read_json_body()
+                    self._send_json(app.save_client(payload))
+                    return
+
+                self._send_json(
+                    {"error": "not_found", "path": parsed.path},
+                    HTTPStatus.NOT_FOUND,
+                )
+
+            def do_DELETE(self) -> None:
+                parsed = urlparse(self.path)
+
+                if parsed.path.startswith("/api/clients/"):
+                    client_id = unquote(parsed.path.removeprefix("/api/clients/"))
+                    self._send_json(app.remove_client(client_id))
+                    return
+
                 self._send_json(
                     {"error": "not_found", "path": parsed.path},
                     HTTPStatus.NOT_FOUND,
@@ -117,6 +142,7 @@ class ControllerHttpServer:
                         "active": active_runtime_name,
                         "available": [runtime.to_dict() for runtime in runtimes],
                     },
+                    "clients": app.list_clients(),
                     "logs": app.state.snapshot_logs(),
                 }
 

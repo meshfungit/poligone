@@ -9,6 +9,7 @@ data/config/reticulum/
 data/db/
 data/logs/
 data/identities/
+data/clients/
 data/attachments/
 data/nomadnet-pages/
 
@@ -30,10 +31,12 @@ __pycache__/
 data/db/*
 data/logs/*
 data/identities/*
+data/clients/*
 data/attachments/*
 !data/db/.gitkeep
 !data/logs/.gitkeep
 !data/identities/.gitkeep
+!data/clients/.gitkeep
 !data/attachments/.gitkeep
 
 # Local Reticulum runtimes and copied upstream sources

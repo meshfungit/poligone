@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 from typing import Any
+from friendlynode.client_accounts import ClientAccountStore
 from friendlynode.config.app_config import AppConfig
 from friendlynode.controller.engine_supervisor import EngineSupervisor
 from friendlynode.controller.runtime_manager import RuntimeInfo, RuntimeManager
@@ -14,6 +15,7 @@ class ControllerApp:
         self.config = config or AppConfig.load()
         self.state = StateCache()
         self.runtime_manager = RuntimeManager()
+        self.client_store = ClientAccountStore(self.config.clients_dir)
         self.engine_supervisor = EngineSupervisor(self.config)
 
     def start(self) -> None:
@@ -78,6 +80,22 @@ class ControllerApp:
         parsed_config = save_rns_config(self.config.rns_config_dir, payload)
         self.state.append_log("info", "rns-config", "Reticulum config saved")
         return parsed_config.to_dict()
+
+    def list_clients(self) -> dict[str, object]:
+        return self.client_store.to_dict()
+
+    def build_client_draft(self) -> dict[str, object]:
+        return self.client_store.build_draft().to_dict()
+
+    def save_client(self, payload: dict[str, object]) -> dict[str, object]:
+        client = self.client_store.save_client(payload)
+        self.state.append_log("info", "client", f"Client saved: {client.id}")
+        return client.to_dict()
+
+    def remove_client(self, client_id: str) -> dict[str, object]:
+        self.client_store.remove_client(client_id)
+        self.state.append_log("info", "client", f"Client removed: {client_id}")
+        return self.client_store.to_dict()
 
     def _apply_active_runtime(self) -> RuntimeInfo:
         runtime = self.runtime_manager.get_runtime(self.config.engine_name)

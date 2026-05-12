@@ -5,6 +5,8 @@ ROUTES = {
     "restart_reticulum": "/api/reticulum/restart",
     "runtimes": "/api/runtimes",
     "interfaces": "/api/interfaces",
+    "clients": "/api/clients",
+    "client_draft": "/api/clients/draft",
     "messages": "/api/messages",
     "peers": "/api/peers",
     "nomadnet_nodes": "/api/nomadnet/nodes",
