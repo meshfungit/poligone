@@ -1,16 +1,19 @@
-const tabs = ["Client", "Messages", "Peers", "NomadNet", "Interfaces", "Transport", "Logs", "Settings"];
+const tabs = ["Client", "Peers", "NomadNet", "Interfaces", "Transport", "Logs", "Settings"];
 
 let currentStatus = null;
 let clientEditorState = null;
+let activeClientId = "";
+let activeContactId = "";
+let contactMenuState = null;
+let contactModalState = null;
+let clearMessagesState = null;
+const expandedClientDetails = new Set();
+let messageDraft = "";
 
 const rows = {
   Client: [
     ["Name", "Identity", "LXMF destination", "Runtime", "Enabled"],
     ["Default Client", "-", "-", "shared", "no"],
-  ],
-  Messages: [
-    ["Peer", "Hash", "Last message", "Unread", "Hops", "Status"],
-    ["stub-peer", "001122...", "No messages yet", "0", "-", "offline"],
   ],
   Peers: [
     ["Name", "Destination", "Aspect", "Hops", "Last announce"],
@@ -118,46 +121,21 @@ function renderClient() {
   actionRow.appendChild(addButton);
   block.appendChild(actionRow);
 
-  const table = document.createElement("table");
-  const thead = document.createElement("thead");
-  const headerRow = document.createElement("tr");
-
-  for (const heading of ["Name", "Identity", "LXMF destination", "Runtime", "Enabled", "Actions"]) {
-    const th = document.createElement("th");
-    th.textContent = heading;
-    headerRow.appendChild(th);
-  }
-
-  thead.appendChild(headerRow);
-  table.appendChild(thead);
-
-  const tbody = document.createElement("tbody");
+  const accountList = document.createElement("div");
+  accountList.className = "client-accounts-list";
 
   if (clients.length === 0) {
-    const row = document.createElement("tr");
-    const cell = document.createElement("td");
-    cell.colSpan = 6;
-    cell.textContent = "No client accounts loaded";
-    row.appendChild(cell);
-    tbody.appendChild(row);
+    const empty = document.createElement("div");
+    empty.className = "settings-hint";
+    empty.textContent = "No client accounts loaded";
+    accountList.appendChild(empty);
   }
 
   for (const client of clients) {
-    const row = document.createElement("tr");
+    const card = document.createElement("div");
+    card.className = "client-account-card";
 
-    for (const value of [
-      client.display_name || client.id || "-",
-      client.identity_hash || "-",
-      client.lxmf_destination_hash || "-",
-      client.runtime_mode || "-",
-      client.enabled ? "yes" : "no",
-    ]) {
-      const cell = document.createElement("td");
-      cell.textContent = value;
-      row.appendChild(cell);
-    }
-
-    const actions = document.createElement("td");
+    const actions = document.createElement("div");
     actions.className = "client-row-actions";
 
     const editButton = document.createElement("button");
@@ -172,19 +150,234 @@ function renderClient() {
     removeButton.onclick = () => removeClient(client);
     actions.appendChild(removeButton);
 
-    row.appendChild(actions);
-    tbody.appendChild(row);
+    card.appendChild(actions);
+
+    const summary = document.createElement("div");
+    summary.className = "client-account-summary";
+    summary.appendChild(renderClientAccountField("Name", client.display_name || client.id || "-"));
+    card.appendChild(summary);
+
+    const detailsButton = document.createElement("button");
+    detailsButton.type = "button";
+    detailsButton.className = "client-details-toggle";
+    detailsButton.textContent = expandedClientDetails.has(client.id) ? "Hide details" : "Show details";
+    detailsButton.onclick = () => {
+      if (expandedClientDetails.has(client.id)) {
+        expandedClientDetails.delete(client.id);
+      } else {
+        expandedClientDetails.add(client.id);
+      }
+
+      render("Client");
+    };
+    card.appendChild(detailsButton);
+
+    if (expandedClientDetails.has(client.id)) {
+      const fields = document.createElement("div");
+      fields.className = "client-account-fields";
+
+      for (const [label, value] of [
+      ["Identity", client.identity_hash || "-"],
+      ["LXMF destination", client.lxmf_destination_hash || "-"],
+      ["Runtime", client.runtime_mode || "-"],
+      ["Enabled", client.enabled ? "yes" : "no"],
+      ]) {
+        fields.appendChild(renderClientAccountField(label, value));
+      }
+
+      card.appendChild(fields);
+    }
+
+    accountList.appendChild(card);
   }
 
-  table.appendChild(tbody);
-  block.appendChild(table);
+  block.appendChild(accountList);
   wrapper.appendChild(block);
+  wrapper.appendChild(renderClientChat(clients));
 
   if (clientEditorState !== null) {
     wrapper.appendChild(renderClientEditor());
   }
 
+  if (contactMenuState !== null) {
+    wrapper.appendChild(renderContactMenu());
+  }
+
+  if (contactModalState !== null) {
+    wrapper.appendChild(renderContactModal());
+  }
+
+  if (clearMessagesState !== null) {
+    wrapper.appendChild(renderClearMessagesModal());
+  }
+
   return wrapper;
+}
+
+function renderClientAccountField(label, value) {
+  const field = document.createElement("div");
+  field.className = "client-account-field";
+
+  const fieldLabel = document.createElement("div");
+  fieldLabel.className = "client-account-label";
+  fieldLabel.textContent = label;
+  field.appendChild(fieldLabel);
+
+  const fieldValue = document.createElement("div");
+  fieldValue.className = "client-account-value";
+  fieldValue.textContent = value;
+  field.appendChild(fieldValue);
+
+  return field;
+}
+
+function renderClientChat(clients) {
+  const section = document.createElement("section");
+  section.className = "settings-block client-chat-section";
+
+  const title = document.createElement("h2");
+  title.textContent = "Conversations";
+  section.appendChild(title);
+
+  if (clients.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "settings-hint";
+    empty.textContent = "Create a client account to load conversations.";
+    section.appendChild(empty);
+    return section;
+  }
+
+  const activeClient = selectActiveClient(clients);
+  const conversations = Array.isArray(activeClient.conversations)
+    ? activeClient.conversations
+    : [];
+  const activeConversation = selectActiveConversation(conversations);
+  const activeContact = activeConversation?.contact || null;
+  const messages = Array.isArray(activeConversation?.messages)
+    ? activeConversation.messages
+    : [];
+
+  const accountRow = document.createElement("div");
+  accountRow.className = "settings-row client-chat-account-row";
+
+  const accountSelect = document.createElement("select");
+
+  for (const client of clients) {
+    const option = document.createElement("option");
+    option.value = client.id;
+    option.textContent = client.display_name || client.id;
+
+    if (client.id === activeClient.id) {
+      option.selected = true;
+    }
+
+    accountSelect.appendChild(option);
+  }
+
+  accountSelect.onchange = () => {
+    activeClientId = accountSelect.value;
+    activeContactId = "";
+    render("Client");
+  };
+  accountRow.appendChild(accountSelect);
+  section.appendChild(accountRow);
+
+  const layout = document.createElement("div");
+  layout.className = "client-chat";
+  layout.appendChild(renderMessageThread(activeContact, messages));
+  section.appendChild(layout);
+  return section;
+}
+
+function renderMessageThread(contact, messages) {
+  const panel = document.createElement("div");
+  panel.className = "client-thread-panel";
+
+  if (contact === null) {
+    const empty = document.createElement("div");
+    empty.className = "settings-hint";
+    empty.textContent = "Select a contact";
+    panel.appendChild(empty);
+    return panel;
+  }
+
+  const header = document.createElement("div");
+  header.className = "client-thread-header";
+
+  const nameButton = document.createElement("button");
+  nameButton.type = "button";
+  nameButton.className = "chat-contact-name";
+  nameButton.textContent = contact.name || contact.id || "-";
+  nameButton.onclick = () => {
+    contactModalState = contact;
+    render("Client");
+  };
+  header.appendChild(nameButton);
+
+  const clearButton = document.createElement("button");
+  clearButton.type = "button";
+  clearButton.textContent = "Clear messages";
+  clearButton.onclick = () => {
+    clearMessagesState = contact;
+    render("Client");
+  };
+  header.appendChild(clearButton);
+  panel.appendChild(header);
+
+  const list = document.createElement("div");
+  list.className = "message-list";
+
+  if (messages.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "settings-hint";
+    empty.textContent = "No messages";
+    list.appendChild(empty);
+  }
+
+  for (const message of messages) {
+    const bubble = document.createElement("div");
+    bubble.className = message.direction === "outbound" ? "message-bubble outbound" : "message-bubble inbound";
+    bubble.textContent = message.content || "";
+    list.appendChild(bubble);
+  }
+
+  panel.appendChild(list);
+  panel.appendChild(renderMessageComposer(contact));
+  return panel;
+}
+
+function renderMessageComposer(contact) {
+  const composer = document.createElement("form");
+  composer.className = "message-composer";
+  composer.onsubmit = (event) => {
+    event.preventDefault();
+    sendMessage(contact);
+  };
+
+  const input = document.createElement("textarea");
+  input.rows = 1;
+  input.placeholder = "Message";
+  input.value = messageDraft;
+  input.oninput = () => {
+    messageDraft = input.value;
+  };
+  input.onkeydown = (event) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      sendMessage(contact);
+    }
+  };
+  composer.appendChild(input);
+
+  const button = document.createElement("button");
+  button.type = "submit";
+  button.className = "send-message-button";
+  button.title = "Send";
+  button.setAttribute("aria-label", "Send message");
+  button.innerHTML = '<span aria-hidden="true">➤</span>';
+  composer.appendChild(button);
+
+  return composer;
 }
 
 function renderSettings() {
@@ -244,7 +437,11 @@ function renderSettings() {
   return wrapper;
 }
 
-function render(tab = "Messages") {
+function render(tab = "Client") {
+  if (tab !== "Client") {
+    contactMenuState = null;
+  }
+
   renderNav(tab);
 
   document.querySelector("h1").textContent = tab;
@@ -346,7 +543,7 @@ function updateSummaryCards(status) {
 }
 
 function getActiveTab() {
-  return document.querySelector("nav button.active")?.textContent || "Messages";
+  return document.querySelector("nav button.active")?.textContent || "Client";
 }
 
 async function fetchStatus() {
@@ -534,6 +731,270 @@ async function removeClient(client) {
   }
 }
 
+function selectActiveClient(clients) {
+  if (activeClientId === "" || !clients.some((client) => client.id === activeClientId)) {
+    activeClientId = clients[0].id || "";
+  }
+
+  return clients.find((client) => client.id === activeClientId) || clients[0];
+}
+
+function selectActiveConversation(conversations) {
+  if (conversations.length === 0) {
+    activeContactId = "";
+    return null;
+  }
+
+  if (
+    activeContactId === ""
+    || !conversations.some((conversation) => conversation.contact?.id === activeContactId)
+  ) {
+    activeContactId = conversations[0].contact?.id || "";
+  }
+
+  return conversations.find((conversation) => conversation.contact?.id === activeContactId) || conversations[0];
+}
+
+function openContactMenu(contact, x, y) {
+  contactMenuState = {
+    contact,
+    x,
+    y,
+  };
+  render("Client");
+}
+
+function renderContactMenu() {
+  const overlay = document.createElement("div");
+  overlay.className = "contact-menu-dismiss";
+  overlay.onclick = () => {
+    contactMenuState = null;
+    render("Client");
+  };
+
+  const menu = document.createElement("div");
+  menu.className = "contact-menu";
+  menu.style.left = `${contactMenuState.x}px`;
+  menu.style.top = `${contactMenuState.y}px`;
+  menu.onclick = (event) => {
+    event.stopPropagation();
+  };
+
+  const exportButton = document.createElement("button");
+  exportButton.type = "button";
+  exportButton.textContent = "Export";
+  exportButton.onclick = () => exportContact(contactMenuState.contact);
+  menu.appendChild(exportButton);
+
+  const clearButton = document.createElement("button");
+  clearButton.type = "button";
+  clearButton.textContent = "Clear messages";
+  clearButton.onclick = () => {
+    clearMessagesState = contactMenuState.contact;
+    contactMenuState = null;
+    render("Client");
+  };
+  menu.appendChild(clearButton);
+
+  overlay.appendChild(menu);
+  return overlay;
+}
+
+function renderContactModal() {
+  const overlay = document.createElement("div");
+  overlay.className = "client-editor-overlay";
+
+  const dialog = document.createElement("section");
+  dialog.className = "client-editor contact-modal";
+
+  const title = document.createElement("h2");
+  title.textContent = contactModalState.name || contactModalState.id || "Contact";
+  dialog.appendChild(title);
+
+  for (const [label, key] of [
+    ["Name", "name"],
+    ["Destination hash", "destination_hash"],
+    ["Identity hash", "identity_hash"],
+    ["LXMF address", "lxmf_address"],
+    ["Last announce", "last_announce"],
+    ["Hops", "hops"],
+    ["Path status", "path_status"],
+  ]) {
+    const row = document.createElement("div");
+    row.className = "contact-detail-row";
+
+    const rowLabel = document.createElement("div");
+    rowLabel.className = "contact-detail-label";
+    rowLabel.textContent = label;
+    row.appendChild(rowLabel);
+
+    const rowValue = document.createElement("div");
+    rowValue.className = "contact-detail-value";
+    rowValue.textContent = String(contactModalState[key] ?? "-");
+    row.appendChild(rowValue);
+    dialog.appendChild(row);
+  }
+
+  const actions = document.createElement("div");
+  actions.className = "settings-row client-editor-actions";
+
+  const exportButton = document.createElement("button");
+  exportButton.type = "button";
+  exportButton.textContent = "Export";
+  exportButton.onclick = () => exportContact(contactModalState);
+  actions.appendChild(exportButton);
+
+  const closeButton = document.createElement("button");
+  closeButton.type = "button";
+  closeButton.textContent = "Close";
+  closeButton.onclick = () => {
+    contactModalState = null;
+    render("Client");
+  };
+  actions.appendChild(closeButton);
+
+  dialog.appendChild(actions);
+  overlay.appendChild(dialog);
+  return overlay;
+}
+
+function renderClearMessagesModal() {
+  const overlay = document.createElement("div");
+  overlay.className = "client-editor-overlay";
+
+  const dialog = document.createElement("section");
+  dialog.className = "client-editor clear-messages-modal";
+
+  const title = document.createElement("h2");
+  title.textContent = "Clear messages";
+  dialog.appendChild(title);
+
+  const name = document.createElement("div");
+  name.className = "clear-contact-name";
+  name.textContent = clearMessagesState.name || clearMessagesState.id || "-";
+  dialog.appendChild(name);
+
+  const actions = document.createElement("div");
+  actions.className = "settings-row client-editor-actions";
+
+  const clearButton = document.createElement("button");
+  clearButton.type = "button";
+  clearButton.textContent = "Clear";
+  clearButton.onclick = clearMessagesForContact;
+  actions.appendChild(clearButton);
+
+  const cancelButton = document.createElement("button");
+  cancelButton.type = "button";
+  cancelButton.textContent = "Cancel";
+  cancelButton.onclick = () => {
+    clearMessagesState = null;
+    render("Client");
+  };
+  actions.appendChild(cancelButton);
+
+  dialog.appendChild(actions);
+  overlay.appendChild(dialog);
+  return overlay;
+}
+
+async function clearMessagesForContact() {
+  if (clearMessagesState === null || activeClientId === "") {
+    return;
+  }
+
+  try {
+    const response = await fetch(
+      `/api/clients/${encodeURIComponent(activeClientId)}/conversations/${encodeURIComponent(clearMessagesState.id)}/messages`,
+      {
+        method: "DELETE",
+        headers: {
+          Accept: "application/json",
+        },
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(`Clear messages failed: HTTP ${response.status}`);
+    }
+
+    clearMessagesState = null;
+    await fetchStatus();
+    render("Client");
+  } catch (error) {
+    appendUiError(error);
+    render("Logs");
+  }
+}
+
+async function exportContact(contact) {
+  if (activeClientId === "" || contact === null) {
+    return;
+  }
+
+  try {
+    const response = await fetch(
+      `/api/clients/${encodeURIComponent(activeClientId)}/contacts/${encodeURIComponent(contact.id)}/export`,
+      {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+        },
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(`Contact export failed: HTTP ${response.status}`);
+    }
+
+    const payload = await response.json();
+    contactModalState = payload.contact || contact;
+    contactMenuState = null;
+    render("Client");
+  } catch (error) {
+    appendUiError(error);
+    render("Logs");
+  }
+}
+
+async function sendMessage(contact) {
+  if (activeClientId === "" || contact === null) {
+    return;
+  }
+
+  const content = messageDraft.trim();
+
+  if (content === "") {
+    return;
+  }
+
+  try {
+    const response = await fetch(
+      `/api/clients/${encodeURIComponent(activeClientId)}/conversations/${encodeURIComponent(contact.id)}/messages`,
+      {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          content,
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(`Send message failed: HTTP ${response.status}`);
+    }
+
+    messageDraft = "";
+    await fetchStatus();
+    render("Client");
+  } catch (error) {
+    appendUiError(error);
+    render("Logs");
+  }
+}
+
 function renderClientEditor() {
   const overlay = document.createElement("div");
   overlay.className = "client-editor-overlay";
@@ -672,5 +1133,16 @@ document.addEventListener("DOMContentLoaded", () => {
     appendUiError(error);
     render("Logs");
   });
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape") {
+    return;
+  }
+
+  if (contactMenuState !== null) {
+    contactMenuState = null;
+    render("Client");
+  }
 });
 window.render = render;

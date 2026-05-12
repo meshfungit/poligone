@@ -68,6 +68,22 @@ class ControllerHttpServer:
                 if parsed.path == "/api/clients":
                     self._send_json(app.list_clients())
                     return
+                client_route = self._parse_client_route(parsed.path)
+                if client_route is not None:
+                    client_id, action, contact_id = client_route
+
+                    if action == "conversations":
+                        self._send_json(app.list_client_conversations(client_id))
+                        return
+
+                    if action == "messages" and contact_id is not None:
+                        self._send_json(app.list_client_messages(client_id, contact_id))
+                        return
+
+                    if action == "export" and contact_id is not None:
+                        self._send_json(app.export_client_contact(client_id, contact_id))
+                        return
+
                 self._serve_static(parsed.path)
 
             def do_POST(self) -> None:
@@ -107,6 +123,15 @@ class ControllerHttpServer:
                     self._send_json(app.save_client(payload))
                     return
 
+                client_route = self._parse_client_route(parsed.path)
+                if client_route is not None:
+                    client_id, action, contact_id = client_route
+
+                    if action == "messages" and contact_id is not None:
+                        payload = self._read_json_body()
+                        self._send_json(app.send_client_message(client_id, contact_id, payload))
+                        return
+
                 self._send_json(
                     {"error": "not_found", "path": parsed.path},
                     HTTPStatus.NOT_FOUND,
@@ -114,6 +139,14 @@ class ControllerHttpServer:
 
             def do_DELETE(self) -> None:
                 parsed = urlparse(self.path)
+                client_route = self._parse_client_route(parsed.path)
+
+                if client_route is not None:
+                    client_id, action, contact_id = client_route
+
+                    if action == "messages" and contact_id is not None:
+                        self._send_json(app.clear_client_messages(client_id, contact_id))
+                        return
 
                 if parsed.path.startswith("/api/clients/"):
                     client_id = unquote(parsed.path.removeprefix("/api/clients/"))
@@ -229,5 +262,26 @@ class ControllerHttpServer:
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
                 self.wfile.write(data)
+
+            def _parse_client_route(self, path: str) -> tuple[str, str, str | None] | None:
+                parts = [unquote(part) for part in path.strip("/").split("/")]
+
+                if len(parts) == 4 and parts[0:2] == ["api", "clients"]:
+                    client_id = parts[2]
+
+                    if parts[3] == "conversations":
+                        return client_id, "conversations", None
+
+                if len(parts) == 6 and parts[0:2] == ["api", "clients"]:
+                    client_id = parts[2]
+                    contact_id = parts[4]
+
+                    if parts[3] == "contacts" and parts[5] == "export":
+                        return client_id, "export", contact_id
+
+                    if parts[3] == "conversations" and parts[5] == "messages":
+                        return client_id, "messages", contact_id
+
+                return None
 
         return FriendlyNodeRequestHandler

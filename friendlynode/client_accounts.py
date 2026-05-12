@@ -8,6 +8,7 @@ import secrets
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from datetime import UTC, datetime
 
 from friendlynode.config.defaults import DEFAULT_CLIENTS_DIR
 
@@ -27,6 +28,31 @@ CLIENT_SUBDIRECTORIES = (
     "attachments",
     "themes",
 )
+TEST_CONTACT_ID = "test-contact-9f3a"
+TEST_CONTACT_RECORD: dict[str, object] = {
+    "id": TEST_CONTACT_ID,
+    "name": "Test Contact 9F3A",
+    "destination_hash": "9f3a17c4d8e2b601a45c0f91e7d2a8b3",
+    "identity_hash": "0c2f91a6b8d447e19a305bf64c28de73",
+    "lxmf_address": "lxmf://9f3a17c4d8e2b601a45c0f91e7d2a8b3",
+    "last_announce": "never",
+    "hops": 2,
+    "path_status": "stub",
+}
+TEST_MESSAGES: list[dict[str, object]] = [
+    {
+        "id": "test-inbound-1",
+        "direction": "inbound",
+        "content": "Test",
+        "created_at": "2026-05-12T00:00:00Z",
+    },
+    {
+        "id": "test-outbound-1",
+        "direction": "outbound",
+        "content": "Accept Test",
+        "created_at": "2026-05-12T00:01:00Z",
+    },
+]
 
 
 @dataclass(slots=True)
@@ -145,14 +171,92 @@ class ClientAccountStore:
         client_path.rmdir()
 
     def to_dict(self) -> dict[str, object]:
+        clients = []
+
+        for client in self.list_clients():
+            client_payload = client.to_dict()
+            client_payload["conversations"] = self.list_conversations(client.id)
+            clients.append(client_payload)
+
         return {
             "clients_dir": str(self.clients_dir),
-            "clients": [client.to_dict() for client in self.list_clients()],
+            "clients": clients,
             "schema": {
                 "runtime_modes": list(SUPPORTED_RUNTIME_MODES),
                 "subdirectories": list(CLIENT_SUBDIRECTORIES),
             },
         }
+
+    def list_conversations(self, client_id: str) -> list[dict[str, object]]:
+        client_path = self._client_path(self._normalise_client_id(client_id))
+        self._ensure_sample_conversation(client_path)
+
+        contacts_dir = client_path / "contacts"
+        conversations: list[dict[str, object]] = []
+
+        for contact_path in sorted(contacts_dir.glob("*.json")):
+            contact = json.loads(contact_path.read_text(encoding="utf-8"))
+            contact_id = str(contact.get("id") or contact_path.stem)
+            messages = self.list_messages(client_id, contact_id)
+            last_message = messages[-1]["content"] if len(messages) > 0 else ""
+            conversations.append(
+                {
+                    "contact": contact,
+                    "last_message": last_message,
+                    "unread": 0,
+                    "message_count": len(messages),
+                    "messages": messages,
+                }
+            )
+
+        return conversations
+
+    def list_messages(self, client_id: str, contact_id: str) -> list[dict[str, object]]:
+        messages_path = self._messages_path(client_id, contact_id)
+        if not messages_path.exists():
+            return []
+        raw = json.loads(messages_path.read_text(encoding="utf-8"))
+        if not isinstance(raw, list):
+            return []
+        return [message for message in raw if isinstance(message, dict)]
+
+    def clear_messages(self, client_id: str, contact_id: str) -> dict[str, object]:
+        messages_path = self._messages_path(client_id, contact_id)
+        messages_path.parent.mkdir(parents=True, exist_ok=True)
+        messages_path.write_text("[]\n", encoding="utf-8")
+        return {
+            "client_id": self._normalise_client_id(client_id),
+            "contact_id": self._normalise_client_id(contact_id),
+            "messages": [],
+        }
+
+    def add_outbound_message(self, client_id: str, contact_id: str, content: str) -> dict[str, object]:
+        text = content.strip()
+        if text == "":
+            raise ValueError("Message content cannot be empty")
+
+        messages = self.list_messages(client_id, contact_id)
+        message = {
+            "id": f"outbound-{secrets.token_hex(8)}",
+            "direction": "outbound",
+            "content": text,
+            "created_at": datetime.now(UTC).isoformat(timespec="seconds"),
+        }
+        messages.append(message)
+
+        messages_path = self._messages_path(client_id, contact_id)
+        messages_path.parent.mkdir(parents=True, exist_ok=True)
+        messages_path.write_text(
+            json.dumps(messages, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        return message
+
+    def export_contact(self, client_id: str, contact_id: str) -> dict[str, object]:
+        contact_path = self._contact_path(client_id, contact_id)
+        if not contact_path.exists():
+            return {}
+        return json.loads(contact_path.read_text(encoding="utf-8"))
 
     def ensure_default_client(self) -> None:
         self.clients_dir.mkdir(parents=True, exist_ok=True)
@@ -228,6 +332,7 @@ class ClientAccountStore:
             json.dumps(payload, indent=2, sort_keys=True),
             encoding="utf-8",
         )
+        self._ensure_sample_conversation(client.path)
 
     def _build_client(
         self,
@@ -261,6 +366,40 @@ class ClientAccountStore:
 
     def _client_path(self, client_id: str) -> Path:
         return self.clients_dir / client_id
+
+    def _contact_path(self, client_id: str, contact_id: str) -> Path:
+        return self._client_path(self._normalise_client_id(client_id)) / "contacts" / (
+            self._normalise_client_id(contact_id) + ".json"
+        )
+
+    def _messages_path(self, client_id: str, contact_id: str) -> Path:
+        return (
+            self._client_path(self._normalise_client_id(client_id))
+            / "conversations"
+            / self._normalise_client_id(contact_id)
+            / "messages.json"
+        )
+
+    def _ensure_sample_conversation(self, client_path: Path) -> None:
+        if not client_path.exists():
+            return
+
+        contact_path = client_path / "contacts" / f"{TEST_CONTACT_ID}.json"
+        messages_path = client_path / "conversations" / TEST_CONTACT_ID / "messages.json"
+        contact_path.parent.mkdir(parents=True, exist_ok=True)
+        messages_path.parent.mkdir(parents=True, exist_ok=True)
+
+        if not contact_path.exists():
+            contact_path.write_text(
+                json.dumps(TEST_CONTACT_RECORD, indent=2, sort_keys=True),
+                encoding="utf-8",
+            )
+
+        if not messages_path.exists():
+            messages_path.write_text(
+                json.dumps(TEST_MESSAGES, indent=2, sort_keys=True),
+                encoding="utf-8",
+            )
 
     def _normalise_client_id(self, raw_id: object) -> str:
         client_id = str(raw_id or "").strip().lower()

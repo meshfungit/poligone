@@ -97,6 +97,46 @@ class ControllerApp:
         self.state.append_log("info", "client", f"Client removed: {client_id}")
         return self.client_store.to_dict()
 
+    def list_client_conversations(self, client_id: str) -> dict[str, object]:
+        return {
+            "client_id": client_id,
+            "conversations": self.client_store.list_conversations(client_id),
+        }
+
+    def list_client_messages(self, client_id: str, contact_id: str) -> dict[str, object]:
+        return {
+            "client_id": client_id,
+            "contact_id": contact_id,
+            "messages": self.client_store.list_messages(client_id, contact_id),
+        }
+
+    def clear_client_messages(self, client_id: str, contact_id: str) -> dict[str, object]:
+        result = self.client_store.clear_messages(client_id, contact_id)
+        self.state.append_log("info", "client", f"Messages cleared: {client_id}/{contact_id}")
+        return result
+
+    def send_client_message(
+        self,
+        client_id: str,
+        contact_id: str,
+        payload: dict[str, object],
+    ) -> dict[str, object]:
+        content = str(payload.get("content") or "")
+        message = self.client_store.add_outbound_message(client_id, contact_id, content)
+        self.state.append_log("info", "client", f"Message queued: {client_id}/{contact_id}")
+        return {
+            "client_id": client_id,
+            "contact_id": contact_id,
+            "message": message,
+            "messages": self.client_store.list_messages(client_id, contact_id),
+        }
+
+    def export_client_contact(self, client_id: str, contact_id: str) -> dict[str, object]:
+        return {
+            "client_id": client_id,
+            "contact": self.client_store.export_contact(client_id, contact_id),
+        }
+
     def _apply_active_runtime(self) -> RuntimeInfo:
         runtime = self.runtime_manager.get_runtime(self.config.engine_name)
 
