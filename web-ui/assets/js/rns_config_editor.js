@@ -6,61 +6,6 @@
   let addInterfaceOutgoing = true;
   let lastAddedInterfaceName = "";
 
-  const PRESET_DEFAULTS = {
-    AutoInterface: {
-      mode: "",
-      bitrate: "",
-      announce_interval: "",
-      outgoing: true,
-    },
-    BackboneInterface: {
-      mode: "boundary",
-      bitrate: 128000,
-      announce_interval: 15,
-      outgoing: true,
-    },
-    TCPClientInterface: {
-      mode: "boundary",
-      bitrate: 128000,
-      announce_interval: 15,
-      outgoing: true,
-    },
-    TCPServerInterface: {
-      mode: "gateway",
-      bitrate: 128000,
-      announce_interval: 720,
-      outgoing: true,
-      listen_ip: "0.0.0.0",
-      listen_port: 4242,
-    },
-    UDPInterface: {
-      mode: "boundary",
-      bitrate: 128000,
-      announce_interval: 15,
-      outgoing: true,
-      listen_ip: "0.0.0.0",
-    },
-    I2PInterface: {
-      mode: "boundary",
-      bitrate: 128000,
-      announce_interval: 15,
-      outgoing: true,
-      connectable: true,
-    },
-    PipeInterface: {
-      mode: "",
-      bitrate: "",
-      announce_interval: "",
-      outgoing: true,
-    },
-    CustomInterface: {
-      mode: "",
-      bitrate: "",
-      announce_interval: "",
-      outgoing: true,
-    },
-  };
-
   function render() {
     const block = document.createElement("section");
     block.className = "settings-block rns-config-editor";
@@ -546,7 +491,8 @@
       }
     }
 
-    const defaults = PRESET_DEFAULTS[iface.type] || {};
+    const presets = configState.schema?.interface_presets || {};
+    const defaults = presets[iface.type] || {};
 
     for (const [key, value] of Object.entries(defaults)) {
       iface[key] = value;

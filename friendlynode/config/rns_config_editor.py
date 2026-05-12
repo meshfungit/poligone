@@ -146,6 +146,61 @@ INTERFACE_TYPE_DEFAULTS: dict[str, dict[str, object]] = {
     },
 }
 
+INTERFACE_PRESETS: dict[str, dict[str, object]] = {
+    "AutoInterface": {
+        "mode": "",
+        "bitrate": "",
+        "announce_interval": "",
+        "outgoing": True,
+    },
+    "BackboneInterface": {
+        "mode": "boundary",
+        "bitrate": 128000,
+        "announce_interval": 15,
+        "outgoing": True,
+    },
+    "TCPClientInterface": {
+        "mode": "boundary",
+        "bitrate": 128000,
+        "announce_interval": 15,
+        "outgoing": True,
+    },
+    "TCPServerInterface": {
+        "mode": "gateway",
+        "bitrate": 128000,
+        "announce_interval": 720,
+        "outgoing": True,
+        "listen_ip": "0.0.0.0",
+        "listen_port": 4242,
+    },
+    "UDPInterface": {
+        "mode": "boundary",
+        "bitrate": 128000,
+        "announce_interval": 15,
+        "outgoing": True,
+        "listen_ip": "0.0.0.0",
+    },
+    "I2PInterface": {
+        "mode": "boundary",
+        "bitrate": 128000,
+        "announce_interval": 15,
+        "outgoing": True,
+        "connectable": True,
+    },
+    "PipeInterface": {
+        "mode": "",
+        "bitrate": "",
+        "announce_interval": "",
+        "outgoing": True,
+    },
+    "CustomInterface": {
+        "mode": "",
+        "bitrate": "",
+        "announce_interval": "",
+        "outgoing": True,
+    },
+}
+
 RETICULUM_FIELD_SCHEMA: list[dict[str, object]] = [
     {"key": "enable_transport", "label": "Enable transport", "type": FIELD_TYPE_BOOLEAN},
     {"key": "share_instance", "label": "Share instance", "type": FIELD_TYPE_BOOLEAN},
@@ -330,6 +385,7 @@ def build_schema() -> dict[str, object]:
         "reticulum_fields": RETICULUM_FIELD_SCHEMA,
         "common_interface_fields": COMMON_INTERFACE_FIELD_SCHEMA,
         "interface_type_fields": INTERFACE_TYPE_FIELD_SCHEMA,
+        "interface_presets": INTERFACE_PRESETS,
         "supported_interface_types": list(SUPPORTED_RNS_INTERFACE_TYPES),
     }
 
