@@ -569,11 +569,12 @@ function applyMessageStyle(input, symbol) {
       end: Math.max(selection.start, selection.end),
     }
     : editorSelectionToRawRange(input, messageDraft) || visibleSelectionToRawRange(messageDraft, selection.start, selection.end);
+  const linePoints = input.dataset.raw === "true" ? null : getEditorSelectionLinePoints(input);
   const transformed = applyStyleTransform(messageDraft, rawRange.start, rawRange.end, symbol);
   messageDraft = transformed.text;
   renderMessageEditorContent(input, messageDraft);
   input.focus();
-  collapseTransformedStyleSelection(input, transformed, symbol, selection);
+  collapseTransformedStyleSelection(input, transformed, symbol, linePoints);
   resizeMessageInput(input);
 }
 
@@ -790,13 +791,20 @@ function restoreVisibleSelection(input, selection) {
   messageEditorSelection = { start, end };
 }
 
-function collapseTransformedStyleSelection(input, transformed, symbol, originalSelection) {
+function collapseTransformedStyleSelection(input, transformed, symbol, originalLinePoints) {
   if (input.dataset.raw === "true") {
     setEditorSelectionOffsets(input, transformed.selectionEnd, transformed.selectionEnd);
     messageEditorSelection = {
       start: transformed.selectionEnd,
       end: transformed.selectionEnd,
     };
+    return;
+  }
+
+  if (originalLinePoints !== null) {
+    const endPoint = getOrderedLineSelectionPoints(originalLinePoints).end;
+    setEditorLinePointSelection(input, endPoint.lineIndex, endPoint.offset);
+    messageEditorSelection = getEditorSelectionOffsets(input);
     return;
   }
 
@@ -976,12 +984,9 @@ function editorSelectionToRawRange(input, source) {
   }
 
   const ranges = getSerializedLineRanges(source);
-  const startPoint = points.start.lineIndex < points.end.lineIndex || (
-    points.start.lineIndex === points.end.lineIndex && points.start.offset <= points.end.offset
-  )
-    ? points.start
-    : points.end;
-  const endPoint = startPoint === points.start ? points.end : points.start;
+  const ordered = getOrderedLineSelectionPoints(points);
+  const startPoint = ordered.start;
+  const endPoint = ordered.end;
   const startLine = ranges[startPoint.lineIndex];
   const endLine = ranges[endPoint.lineIndex];
 
@@ -992,6 +997,17 @@ function editorSelectionToRawRange(input, source) {
   return {
     start: startLine.start + lineVisibleOffsetToRawOffset(startLine.text, startPoint.offset),
     end: endLine.start + lineVisibleOffsetToRawOffset(endLine.text, endPoint.offset),
+  };
+}
+
+function getOrderedLineSelectionPoints(points) {
+  const startFirst = points.start.lineIndex < points.end.lineIndex || (
+    points.start.lineIndex === points.end.lineIndex && points.start.offset <= points.end.offset
+  );
+
+  return {
+    start: startFirst ? points.start : points.end,
+    end: startFirst ? points.end : points.start,
   };
 }
 
@@ -1032,6 +1048,67 @@ function getEditorLinePoint(lines, node, offset) {
   }
 
   return null;
+}
+
+function setEditorLinePointSelection(input, lineIndex, lineOffset) {
+  const lines = Array.from(input.querySelectorAll(".micron-line"));
+  const line = lines[lineIndex];
+
+  if (!line) {
+    setEditorSelectionOffsets(input, 0, 0);
+    return;
+  }
+
+  const point = findLineDomPoint(line, lineOffset);
+  const range = document.createRange();
+  range.setStart(point.node, point.offset);
+  range.setEnd(point.node, point.offset);
+
+  const selection = window.getSelection();
+
+  if (selection === null) {
+    return;
+  }
+
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
+
+function findLineDomPoint(line, targetOffset) {
+  const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+  let offset = targetOffset;
+  let lastText = null;
+
+  while (true) {
+    const node = walker.nextNode();
+
+    if (node === null) {
+      break;
+    }
+
+    lastText = node;
+
+    if (offset <= node.nodeValue.length) {
+      return {
+        node,
+        offset,
+      };
+    }
+
+    offset -= node.nodeValue.length;
+  }
+
+  if (lastText !== null) {
+    return {
+      node: lastText,
+      offset: lastText.nodeValue.length,
+    };
+  }
+
+  return {
+    node: line,
+    offset: 0,
+  };
 }
 
 function normalizeEditorLineOffset(line, offset, lineIndex) {
