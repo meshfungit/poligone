@@ -556,9 +556,11 @@ function insertMessageText(input, text) {
 
 function applyMessageStyle(input, symbol) {
   const selection = getEditorSelectionOffsets(input);
+  const linePoints = input.dataset.raw === "true" ? null : getEditorSelectionLinePoints(input);
 
   if (selection === null || selection.start === selection.end) {
     input.focus();
+    restoreCollapsedStyleCursor(input, selection, linePoints);
     return;
   }
 
@@ -569,7 +571,6 @@ function applyMessageStyle(input, symbol) {
       end: Math.max(selection.start, selection.end),
     }
     : editorSelectionToRawRange(input, messageDraft) || visibleSelectionToRawRange(messageDraft, selection.start, selection.end);
-  const linePoints = input.dataset.raw === "true" ? null : getEditorSelectionLinePoints(input);
   const transformed = applyStyleTransform(messageDraft, rawRange.start, rawRange.end, symbol);
   messageDraft = transformed.text;
   renderMessageEditorContent(input, messageDraft);
@@ -814,6 +815,26 @@ function collapseTransformedStyleSelection(input, transformed, symbol, originalL
     start: cursor,
     end: cursor,
   };
+}
+
+function restoreCollapsedStyleCursor(input, selection, linePoints) {
+  if (input.dataset.raw === "true") {
+    if (selection !== null) {
+      setEditorSelectionOffsets(input, selection.end, selection.end);
+      messageEditorSelection = {
+        start: selection.end,
+        end: selection.end,
+      };
+    }
+
+    return;
+  }
+
+  if (linePoints !== null) {
+    const point = getOrderedLineSelectionPoints(linePoints).end;
+    setEditorLinePointSelection(input, point.lineIndex, point.offset);
+    messageEditorSelection = getEditorSelectionOffsets(input);
+  }
 }
 
 function renderMessageEditorContent(input, source) {
