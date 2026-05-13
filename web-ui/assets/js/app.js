@@ -346,7 +346,14 @@ function renderMessageThread(contact, messages) {
 
   panel.appendChild(list);
   panel.appendChild(renderMessageComposer(contact));
+  scrollMessageListToBottom(list);
   return panel;
+}
+
+function scrollMessageListToBottom(list) {
+  window.setTimeout(() => {
+    list.scrollTop = list.scrollHeight;
+  }, 0);
 }
 
 function renderMessageComposer(contact) {
