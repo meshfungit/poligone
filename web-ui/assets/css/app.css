@@ -572,6 +572,28 @@ tr:last-child td { border-bottom: 0; }
 
 .message-editor {
   min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.message-editor-toggle {
+  width: fit-content;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1;
+  user-select: none;
+}
+
+.message-editor-toggle input {
+  margin: 0;
+}
+
+.message-editor-selection {
+  color: var(--muted);
+  font-family: Consolas, "Courier New", monospace;
 }
 
 .message-rich-input {
@@ -587,6 +609,10 @@ tr:last-child td { border-bottom: 0; }
   font: inherit;
   line-height: 1.35;
   white-space: pre-wrap;
+}
+
+.message-rich-input[data-raw="true"] {
+  font-family: Consolas, "Courier New", monospace;
 }
 
 .message-rich-input:empty::before {
@@ -650,6 +676,7 @@ tr:last-child td { border-bottom: 0; }
   background: var(--panel);
   padding: 10px;
   box-shadow: 0 14px 40px rgba(0, 0, 0, 0.35);
+  user-select: none;
 }
 
 .message-symbol-group + .message-symbol-group {

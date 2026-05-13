@@ -11,6 +11,7 @@ const expandedClientDetails = new Set();
 let messageDraft = "";
 let symbolPaletteOpen = false;
 let messageEditorSelection = null;
+let showMessageUnprintable = false;
 
 const rows = {
   Client: [
@@ -359,22 +360,55 @@ function renderMessageComposer(contact) {
   const editor = document.createElement("div");
   editor.className = "message-editor";
 
+  const editorTools = document.createElement("label");
+  editorTools.className = "message-editor-toggle";
+
+  const unprintableToggle = document.createElement("input");
+  unprintableToggle.type = "checkbox";
+  unprintableToggle.checked = showMessageUnprintable;
+  editorTools.appendChild(unprintableToggle);
+  editorTools.appendChild(document.createTextNode("show unprintable"));
+  const selectionStatus = document.createElement("span");
+  selectionStatus.className = "message-editor-selection";
+  editorTools.appendChild(selectionStatus);
+  editor.appendChild(editorTools);
+
   const input = document.createElement("div");
   input.className = "message-rich-input";
   input.contentEditable = "true";
   input.setAttribute("role", "textbox");
   input.setAttribute("aria-label", "Message");
   input.dataset.placeholder = "Message";
+  input.dataset.raw = showMessageUnprintable ? "true" : "false";
   renderMessageEditorContent(input, messageDraft);
+  unprintableToggle.onchange = () => {
+    messageDraft = serializeMessageEditor(input);
+    showMessageUnprintable = unprintableToggle.checked;
+    input.dataset.raw = showMessageUnprintable ? "true" : "false";
+    renderMessageEditorContent(input, messageDraft);
+    input.focus();
+    updateMessageEditorSelectionStatus(selectionStatus);
+    resizeMessageInput(input);
+  };
   window.setTimeout(() => resizeMessageInput(input), 0);
   input.oninput = () => {
     messageDraft = serializeMessageEditor(input);
     rememberMessageEditorSelection(input);
+    updateMessageEditorSelectionStatus(selectionStatus);
     resizeMessageInput(input);
   };
-  input.onkeyup = () => rememberMessageEditorSelection(input);
-  input.onmouseup = () => rememberMessageEditorSelection(input);
-  input.onblur = () => rememberMessageEditorSelection(input);
+  input.onkeyup = () => {
+    rememberMessageEditorSelection(input);
+    updateMessageEditorSelectionStatus(selectionStatus);
+  };
+  input.onmouseup = () => {
+    rememberMessageEditorSelection(input);
+    updateMessageEditorSelectionStatus(selectionStatus);
+  };
+  input.onblur = () => {
+    rememberMessageEditorSelection(input);
+    updateMessageEditorSelectionStatus(selectionStatus);
+  };
   input.onkeydown = (event) => {
     if (event.key === "Enter" && !event.shiftKey && !event.ctrlKey) {
       event.preventDefault();
@@ -386,9 +420,12 @@ function renderMessageComposer(contact) {
       event.preventDefault();
       document.execCommand("insertLineBreak");
       messageDraft = serializeMessageEditor(input);
+      rememberMessageEditorSelection(input);
+      updateMessageEditorSelectionStatus(selectionStatus);
       resizeMessageInput(input);
     }
   };
+  updateMessageEditorSelectionStatus(selectionStatus);
   editor.appendChild(input);
   composer.appendChild(editor);
 
@@ -422,6 +459,9 @@ function renderMessageComposer(contact) {
 function renderMessageSymbolPalette(input) {
   const palette = document.createElement("div");
   palette.className = "message-symbol-palette";
+  palette.onmousedown = (event) => {
+    event.preventDefault();
+  };
   const micron = window.FriendlyNodeMicron;
   const groups = micron && Array.isArray(micron.symbolGroups) ? micron.symbolGroups : [];
 
@@ -443,6 +483,7 @@ function renderMessageSymbolPalette(input) {
       const symbolTitle = typeof symbol === "string" ? symbol : symbol.title || symbolInsert;
       const item = document.createElement("button");
       item.type = "button";
+      item.tabIndex = -1;
       item.className = symbolInsert.length > 3 ? "wide" : "";
       item.textContent = symbolLabel;
       item.title = symbolTitle;
@@ -459,7 +500,6 @@ function renderMessageSymbolPalette(input) {
 
       item.onmousedown = (event) => {
         event.preventDefault();
-        rememberMessageEditorSelection(input);
       };
       item.onclick = () => {
         restoreMessageEditorSelection(input);
@@ -523,14 +563,61 @@ function applyMessageStyle(input, symbol) {
   }
 
   messageDraft = serializeMessageEditor(input);
-  const rawRange = visibleSelectionToRawRange(messageDraft, selection.start, selection.end);
-  const transformed = symbol.style === "reset"
-    ? resetInlineStyle(messageDraft, rawRange.start, rawRange.end)
-    : toggleInlineStyle(messageDraft, rawRange.start, rawRange.end, symbol);
+  const rawRange = input.dataset.raw === "true"
+    ? {
+      start: Math.min(selection.start, selection.end),
+      end: Math.max(selection.start, selection.end),
+    }
+    : editorSelectionToRawRange(input, messageDraft) || visibleSelectionToRawRange(messageDraft, selection.start, selection.end);
+  const transformed = applyStyleTransform(messageDraft, rawRange.start, rawRange.end, symbol);
   messageDraft = transformed.text;
   renderMessageEditorContent(input, messageDraft);
   input.focus();
+  collapseTransformedStyleSelection(input, transformed, symbol, selection);
   resizeMessageInput(input);
+}
+
+function applyStyleTransform(source, start, end, symbol) {
+  if (symbol.style === "foreground") {
+    return toggleColorStyle(source, start, end, "foreground", symbol.colorCode || "");
+  }
+
+  if (symbol.style === "background") {
+    return toggleColorStyle(source, start, end, "background", symbol.colorCode || "");
+  }
+
+  if (symbol.style === "reset") {
+    return resetInlineStyle(source, start, end);
+  }
+
+  return toggleInlineStyle(source, start, end, symbol);
+}
+
+function toggleColorStyle(source, selectionStart, selectionEnd, key, colorCode) {
+  const parsed = parseInlineStyleText(source);
+  const visibleStart = findVisibleStart(parsed.chars, selectionStart);
+  const visibleEnd = findVisibleEnd(parsed.chars, selectionEnd);
+
+  if (visibleStart >= visibleEnd) {
+    return {
+      text: source,
+      selectionStart,
+      selectionEnd,
+      visibleSelectionStart: visibleStart,
+      visibleSelectionEnd: visibleEnd,
+    };
+  }
+
+  for (let index = visibleStart; index < visibleEnd; index += 1) {
+    if (parsed.chars[index].hidden) {
+      continue;
+    }
+
+    const current = normalizeColorCode(parsed.chars[index].state[key]);
+    parsed.chars[index].state[key] = current === normalizeColorCode(colorCode) ? "" : colorCode;
+  }
+
+  return serializeInlineStyleText(parsed.chars, visibleStart, visibleEnd);
 }
 
 function prefixMessageLine(input, prefix, placeholder) {
@@ -540,58 +627,111 @@ function prefixMessageLine(input, prefix, placeholder) {
   }
 
   const selection = getEditorSelectionOffsets(input);
+  const restoreSelection = selection === null ? null : { ...selection };
   const value = serializeMessageEditor(input);
-  const rawRange = getEditorRawLineRange(value, selection);
-  const lineStart = rawRange.start;
-  const lineEndIndex = value.indexOf("\n", rawRange.end);
-  const lineEnd = lineEndIndex === -1 ? value.length : lineEndIndex;
-  const selectedBlock = value.slice(lineStart, lineEnd);
+  const lineRange = getEditorSerializedLineRange(input, value, selection);
+  const selectedBlock = value.slice(lineRange.start, lineRange.end);
   const block = selectedBlock || placeholder;
   const prefixed = block
     .split("\n")
     .map((line) => applyLinePrefix(line, prefix))
     .join("\n");
 
-  messageDraft = `${value.slice(0, lineStart)}${prefixed}${value.slice(lineEnd)}`;
+  messageDraft = `${value.slice(0, lineRange.start)}${prefixed}${value.slice(lineRange.end)}`;
   renderMessageEditorContent(input, messageDraft);
   input.focus();
+  restoreVisibleSelection(input, restoreSelection);
   resizeMessageInput(input);
 }
 
 function toggleHeadingLine(input, placeholder) {
   const selection = getEditorSelectionOffsets(input);
+  const restoreSelection = selection === null ? null : { ...selection };
   const value = serializeMessageEditor(input);
-  const rawRange = getEditorRawLineRange(value, selection);
-  const lineStart = rawRange.start;
-  const lineEndIndex = value.indexOf("\n", rawRange.end);
-  const lineEnd = lineEndIndex === -1 ? value.length : lineEndIndex;
-  const selectedBlock = value.slice(lineStart, lineEnd);
+  const lineRange = getEditorSerializedLineRange(input, value, selection);
+  const selectedBlock = value.slice(lineRange.start, lineRange.end);
   const block = selectedBlock || placeholder;
   const toggled = block
     .split("\n")
-    .map((line) => {
-      if (line.startsWith(">")) {
-        return line.replace(/^>+\s*/, "");
-      }
-
-      return `>${line}`;
-    })
+    .map(toggleHeadingPrefix)
     .join("\n");
 
-  messageDraft = `${value.slice(0, lineStart)}${toggled}${value.slice(lineEnd)}`;
+  messageDraft = `${value.slice(0, lineRange.start)}${toggled}${value.slice(lineRange.end)}`;
   renderMessageEditorContent(input, messageDraft);
   input.focus();
+  restoreVisibleSelection(input, restoreSelection);
   resizeMessageInput(input);
 }
 
 function applyLinePrefix(line, prefix) {
-  const withoutAlignment = line.replace(/^`[clra]/, "");
+  const parts = splitLinePrefixes(line);
+  const alignment = parts.alignment === prefix ? "" : prefix;
 
-  if (line.startsWith(prefix)) {
-    return withoutAlignment;
+  return `${alignment}${parts.heading}${parts.body}`;
+}
+
+function toggleHeadingPrefix(line) {
+  const parts = splitLinePrefixes(line);
+  const heading = parts.heading === "" ? ">" : "";
+
+  return `${parts.alignment}${heading}${parts.body}`;
+}
+
+function splitLinePrefixes(line) {
+  let body = line;
+  let alignment = "";
+  let heading = "";
+
+  const alignmentMatch = body.match(/^`[clra]/);
+
+  if (alignmentMatch !== null) {
+    alignment = alignmentMatch[0];
+    body = body.slice(alignment.length);
   }
 
-  return `${prefix}${withoutAlignment}`;
+  const headingMatch = body.match(/^>+\s*/);
+
+  if (headingMatch !== null) {
+    heading = ">";
+    body = body.slice(headingMatch[0].length);
+  }
+
+  return {
+    alignment,
+    heading,
+    body,
+  };
+}
+
+function getEditorSerializedLineRange(input, serialized, selection) {
+  const lineIndex = getEditorSelectedLineIndex(input, selection);
+  let start = 0;
+
+  for (let index = 0; index < lineIndex; index += 1) {
+    const nextBreak = serialized.indexOf("\n", start);
+
+    if (nextBreak === -1) {
+      return {
+        start: serialized.length,
+        end: serialized.length,
+      };
+    }
+
+    start = nextBreak + 1;
+  }
+
+  const endIndex = serialized.indexOf("\n", start);
+
+  return {
+    start,
+    end: endIndex === -1 ? serialized.length : endIndex,
+  };
+}
+
+function getEditorSelectedLineIndex(input, selection) {
+  const offset = selection === null ? getMessagePlainText(input).length : Math.min(selection.start, selection.end);
+  const textBeforeSelection = getMessagePlainText(input).slice(0, offset);
+  return textBeforeSelection.split("\n").length - 1;
 }
 
 function getEditorRawLineRange(source, selection) {
@@ -608,17 +748,18 @@ function getEditorRawLineRange(source, selection) {
 
 function visibleOffsetToRawOffset(source, visibleOffset) {
   const parsed = parseInlineStyleText(source);
+  const visibleChars = getStyleVisibleChars(parsed.chars);
 
   if (visibleOffset <= 0) {
     return 0;
   }
 
-  const char = parsed.chars[Math.min(visibleOffset, parsed.chars.length) - 1];
+  const char = visibleChars[Math.min(visibleOffset, visibleChars.length) - 1];
   return char ? char.rawEnd : source.length;
 }
 
 function getVisibleLength(source) {
-  return parseInlineStyleText(source).chars.length;
+  return getStyleVisibleChars(parseInlineStyleText(source).chars).length;
 }
 
 function insertMessageBlock(input, block) {
@@ -637,6 +778,36 @@ function insertMessageBlock(input, block) {
   resizeMessageInput(input);
 }
 
+function restoreVisibleSelection(input, selection) {
+  if (selection === null) {
+    return;
+  }
+
+  const visibleLength = getVisibleLength(messageDraft);
+  const start = Math.min(selection.start, visibleLength);
+  const end = Math.min(selection.end, visibleLength);
+  setEditorSelectionOffsets(input, start, end);
+  messageEditorSelection = { start, end };
+}
+
+function collapseTransformedStyleSelection(input, transformed, symbol, originalSelection) {
+  if (input.dataset.raw === "true") {
+    setEditorSelectionOffsets(input, transformed.selectionEnd, transformed.selectionEnd);
+    messageEditorSelection = {
+      start: transformed.selectionEnd,
+      end: transformed.selectionEnd,
+    };
+    return;
+  }
+
+  const cursor = transformed.visibleSelectionEnd;
+  setEditorSelectionOffsets(input, cursor, cursor);
+  messageEditorSelection = {
+    start: cursor,
+    end: cursor,
+  };
+}
+
 function renderMessageEditorContent(input, source) {
   input.replaceChildren();
 
@@ -644,10 +815,19 @@ function renderMessageEditorContent(input, source) {
     return;
   }
 
+  if (input.dataset.raw === "true") {
+    input.textContent = source;
+    return;
+  }
+
   input.appendChild(renderMessageContent(source));
 }
 
 function serializeMessageEditor(input) {
+  if (input.dataset.raw === "true") {
+    return getMessagePlainText(input);
+  }
+
   const content = input.querySelector(".micron-content");
   const root = content || input;
   const lines = [];
@@ -665,23 +845,25 @@ function serializeMessageEditor(input) {
 }
 
 function serializeMessageLinePrefix(line) {
-  if (line.classList.contains("micron-heading")) {
-    return ">";
-  }
+  let prefix = "";
 
   if (line.classList.contains("micron-align-c")) {
-    return "`c";
+    prefix += "`c";
   }
 
   if (line.classList.contains("micron-align-r")) {
-    return "`r";
+    prefix += "`r";
   }
 
   if (line.classList.contains("micron-align-a")) {
-    return "`a";
+    prefix += "`a";
   }
 
-  return "";
+  if (line.classList.contains("micron-heading")) {
+    prefix += ">";
+  }
+
+  return prefix;
 }
 
 function serializeMessageInlineNode(root) {
@@ -768,27 +950,233 @@ function getEditorSelectionOffsets(input) {
 }
 
 function getEditorTextOffset(root, node, offset) {
+  let total = 0;
+  const lines = Array.from(root.querySelectorAll(".micron-line"));
+
+  if (lines.length === 0) {
+    return getPlainDomTextOffset(root, node, offset);
+  }
+
+  for (const line of lines) {
+    if (line.contains(node)) {
+      return total + getLineDomTextOffset(line, node, offset);
+    }
+
+    total += getVisibleLineTextLength(line) + 1;
+  }
+
+  return total > 0 ? total - 1 : 0;
+}
+
+function editorSelectionToRawRange(input, source) {
+  const points = getEditorSelectionLinePoints(input);
+
+  if (points === null) {
+    return null;
+  }
+
+  const ranges = getSerializedLineRanges(source);
+  const startPoint = points.start.lineIndex < points.end.lineIndex || (
+    points.start.lineIndex === points.end.lineIndex && points.start.offset <= points.end.offset
+  )
+    ? points.start
+    : points.end;
+  const endPoint = startPoint === points.start ? points.end : points.start;
+  const startLine = ranges[startPoint.lineIndex];
+  const endLine = ranges[endPoint.lineIndex];
+
+  if (!startLine || !endLine) {
+    return null;
+  }
+
+  return {
+    start: startLine.start + lineVisibleOffsetToRawOffset(startLine.text, startPoint.offset),
+    end: endLine.start + lineVisibleOffsetToRawOffset(endLine.text, endPoint.offset),
+  };
+}
+
+function getEditorSelectionLinePoints(input) {
+  const selection = window.getSelection();
+
+  if (selection === null || selection.rangeCount === 0) {
+    return null;
+  }
+
+  const range = selection.getRangeAt(0);
+  const lines = Array.from(input.querySelectorAll(".micron-line"));
+
+  if (lines.length === 0) {
+    return null;
+  }
+
+  const start = getEditorLinePoint(lines, range.startContainer, range.startOffset);
+  const end = getEditorLinePoint(lines, range.endContainer, range.endOffset);
+
+  if (start === null || end === null) {
+    return null;
+  }
+
+  return { start, end };
+}
+
+function getEditorLinePoint(lines, node, offset) {
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+
+    if (line.contains(node)) {
+      return {
+        lineIndex: index,
+        offset: normalizeEditorLineOffset(line, getLineDomTextOffset(line, node, offset), index),
+      };
+    }
+  }
+
+  return null;
+}
+
+function normalizeEditorLineOffset(line, offset, lineIndex) {
+  const lineLength = getVisibleLineTextLength(line);
+
+  if (offset <= 0 || lineLength === 0) {
+    return 0;
+  }
+
+  return Math.max(0, Math.min(lineLength, offset - lineIndex));
+}
+
+function getSerializedLineRanges(source) {
+  const ranges = [];
+  let start = 0;
+
+  while (start <= source.length) {
+    const end = source.indexOf("\n", start);
+    const lineEnd = end === -1 ? source.length : end;
+    ranges.push({
+      start,
+      end: lineEnd,
+      text: source.slice(start, lineEnd),
+    });
+
+    if (end === -1) {
+      break;
+    }
+
+    start = end + 1;
+  }
+
+  return ranges;
+}
+
+function lineVisibleOffsetToRawOffset(line, visibleOffset) {
+  const visibleChars = getStyleVisibleChars(parseInlineStyleText(line).chars);
+
+  if (visibleChars.length === 0) {
+    return line.length;
+  }
+
+  if (visibleOffset <= 0) {
+    return visibleChars[0].rawStart;
+  }
+
+  if (visibleOffset >= visibleChars.length) {
+    return visibleChars[visibleChars.length - 1].rawEnd;
+  }
+
+  return visibleChars[visibleOffset].rawStart;
+}
+
+function getPlainDomTextOffset(root, node, offset) {
   const range = document.createRange();
   range.selectNodeContents(root);
   range.setEnd(node, offset);
   return range.toString().length;
 }
 
+function getLineDomTextOffset(line, node, offset) {
+  let total = 0;
+  const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+
+  while (true) {
+    const current = walker.nextNode();
+
+    if (current === null) {
+      break;
+    }
+
+    if (current === node) {
+      return total + offset;
+    }
+
+    total += current.nodeValue.length;
+  }
+
+  return total;
+}
+
+function getVisibleLineTextLength(line) {
+  let total = 0;
+  const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+
+  while (true) {
+    const current = walker.nextNode();
+
+    if (current === null) {
+      break;
+    }
+
+    total += current.nodeValue.length;
+  }
+
+  return total;
+}
+
 function visibleSelectionToRawRange(source, visibleStart, visibleEnd) {
   const parsed = parseInlineStyleText(source);
+  const visibleChars = getStyleVisibleChars(parsed.chars);
   const startIndex = Math.min(visibleStart, visibleEnd);
   const endIndex = Math.max(visibleStart, visibleEnd);
-  const startChar = parsed.chars[startIndex];
-  const endChar = parsed.chars[endIndex - 1];
+  const startChar = visibleChars[startIndex];
+  const nextChar = visibleChars[endIndex];
+  const endChar = visibleChars[endIndex - 1];
 
   return {
     start: startChar ? startChar.rawStart : source.length,
-    end: endChar ? endChar.rawEnd : source.length,
+    end: nextChar ? nextChar.rawStart : endChar ? endChar.rawEnd : source.length,
   };
+}
+
+function rawRangeToVisibleSelection(source, rawStart, rawEnd) {
+  const parsed = parseInlineStyleText(source);
+  const visibleChars = getStyleVisibleChars(parsed.chars);
+  const start = visibleChars.findIndex((char) => char.rawEnd > rawStart);
+  const end = visibleChars.findIndex((char) => char.rawStart >= rawEnd);
+
+  return {
+    start: start === -1 ? visibleChars.length : start,
+    end: end === -1 ? visibleChars.length : end,
+  };
+}
+
+function getStyleVisibleChars(chars) {
+  return chars.filter((char) => !char.hidden && char.value !== "\n");
 }
 
 function rememberMessageEditorSelection(input) {
   messageEditorSelection = getEditorSelectionOffsets(input);
+}
+
+function updateMessageEditorSelectionStatus(node) {
+  if (!showMessageUnprintable) {
+    node.textContent = "";
+    return;
+  }
+
+  if (messageEditorSelection === null) {
+    node.textContent = "selection: none";
+    return;
+  }
+
+  node.textContent = `selection: ${messageEditorSelection.start}..${messageEditorSelection.end}`;
 }
 
 function restoreMessageEditorSelection(input) {
@@ -884,6 +1272,10 @@ function toggleInlineStyle(source, selectionStart, selectionEnd, symbol) {
   }
 
   for (let index = visibleStart; index < visibleEnd; index += 1) {
+    if (parsed.chars[index].hidden) {
+      continue;
+    }
+
     const charState = parsed.chars[index].state;
 
     if (symbol.style === "foreground" || symbol.style === "background") {
@@ -912,6 +1304,10 @@ function resetInlineStyle(source, selectionStart, selectionEnd) {
   }
 
   for (let index = visibleStart; index < visibleEnd; index += 1) {
+    if (parsed.chars[index].hidden) {
+      continue;
+    }
+
     parsed.chars[index].state = createInlineStyleState();
   }
 
@@ -922,8 +1318,30 @@ function parseInlineStyleText(source) {
   const chars = [];
   const state = createInlineStyleState();
   let index = 0;
+  let atLineStart = true;
 
   while (index < source.length) {
+    if (atLineStart) {
+      const prefix = readLinePrefix(source, index);
+
+      if (prefix.value !== "") {
+        chars.push({
+          value: prefix.value,
+          rawStart: index,
+          rawEnd: prefix.nextIndex,
+          state: createInlineStyleState(),
+          hidden: true,
+        });
+        index = prefix.nextIndex;
+      }
+
+      atLineStart = false;
+
+      if (index >= source.length) {
+        break;
+      }
+    }
+
     const char = source[index];
 
     if (char === "\\" && index + 1 < source.length) {
@@ -932,6 +1350,7 @@ function parseInlineStyleText(source) {
         rawStart: index,
         rawEnd: index + 2,
         state: cloneInlineStyleState(state),
+        hidden: false,
       });
       index += 2;
       continue;
@@ -997,11 +1416,35 @@ function parseInlineStyleText(source) {
       rawStart: index,
       rawEnd: index + 1,
       state: cloneInlineStyleState(state),
+      hidden: false,
     });
+    atLineStart = char === "\n";
     index += 1;
   }
 
   return { chars };
+}
+
+function readLinePrefix(source, startIndex) {
+  let index = startIndex;
+  let value = "";
+
+  if (source.slice(index, index + 2).match(/^`[clra]/)) {
+    value += source.slice(index, index + 2);
+    index += 2;
+  }
+
+  const heading = source.slice(index).match(/^>+\s*/);
+
+  if (heading !== null) {
+    value += heading[0];
+    index += heading[0].length;
+  }
+
+  return {
+    value,
+    nextIndex: index,
+  };
 }
 
 function serializeInlineStyleText(chars, selectedVisibleStart, selectedVisibleEnd) {
@@ -1011,6 +1454,14 @@ function serializeInlineStyleText(chars, selectedVisibleStart, selectedVisibleEn
   const current = createInlineStyleState();
 
   for (let index = 0; index < chars.length; index += 1) {
+    if (chars[index].hidden) {
+      applyInlineStyleTransition(current, createInlineStyleState(), (token) => {
+        output += token;
+      });
+      output += chars[index].value;
+      continue;
+    }
+
     applyInlineStyleTransition(current, chars[index].state, (token) => {
       output += token;
     });
@@ -1034,33 +1485,22 @@ function serializeInlineStyleText(chars, selectedVisibleStart, selectedVisibleEn
     text: output,
     selectionStart,
     selectionEnd,
+    visibleSelectionStart: selectedVisibleStart,
+    visibleSelectionEnd: selectedVisibleEnd,
   };
 }
 
 function applyInlineStyleTransition(current, next, append) {
-  if (current.foreground !== next.foreground) {
-    if (current.foreground !== "") {
-      append("`f");
-    }
-
-    if (next.foreground !== "") {
-      append(`\`F${next.foreground}`);
-    }
-
-    current.foreground = next.foreground;
-  }
-
-  if (current.background !== next.background) {
-    if (current.background !== "") {
-      append("`b");
-    }
-
-    if (next.background !== "") {
-      append(`\`B${next.background}`);
-    }
-
-    current.background = next.background;
-  }
+  applyInlineColorTransition(current, next, append, {
+    key: "foreground",
+    openToken: "`F",
+    closeToken: "`f",
+  });
+  applyInlineColorTransition(current, next, append, {
+    key: "background",
+    openToken: "`B",
+    closeToken: "`b",
+  });
 
   for (const key of ["bold", "italic", "underline"]) {
     if (current[key] !== next[key]) {
@@ -1068,6 +1508,22 @@ function applyInlineStyleTransition(current, next, append) {
       current[key] = next[key];
     }
   }
+}
+
+function applyInlineColorTransition(current, next, append, spec) {
+  if (current[spec.key] === next[spec.key]) {
+    return;
+  }
+
+  if (current[spec.key] !== "") {
+    append(spec.closeToken);
+  }
+
+  if (next[spec.key] !== "") {
+    append(`${spec.openToken}${next[spec.key]}`);
+  }
+
+  current[spec.key] = next[spec.key];
 }
 
 function getInlineBooleanStyleToken(style) {
@@ -1947,6 +2403,26 @@ document.addEventListener("keydown", (event) => {
   if (symbolPaletteOpen) {
     symbolPaletteOpen = false;
     render("Client");
+  }
+});
+
+document.addEventListener("selectionchange", () => {
+  const editor = document.querySelector(".message-rich-input");
+
+  if (editor === null) {
+    return;
+  }
+
+  const activeElement = document.activeElement;
+
+  if (activeElement !== null && activeElement.closest(".message-symbol-palette") !== null) {
+    return;
+  }
+
+  const selection = getEditorSelectionOffsets(editor);
+
+  if (selection !== null) {
+    messageEditorSelection = selection;
   }
 });
 window.render = render;

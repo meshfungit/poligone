@@ -11,7 +11,7 @@
         { label: "\u21E5", linePrefix: "`r", title: "Right align" },
         { label: "\u21E4", linePrefix: "`a", title: "Default align" },
         { label: "Aa", style: "foreground", colorCode: "ff8800", placeholder: "orange", title: "Orange text", color: "#ff8800" },
-        { label: "Aa", style: "background", colorCode: "000055", placeholder: "background", title: "Blue background", background: "#000055" },
+        { label: "Aa", style: "background", colorCode: "005555", placeholder: "background", title: "Blue background", background: "#005555" },
         { label: "H", linePrefix: ">", placeholder: "Heading", title: "Heading" },
         { label: "\u2500", block: "-\u223F", title: "Divider" },
       ],
