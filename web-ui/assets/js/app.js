@@ -7,6 +7,11 @@ let activeContactId = "";
 let contactMenuState = null;
 let contactModalState = null;
 let clearMessagesState = null;
+const collapsedPanels = {
+  toolbox: false,
+  clientAccounts: true,
+  conversations: false,
+};
 const expandedClientDetails = new Set();
 let messageDraft = "";
 let symbolPaletteOpen = false;
@@ -49,6 +54,8 @@ const rows = {
 };
 
 function renderNav(active) {
+  renderToolboxState();
+
   const nav = document.querySelector("nav");
   nav.innerHTML = "";
 
@@ -59,6 +66,49 @@ function renderNav(active) {
     button.onclick = () => render(tab);
     nav.appendChild(button);
   }
+}
+
+function renderToolboxState() {
+  const aside = document.querySelector("aside");
+
+  if (aside === null) {
+    return;
+  }
+
+  let button = aside.querySelector(".toolbox-toggle");
+
+  if (button === null) {
+    button = document.createElement("button");
+    button.type = "button";
+    button.className = "toolbox-toggle";
+    button.onclick = () => {
+      collapsedPanels.toolbox = !collapsedPanels.toolbox;
+      renderToolboxState();
+    };
+    aside.insertBefore(button, aside.firstChild);
+  }
+
+  aside.classList.toggle("toolbox-collapsed", collapsedPanels.toolbox);
+  button.textContent = collapsedPanels.toolbox ? "Show toolbox" : "Hide toolbox";
+}
+
+function renderCollapsibleSection(key, titleText) {
+  const section = document.createElement("details");
+  section.className = "settings-block collapsible-section";
+  section.open = !collapsedPanels[key];
+  section.ontoggle = () => {
+    collapsedPanels[key] = !section.open;
+  };
+
+  const summary = document.createElement("summary");
+  summary.className = "collapsible-header";
+
+  const title = document.createElement("h2");
+  title.textContent = titleText;
+  summary.appendChild(title);
+  section.appendChild(summary);
+
+  return section;
 }
 
 function renderTable(tab) {
@@ -99,17 +149,7 @@ function renderTable(tab) {
 
 function renderClient() {
   const wrapper = document.createElement("div");
-  const block = document.createElement("section");
-  block.className = "settings-block";
-
-  const title = document.createElement("h2");
-  title.textContent = "Client";
-  block.appendChild(title);
-
-  const hint = document.createElement("div");
-  hint.className = "settings-hint";
-  hint.textContent = "Client accounts are separate from transport settings. LXMF startup is not wired yet.";
-  block.appendChild(hint);
+  const block = renderCollapsibleSection("clientAccounts", "Contacts");
 
   const clientsData = currentStatus?.clients || {};
   const clients = Array.isArray(clientsData.clients) ? clientsData.clients : [];
@@ -119,7 +159,7 @@ function renderClient() {
 
   const addButton = document.createElement("button");
   addButton.type = "button";
-  addButton.textContent = "AddClient";
+  addButton.textContent = "Add Contact";
   addButton.onclick = openNewClientEditor;
   actionRow.appendChild(addButton);
   block.appendChild(actionRow);
@@ -235,12 +275,13 @@ function renderClientAccountField(label, value) {
 }
 
 function renderClientChat(clients) {
-  const section = document.createElement("section");
-  section.className = "settings-block client-chat-section";
+  const section = renderCollapsibleSection("conversations", "Conversations");
+  section.classList.add("client-chat-section");
 
-  const title = document.createElement("h2");
-  title.textContent = "Conversations";
-  section.appendChild(title);
+  const hint = document.createElement("div");
+  hint.className = "settings-hint";
+  hint.textContent = "Client accounts are separate from transport settings. LXMF startup is not wired yet.";
+  section.appendChild(hint);
 
   if (clients.length === 0) {
     const empty = document.createElement("div");
