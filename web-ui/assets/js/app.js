@@ -1308,6 +1308,12 @@ function setEditorSelectionOffsets(input, start, end) {
 }
 
 function findEditorDomPoint(root, targetOffset) {
+  const lines = Array.from(root.querySelectorAll(".micron-line"));
+
+  if (lines.length > 0) {
+    return findEditorLineDomPoint(lines, targetOffset);
+  }
+
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   let offset = targetOffset;
   let lastText = null;
@@ -1342,6 +1348,28 @@ function findEditorDomPoint(root, targetOffset) {
     node: root,
     offset: 0,
   };
+}
+
+function findEditorLineDomPoint(lines, targetOffset) {
+  let offset = Math.max(0, targetOffset);
+  let lastLine = null;
+
+  for (const line of lines) {
+    const lineLength = getVisibleLineTextLength(line);
+    lastLine = line;
+
+    if (offset <= lineLength) {
+      return findLineDomPoint(line, offset);
+    }
+
+    offset -= lineLength + 1;
+  }
+
+  if (lastLine !== null) {
+    return findLineDomPoint(lastLine, getVisibleLineTextLength(lastLine));
+  }
+
+  return null;
 }
 
 function cssColorToMicronColor(value) {
