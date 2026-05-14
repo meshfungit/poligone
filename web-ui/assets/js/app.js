@@ -2456,6 +2456,18 @@ function resizeMessageInput(input) {
   input.style.overflowY = input.scrollHeight > maxHeight ? "auto" : "hidden";
 }
 
+function renderInterfaces() {
+  const wrapper = document.createElement("div");
+
+  if (window.FriendlyNodeRnsConfigEditor !== undefined) {
+    wrapper.appendChild(window.FriendlyNodeRnsConfigEditor.render({ mode: "interfaces" }));
+    return wrapper;
+  }
+
+  wrapper.appendChild(renderTable("Interfaces"));
+  return wrapper;
+}
+
 function renderSettings() {
   const wrapper = document.createElement("div");
 
@@ -2508,8 +2520,8 @@ function renderSettings() {
   wrapper.appendChild(runtimeBlock);
 
   if (window.FriendlyNodeRnsConfigEditor !== undefined) {
-  wrapper.appendChild(window.FriendlyNodeRnsConfigEditor.render());
-    }
+    wrapper.appendChild(window.FriendlyNodeRnsConfigEditor.render({ mode: "settings" }));
+  }
 
   wrapper.appendChild(renderTable("Settings"));
   return wrapper;
@@ -2925,6 +2937,11 @@ function render(tab = "Client") {
     return;
   }
 
+  if (tab === "Interfaces") {
+    content.appendChild(renderInterfaces());
+    return;
+  }
+
   content.appendChild(renderTable(tab));
 }
 
@@ -3029,7 +3046,7 @@ async function fetchStatus() {
 
   const activeTab = getActiveTab();
 
-  if (activeTab === "Client" || activeTab === "Transport" || activeTab === "Logs" || activeTab === "Settings") {
+  if (activeTab === "Client" || activeTab === "Interfaces" || activeTab === "Transport" || activeTab === "Logs" || activeTab === "Settings") {
     render(activeTab);
   }
 }
@@ -3059,7 +3076,7 @@ async function restartReticulum() {
 
     const activeTab = getActiveTab();
 
-    if (activeTab === "Client" || activeTab === "Transport" || activeTab === "Logs" || activeTab === "Settings") {
+    if (activeTab === "Client" || activeTab === "Interfaces" || activeTab === "Transport" || activeTab === "Logs" || activeTab === "Settings") {
       render(activeTab);
     }
   } catch (error) {

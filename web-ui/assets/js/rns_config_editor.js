@@ -6,18 +6,25 @@
   let addInterfaceOutgoing = true;
   let lastAddedInterfaceName = "";
 
-  function render() {
+  function render(options = {}) {
+    const mode = options.mode || "full";
     const block = document.createElement("section");
     block.className = "settings-block rns-config-editor";
     block.id = "rns-config-editor";
 
     const title = document.createElement("h2");
-    title.textContent = "Reticulum config";
+    title.textContent = mode === "interfaces" ? "Interfaces" : "Reticulum config";
     block.appendChild(title);
 
     const hint = document.createElement("div");
     hint.className = "settings-hint";
-    hint.textContent = "Visual editor for data/config/reticulum/config. Saving does not restart the engine automatically.";
+    if (mode === "interfaces") {
+      hint.textContent = "Editor for the [interfaces] section in data/config/reticulum/config. Saving does not restart the engine automatically.";
+    } else if (mode === "settings") {
+      hint.textContent = "Editor for the [reticulum] section in data/config/reticulum/config. Saving does not restart the engine automatically.";
+    } else {
+      hint.textContent = "Visual editor for data/config/reticulum/config. Saving does not restart the engine automatically.";
+    }
     block.appendChild(hint);
 
     if (loading) {
@@ -48,8 +55,15 @@
     }
 
     block.appendChild(renderConfigPaths());
-    block.appendChild(renderReticulumSection());
-    block.appendChild(renderInterfacesSection());
+
+    if (mode !== "interfaces") {
+      block.appendChild(renderReticulumSection());
+    }
+
+    if (mode !== "settings") {
+      block.appendChild(renderInterfacesSection());
+    }
+
     block.appendChild(renderEditorActions());
 
     return block;
@@ -74,7 +88,7 @@
       loadError = error instanceof Error ? error.message : String(error);
     } finally {
       loading = false;
-      rerenderSettings();
+      rerenderActiveRnsEditor();
     }
   }
 
@@ -109,10 +123,10 @@
 
       configState = await response.json();
       loadError = "";
-      rerenderSettings();
+      rerenderActiveRnsEditor();
     } catch (error) {
       loadError = error instanceof Error ? error.message : String(error);
-      rerenderSettings();
+      rerenderActiveRnsEditor();
     } finally {
       const newButton = document.querySelector("#save-rns-config");
 
@@ -302,7 +316,7 @@
 
             if (field.key === "type") {
               applyInterfaceTypeDefaults(iface);
-              rerenderSettings();
+              rerenderActiveRnsEditor();
             }
           },
         })
@@ -349,7 +363,7 @@
     reloadButton.onclick = () => {
       configState = null;
       loadError = "";
-      rerenderSettings();
+      rerenderActiveRnsEditor();
     };
     row.appendChild(reloadButton);
 
@@ -444,7 +458,7 @@
     applyInterfaceTypeDefaults(iface);
     configState.interfaces.push(iface);
     lastAddedInterfaceName = name;
-    rerenderSettings();
+    rerenderActiveRnsEditor();
 
     window.setTimeout(() => {
       const element = document.querySelector("#last-added-interface");
@@ -464,7 +478,7 @@
     }
 
     configState.interfaces.splice(index, 1);
-    rerenderSettings();
+    rerenderActiveRnsEditor();
   }
 
   function applyInterfaceTypeDefaults(iface) {
@@ -527,11 +541,11 @@
     return null;
   }
 
-  function rerenderSettings() {
+  function rerenderActiveRnsEditor() {
     const activeTab = document.querySelector("nav button.active")?.textContent || "";
 
-    if (activeTab === "Settings" && typeof window.render === "function") {
-      window.render("Settings");
+    if ((activeTab === "Settings" || activeTab === "Interfaces") && typeof window.render === "function") {
+      window.render(activeTab);
     }
   }
 
