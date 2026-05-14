@@ -138,6 +138,39 @@ class ControllerApp:
             "announces": self.state.snapshot_announces(),
         }
 
+    def list_nomadnet_nodes(self) -> dict[str, object]:
+        nodes = [
+            announce
+            for announce in self.state.snapshot_announces()
+            if announce.get("type") == "nomadnet"
+            or announce.get("aspect") == "nomadnetwork.node"
+        ]
+        return {
+            "nodes": nodes,
+        }
+
+    def fetch_nomadnet_page(self, destination_hash: str, path: str) -> dict[str, object]:
+        destination = destination_hash.strip()
+        page_path = path.strip() or "/page/index.mu"
+
+        if not page_path.startswith("/"):
+            page_path = f"/{page_path}"
+
+        source = (
+            "`cFriendlyNode NomadNet browser\n\n"
+            ">Stub page\n\n"
+            f"`!Destination`!: {destination or '-'}\n\n"
+            f"`!Path`!: {page_path}\n\n"
+            "Real NomadNet page retrieval is not wired yet.\n"
+        )
+        self.state.append_log("info", "nomadnet", f"Page requested: {destination or '-'}{page_path}")
+        return {
+            "destination_hash": destination,
+            "path": page_path,
+            "source": source,
+            "runtime": "stub",
+        }
+
     def build_client_draft(self) -> dict[str, object]:
         return self.client_store.build_draft().to_dict()
 

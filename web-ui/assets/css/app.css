@@ -105,6 +105,99 @@ th, td {
 th { color: var(--muted); font-weight: 600; background: #0f1722; }
 tr:last-child td { border-bottom: 0; }
 .actions button { margin-left: 8px; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--text); cursor: pointer; }
+.transport-status-section {
+  margin-bottom: 10px;
+}
+
+.transport-status-table {
+  table-layout: fixed;
+}
+
+.transport-status-table td {
+  text-align: center;
+  padding: 8px 10px;
+}
+
+.transport-status-table tr:first-child td {
+  color: var(--muted);
+  font-size: 12px;
+  background: #0f1722;
+}
+
+.transport-status-table tr:last-child td {
+  font-size: 14px;
+}
+
+.nomadnet-tabs {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.nomadnet-tabs button,
+.nomadnet-bookmark-list button {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel2);
+  color: var(--text);
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.nomadnet-tabs button.active,
+.nomadnet-tabs button:hover,
+.nomadnet-bookmark-list button:hover {
+  border-color: var(--accent);
+}
+
+.nomadnet-address-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(140px, 220px);
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.nomadnet-actions {
+  margin-top: 10px;
+}
+
+.nomadnet-page {
+  min-width: 0;
+  max-height: min(58vh, 560px);
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  padding: 12px;
+  margin-top: 12px;
+}
+
+.nomadnet-bookmark-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.nomadnet-bookmark-list button {
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.nomadnet-editor textarea {
+  width: 100%;
+  min-height: 220px;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  padding: 10px;
+  font: 13px/1.45 ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+}
+
 .sidebar-engine {
   margin-top: 18px;
 }
@@ -295,6 +388,35 @@ tr:last-child td { border-bottom: 0; }
   padding: 8px 10px;
   overflow-x: auto;
   white-space: nowrap;
+}
+
+.settings-compact-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.settings-compact-item {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel2);
+  padding: 8px 10px;
+}
+
+.settings-compact-item span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.settings-compact-item code {
+  min-width: 0;
+  color: var(--text);
+  font-size: 12px;
+  overflow-wrap: anywhere;
 }
 
 .access-endpoint-grid {
@@ -1348,6 +1470,9 @@ tr:last-child td { border-bottom: 0; }
   }
 
   .access-endpoint-grid,
+  .nomadnet-address-row,
+  .nomadnet-tabs,
+  .settings-compact-grid,
   .settings-command-row {
     grid-template-columns: 1fr;
   }

@@ -13,13 +13,21 @@
     block.id = "rns-config-editor";
 
     const title = document.createElement("h2");
-    title.textContent = mode === "interfaces" ? "Interfaces" : "Reticulum config";
+    if (mode === "interfaces") {
+      title.textContent = "Interfaces";
+    } else if (mode === "transport") {
+      title.textContent = "Transport config";
+    } else {
+      title.textContent = "Reticulum config";
+    }
     block.appendChild(title);
 
     const hint = document.createElement("div");
     hint.className = "settings-hint";
     if (mode === "interfaces") {
       hint.textContent = "Editor for the [interfaces] section in data/config/reticulum/config. Saving does not restart the engine automatically.";
+    } else if (mode === "transport") {
+      hint.textContent = "Editor for the [reticulum] transport settings in data/config/reticulum/config. Saving does not restart the engine automatically.";
     } else if (mode === "settings") {
       hint.textContent = "Editor for the [reticulum] section in data/config/reticulum/config. Saving does not restart the engine automatically.";
     } else {
@@ -60,7 +68,7 @@
       block.appendChild(renderReticulumSection());
     }
 
-    if (mode !== "settings") {
+    if (mode !== "settings" && mode !== "transport") {
       block.appendChild(renderInterfacesSection());
     }
 
@@ -544,7 +552,7 @@
   function rerenderActiveRnsEditor() {
     const activeTab = document.querySelector("nav button.active")?.textContent || "";
 
-    if ((activeTab === "Settings" || activeTab === "Interfaces") && typeof window.render === "function") {
+    if ((activeTab === "Settings" || activeTab === "Interfaces" || activeTab === "Transport") && typeof window.render === "function") {
       window.render(activeTab);
     }
   }

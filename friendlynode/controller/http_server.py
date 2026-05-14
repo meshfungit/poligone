@@ -10,7 +10,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from friendlynode.controller.app import ControllerApp
 
@@ -110,6 +110,15 @@ class ControllerHttpServer:
                     return
                 if parsed.path == "/api/announces":
                     self._send_json(app.list_announces())
+                    return
+                if parsed.path == "/api/nomadnet/nodes":
+                    self._send_json(app.list_nomadnet_nodes())
+                    return
+                if parsed.path == "/api/nomadnet/page":
+                    params = parse_qs(parsed.query)
+                    destination_hash = params.get("destination_hash", [""])[0]
+                    path = params.get("path", ["/page/index.mu"])[0]
+                    self._send_json(app.fetch_nomadnet_page(destination_hash, path))
                     return
                 if parsed.path == "/api/clients":
                     self._send_json(app.list_clients())

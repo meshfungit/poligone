@@ -11,6 +11,8 @@ let announceModalState = null;
 let clearMessagesState = null;
 let transientConversation = null;
 let nomadnetBrowserState = null;
+let activeNomadNetSection = "Browser";
+let nomadnetEditorDraft = "`cFriendlyNode local page\n\nWelcome to a local NomadNet page draft.\n";
 const nomadnetBookmarks = new Set();
 const collapsedPanels = {
   toolbox: false,
@@ -18,6 +20,10 @@ const collapsedPanels = {
   clientAccounts: false,
   conversations: false,
   announces: false,
+  transportStatus: true,
+  settingsAccess: true,
+  settingsRuntime: true,
+  settingsPaths: true,
 };
 const expandedClientDetails = new Set();
 let messageDraft = "";
@@ -113,40 +119,20 @@ function renderClientSummaryState(active) {
   const actions = document.querySelector(".topbar .actions");
   const summary = document.querySelector(".grid");
 
-  if (topbar === null || title === null || actions === null || summary === null) {
+  if (topbar === null || title === null || actions === null) {
     return;
   }
 
   actions.innerHTML = "";
-  topbar.classList.toggle("client-summary-toggle", active === "Client");
-  summary.classList.toggle("client-summary-collapsed", active === "Client" && collapsedPanels.clientSummary);
+  topbar.classList.remove("client-summary-toggle");
+  if (summary !== null) {
+    summary.classList.toggle("client-summary-collapsed", active === "Client" && collapsedPanels.clientSummary);
+  }
   topbar.onclick = null;
   topbar.onkeydown = null;
   topbar.removeAttribute("role");
   topbar.removeAttribute("tabindex");
-
-  if (active !== "Client") {
-    title.textContent = active;
-    return;
-  }
-
-  const toggleClientSummary = () => {
-    collapsedPanels.clientSummary = !collapsedPanels.clientSummary;
-    renderClientSummaryState(active);
-  };
-
-  title.textContent = collapsedPanels.clientSummary ? "Show Client" : "Hide Client";
-  topbar.role = "button";
-  topbar.tabIndex = 0;
-  topbar.onclick = toggleClientSummary;
-  topbar.onkeydown = (event) => {
-    if (event.key !== "Enter" && event.key !== " ") {
-      return;
-    }
-
-    event.preventDefault();
-    toggleClientSummary();
-  };
+  title.textContent = active;
 }
 
 function renderSidebarContacts(active) {
@@ -308,45 +294,318 @@ function renderAnnounces() {
 
 function renderNomadNet() {
   const wrapper = document.createElement("div");
+  wrapper.appendChild(renderNomadNetTabs());
 
-  if (nomadnetBrowserState !== null) {
-    const block = document.createElement("section");
-    block.className = "settings-block nomadnet-browser";
-
-    const title = document.createElement("h2");
-    title.textContent = nomadnetBrowserState.name;
-    block.appendChild(title);
-
-    const hint = document.createElement("div");
-    hint.className = "settings-hint";
-    hint.textContent = "NomadNet browser runtime is not wired yet. This is a one-time node view from an announce.";
-    block.appendChild(hint);
-
-    for (const [label, value] of [
-      ["Destination", nomadnetBrowserState.destination_hash],
-      ["Identity", nomadnetBrowserState.identity_hash],
-      ["Hops", nomadnetBrowserState.hops],
-    ]) {
-      const row = document.createElement("div");
-      row.className = "contact-detail-row";
-
-      const rowLabel = document.createElement("div");
-      rowLabel.className = "contact-detail-label";
-      rowLabel.textContent = label;
-      row.appendChild(rowLabel);
-
-      const rowValue = document.createElement("div");
-      rowValue.className = "contact-detail-value";
-      rowValue.textContent = value === undefined || value === null || value === "" ? "-" : String(value);
-      row.appendChild(rowValue);
-      block.appendChild(row);
-    }
-
-    wrapper.appendChild(block);
+  if (activeNomadNetSection === "Bookmarks") {
+    wrapper.appendChild(renderNomadNetBookmarks());
+    return wrapper;
   }
 
-  wrapper.appendChild(renderTable("NomadNet"));
+  if (activeNomadNetSection === "Publisher") {
+    wrapper.appendChild(renderNomadNetPublisher());
+    return wrapper;
+  }
+
+  if (activeNomadNetSection === "Editor") {
+    wrapper.appendChild(renderNomadNetEditor());
+    return wrapper;
+  }
+
+  wrapper.appendChild(renderNomadNetBrowser());
   return wrapper;
+}
+
+function renderNomadNetTabs() {
+  const tabs = document.createElement("div");
+  tabs.className = "nomadnet-tabs";
+
+  for (const tab of ["Browser", "Bookmarks", "Publisher", "Editor"]) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = tab === activeNomadNetSection ? "active" : "";
+    button.textContent = tab;
+    button.onclick = () => {
+      activeNomadNetSection = tab;
+      render("NomadNet");
+    };
+    tabs.appendChild(button);
+  }
+
+  return tabs;
+}
+
+function renderNomadNetBrowser() {
+  const block = document.createElement("section");
+  block.className = "settings-block nomadnet-browser";
+
+  const title = document.createElement("h2");
+  title.textContent = "Browser";
+  block.appendChild(title);
+
+  const current = getNomadNetBrowserState();
+  const controls = document.createElement("div");
+  controls.className = "nomadnet-address-row";
+
+  const destinationField = renderAccessTextInput(
+    "Destination hash",
+    current.destination_hash || "",
+    "NomadNet destination hash",
+    (value) => {
+      current.destination_hash = value;
+    }
+  );
+  const destinationInput = destinationField.querySelector("input");
+  controls.appendChild(destinationField);
+
+  const pathField = renderAccessTextInput("Path", current.path || "/page/index.mu", "/page/index.mu", (value) => {
+    current.path = value;
+  });
+  const pathInput = pathField.querySelector("input");
+  controls.appendChild(pathField);
+  block.appendChild(controls);
+
+  const actions = document.createElement("div");
+  actions.className = "settings-row nomadnet-actions";
+
+  const openButton = document.createElement("button");
+  openButton.type = "button";
+  openButton.textContent = "Open";
+  openButton.onclick = () => openNomadNetPageFromFields(destinationInput, pathInput, current);
+  actions.appendChild(openButton);
+
+  const bookmarkButton = document.createElement("button");
+  bookmarkButton.type = "button";
+  bookmarkButton.textContent = "Bookmark";
+  bookmarkButton.onclick = () => {
+    const destination = String(destinationInput?.value || current.destination_hash || "").trim();
+    if (destination !== "") {
+      nomadnetBookmarks.add(destination);
+      render("NomadNet");
+    }
+  };
+  actions.appendChild(bookmarkButton);
+  block.appendChild(actions);
+
+  const details = document.createElement("div");
+  details.className = "settings-compact-grid";
+
+  for (const [label, value] of [
+    ["Name", current.name || "-"],
+    ["Destination", current.destination_hash || "-"],
+    ["Identity", current.identity_hash || "-"],
+    ["Hops", current.hops ?? "-"],
+    ["Runtime", current.runtime || "stub"],
+    ["Path", current.path || "/page/index.mu"],
+  ]) {
+    details.appendChild(renderCompactSetting(label, value));
+  }
+
+  block.appendChild(details);
+
+  if (current.loading) {
+    const loading = document.createElement("div");
+    loading.className = "settings-hint";
+    loading.textContent = "Loading NomadNet page...";
+    block.appendChild(loading);
+  } else if (current.error) {
+    const error = document.createElement("div");
+    error.className = "settings-error";
+    error.textContent = current.error;
+    block.appendChild(error);
+  } else if (current.source) {
+    const page = document.createElement("div");
+    page.className = "nomadnet-page";
+    page.appendChild(renderMessageContent(current.source));
+    block.appendChild(page);
+  } else {
+    const hint = document.createElement("div");
+    hint.className = "settings-hint";
+    hint.textContent = "Select a NomadNet announce or enter a destination hash. Real page retrieval is still backed by a stub endpoint.";
+    block.appendChild(hint);
+  }
+
+  return block;
+}
+
+function renderNomadNetBookmarks() {
+  const block = document.createElement("section");
+  block.className = "settings-block";
+
+  const title = document.createElement("h2");
+  title.textContent = "Bookmarks";
+  block.appendChild(title);
+
+  const bookmarks = Array.from(nomadnetBookmarks);
+
+  if (bookmarks.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "settings-hint";
+    empty.textContent = "No NomadNet bookmarks yet.";
+    block.appendChild(empty);
+    return block;
+  }
+
+  const list = document.createElement("div");
+  list.className = "nomadnet-bookmark-list";
+
+  for (const destination of bookmarks) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = destination;
+    button.onclick = () => {
+      activeNomadNetSection = "Browser";
+      nomadnetBrowserState = {
+        name: "Bookmarked node",
+        destination_hash: destination,
+        path: "/page/index.mu",
+        loading: true,
+      };
+      render("NomadNet");
+      fetchNomadNetPage(destination, "/page/index.mu");
+    };
+    list.appendChild(button);
+  }
+
+  block.appendChild(list);
+  return block;
+}
+
+function renderNomadNetPublisher() {
+  const block = document.createElement("section");
+  block.className = "settings-block";
+
+  const title = document.createElement("h2");
+  title.textContent = "Publisher";
+  block.appendChild(title);
+
+  const config = currentStatus?.config || {};
+  const details = document.createElement("div");
+  details.className = "settings-compact-grid";
+  details.appendChild(renderCompactSetting("Status", "not wired"));
+  details.appendChild(renderCompactSetting("Pages dir", config.nomadnet_pages_dir || "-"));
+  details.appendChild(renderCompactSetting("Node identity", "-"));
+  details.appendChild(renderCompactSetting("Announce", "manual later"));
+  block.appendChild(details);
+
+  const hint = document.createElement("div");
+  hint.className = "settings-hint";
+  hint.textContent = "This will control local NomadNet publication: enable node, choose identity, pages directory and reannounce.";
+  block.appendChild(hint);
+  return block;
+}
+
+function renderNomadNetEditor() {
+  const block = document.createElement("section");
+  block.className = "settings-block nomadnet-editor";
+
+  const title = document.createElement("h2");
+  title.textContent = "Editor";
+  block.appendChild(title);
+
+  const textarea = document.createElement("textarea");
+  textarea.value = nomadnetEditorDraft;
+  textarea.spellcheck = false;
+  textarea.oninput = () => {
+    nomadnetEditorDraft = textarea.value;
+  };
+  block.appendChild(textarea);
+
+  const previewTitle = document.createElement("div");
+  previewTitle.className = "settings-hint";
+  previewTitle.textContent = "Preview";
+  block.appendChild(previewTitle);
+
+  const preview = document.createElement("div");
+  preview.className = "nomadnet-page";
+  preview.appendChild(renderMessageContent(nomadnetEditorDraft));
+  block.appendChild(preview);
+  return block;
+}
+
+function getNomadNetBrowserState() {
+  if (nomadnetBrowserState !== null) {
+    return nomadnetBrowserState;
+  }
+
+  const announces = Array.isArray(currentStatus?.announces) ? currentStatus.announces : [];
+  const announce = announces.find((item) => item.type === "nomadnet" || item.aspect === "nomadnetwork.node");
+
+  if (announce === undefined) {
+    return {
+      name: "",
+      destination_hash: "",
+      identity_hash: "",
+      hops: "",
+      path: "/page/index.mu",
+      source: "",
+      runtime: "stub",
+    };
+  }
+
+  return {
+    name: announce.name || "NomadNet node",
+    destination_hash: announce.destination_hash || "",
+    identity_hash: announce.identity_hash || "",
+    hops: announce.hops,
+    path: "/page/index.mu",
+    source: "",
+    runtime: "stub",
+  };
+}
+
+function openNomadNetPageFromFields(destinationInput, pathInput, current) {
+  const destination = String(destinationInput?.value || current.destination_hash || "").trim();
+  const path = String(pathInput?.value || current.path || "/page/index.mu").trim() || "/page/index.mu";
+
+  nomadnetBrowserState = {
+    ...current,
+    destination_hash: destination,
+    path,
+    loading: true,
+    error: "",
+  };
+  render("NomadNet");
+  fetchNomadNetPage(destination, path);
+}
+
+async function fetchNomadNetPage(destinationHash, path) {
+  try {
+    const query = new URLSearchParams({
+      destination_hash: destinationHash,
+      path,
+    });
+    const response = await fetch(`/api/nomadnet/page?${query.toString()}`, {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`NomadNet page request failed: HTTP ${response.status}`);
+    }
+
+    const page = await response.json();
+    nomadnetBrowserState = {
+      ...(nomadnetBrowserState || {}),
+      destination_hash: page.destination_hash || destinationHash,
+      path: page.path || path,
+      source: page.source || "",
+      runtime: page.runtime || "stub",
+      loading: false,
+      error: "",
+    };
+  } catch (error) {
+    nomadnetBrowserState = {
+      ...(nomadnetBrowserState || {}),
+      loading: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+
+  if (getActiveTab() === "NomadNet") {
+    render("NomadNet");
+  }
 }
 
 function renderAnnounceResults(announces, count, list) {
@@ -734,9 +993,13 @@ function openAnnounceNomadnetPage(announce) {
     destination_hash: announce.destination_hash || "",
     identity_hash: announce.identity_hash || "",
     hops: announce.hops,
+    path: "/page/index.mu",
+    loading: true,
   };
+  activeNomadNetSection = "Browser";
   announceModalState = null;
   render("NomadNet");
+  fetchNomadNetPage(nomadnetBrowserState.destination_hash, nomadnetBrowserState.path);
 }
 
 function renderClientContactsPanel(clients) {
@@ -2468,21 +2731,92 @@ function renderInterfaces() {
   return wrapper;
 }
 
+function renderTransport() {
+  const wrapper = document.createElement("div");
+
+  wrapper.appendChild(renderTransportStatusPanel());
+
+  if (window.FriendlyNodeRnsConfigEditor !== undefined) {
+    wrapper.appendChild(window.FriendlyNodeRnsConfigEditor.render({ mode: "transport" }));
+  }
+
+  return wrapper;
+}
+
+function renderTransportStatusPanel() {
+  const section = renderCollapsibleSection("transportStatus", "Transport status");
+  section.classList.add("transport-status-section");
+
+  const table = document.createElement("table");
+  table.className = "transport-status-table";
+
+  const tbody = document.createElement("tbody");
+  const names = document.createElement("tr");
+  const values = document.createElement("tr");
+
+  const engine = currentStatus?.engine || {};
+  const rns = engine.rns || {};
+  const interfaces = Array.isArray(currentStatus?.interfaces) ? currentStatus.interfaces.length : 0;
+  const peers = Array.isArray(currentStatus?.peers) ? currentStatus.peers.length : 0;
+
+  for (const item of [
+    ["RNS", rns.running ? "Running" : "Stopped"],
+    ["Interfaces", String(interfaces)],
+    ["Peers", String(peers)],
+  ]) {
+    const name = document.createElement("td");
+    name.textContent = item[0];
+    names.appendChild(name);
+
+    const value = document.createElement("td");
+    value.textContent = item[1];
+    values.appendChild(value);
+  }
+
+  tbody.appendChild(names);
+  tbody.appendChild(values);
+  table.appendChild(tbody);
+  section.appendChild(table);
+
+  return section;
+}
+
 function renderSettings() {
   const wrapper = document.createElement("div");
 
   wrapper.appendChild(renderAccessSettings());
+  wrapper.appendChild(renderRuntimeSettings());
+  wrapper.appendChild(renderPathSettings());
+  return wrapper;
+}
 
-  const runtimeBlock = document.createElement("section");
-  runtimeBlock.className = "settings-block";
+function renderRuntimeSettings() {
+  const runtimeBlock = renderCollapsibleSection("settingsRuntime", "Runtime");
 
-  const title = document.createElement("h2");
-  title.textContent = "Runtime";
-  runtimeBlock.appendChild(title);
+  const details = document.createElement("div");
+  details.className = "settings-compact-grid";
 
   const runtime = currentStatus?.runtime || {};
+  const engine = currentStatus?.engine || {};
+  const rns = engine.rns || {};
+  const engineRuntime = engine.runtime || {};
   const activeRuntime = runtime.active || "stub";
   const availableRuntimes = Array.isArray(runtime.available) ? runtime.available : [];
+
+  for (const [label, value] of [
+    ["Active", activeRuntime],
+    ["Available", String(availableRuntimes.length)],
+    ["Engine", engine.running ? "running" : "stopped"],
+    ["RNS runtime", rns.using_stubs ? "stub" : "native"],
+    ["RNS version", rns.rns_version || "-"],
+    ["LXMF version", rns.lxmf_version || "-"],
+    ["Python", engineRuntime.python_path || "-"],
+    ["Source", engineRuntime.source_path || "-"],
+  ]) {
+    details.appendChild(renderCompactSetting(label, value));
+  }
+
+  runtimeBlock.appendChild(details);
 
   const row = document.createElement("div");
   row.className = "settings-row";
@@ -2517,23 +2851,51 @@ function renderSettings() {
   hint.textContent = "Changing runtime saves controller config and restarts the Reticulum engine.";
   runtimeBlock.appendChild(hint);
 
-  wrapper.appendChild(runtimeBlock);
+  return runtimeBlock;
+}
 
-  if (window.FriendlyNodeRnsConfigEditor !== undefined) {
-    wrapper.appendChild(window.FriendlyNodeRnsConfigEditor.render({ mode: "settings" }));
+function renderPathSettings() {
+  const block = renderCollapsibleSection("settingsPaths", "Paths");
+  const config = currentStatus?.config || {};
+  const controller = currentStatus?.controller || {};
+  const engine = currentStatus?.engine || {};
+  const rns = engine.rns || {};
+
+  const paths = document.createElement("div");
+  paths.className = "settings-compact-grid";
+
+  for (const [label, value] of [
+    ["App config", config.app_config_path],
+    ["Database", config.database_path],
+    ["Clients", config.clients_dir],
+    ["Reticulum config", config.rns_config_dir || rns.config_dir],
+    ["NomadNet pages", config.nomadnet_pages_dir],
+    ["Web root", controller.web_root],
+  ]) {
+    paths.appendChild(renderCompactSetting(label, value || "-"));
   }
 
-  wrapper.appendChild(renderTable("Settings"));
-  return wrapper;
+  block.appendChild(paths);
+  return block;
+}
+
+function renderCompactSetting(labelText, valueText) {
+  const item = document.createElement("div");
+  item.className = "settings-compact-item";
+
+  const label = document.createElement("span");
+  label.textContent = labelText;
+  item.appendChild(label);
+
+  const value = document.createElement("code");
+  value.textContent = String(valueText || "-");
+  item.appendChild(value);
+
+  return item;
 }
 
 function renderAccessSettings() {
-  const block = document.createElement("section");
-  block.className = "settings-block";
-
-  const title = document.createElement("h2");
-  title.textContent = "Access";
-  block.appendChild(title);
+  const block = renderCollapsibleSection("settingsAccess", "Access");
 
   const config = currentStatus?.config || {};
   const port = config.controller_port || 8787;
@@ -2942,6 +3304,11 @@ function render(tab = "Client") {
     return;
   }
 
+  if (tab === "Transport") {
+    content.appendChild(renderTransport());
+    return;
+  }
+
   content.appendChild(renderTable(tab));
 }
 
@@ -2965,11 +3332,8 @@ function updateSummaryCards(status) {
 
   const cards = document.querySelectorAll(".card .value");
 
-  if (cards.length >= 4) {
+  if (cards.length >= 1) {
     cards[0].textContent = rns.using_stubs ? "stub runtime" : "native runtime";
-    cards[1].textContent = rns.running ? "running" : "stopped";
-    cards[2].textContent = "0";
-    cards[3].textContent = "0";
   }
 
   rows.Transport = [
