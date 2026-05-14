@@ -1,22 +1,36 @@
-const tabs = ["Client", "Peers", "NomadNet", "Interfaces", "Transport", "Logs", "Settings"];
+const tabs = ["Client", "Announces", "Peers", "NomadNet", "Interfaces", "Transport", "Logs", "Settings"];
 
 let currentStatus = null;
 let clientEditorState = null;
 let activeClientId = "";
 let activeContactId = "";
 let contactMenuState = null;
+let clientAccountMenuState = null;
 let contactModalState = null;
+let announceModalState = null;
 let clearMessagesState = null;
+let transientConversation = null;
+let nomadnetBrowserState = null;
+const nomadnetBookmarks = new Set();
 const collapsedPanels = {
   toolbox: false,
-  clientAccounts: true,
+  clientSummary: false,
+  clientAccounts: false,
   conversations: false,
+  announces: false,
 };
 const expandedClientDetails = new Set();
 let messageDraft = "";
 let symbolPaletteOpen = false;
 let messageEditorSelection = null;
 let showMessageUnprintable = false;
+const announceFilters = {
+  type: "all",
+  name: "",
+  identity: "",
+  lxmf: "",
+  hops: 0,
+};
 
 const rows = {
   Client: [
@@ -55,6 +69,7 @@ const rows = {
 
 function renderNav(active) {
   renderToolboxState();
+  renderSidebarContacts(active);
 
   const nav = document.querySelector("nav");
   nav.innerHTML = "";
@@ -92,21 +107,100 @@ function renderToolboxState() {
   button.textContent = collapsedPanels.toolbox ? "Show toolbox" : "Hide toolbox";
 }
 
+function renderClientSummaryState(active) {
+  const topbar = document.querySelector(".topbar");
+  const title = document.querySelector("h1");
+  const actions = document.querySelector(".topbar .actions");
+  const summary = document.querySelector(".grid");
+
+  if (topbar === null || title === null || actions === null || summary === null) {
+    return;
+  }
+
+  actions.innerHTML = "";
+  topbar.classList.toggle("client-summary-toggle", active === "Client");
+  summary.classList.toggle("client-summary-collapsed", active === "Client" && collapsedPanels.clientSummary);
+  topbar.onclick = null;
+  topbar.onkeydown = null;
+  topbar.removeAttribute("role");
+  topbar.removeAttribute("tabindex");
+
+  if (active !== "Client") {
+    title.textContent = active;
+    return;
+  }
+
+  const toggleClientSummary = () => {
+    collapsedPanels.clientSummary = !collapsedPanels.clientSummary;
+    renderClientSummaryState(active);
+  };
+
+  title.textContent = collapsedPanels.clientSummary ? "Show Client" : "Hide Client";
+  topbar.role = "button";
+  topbar.tabIndex = 0;
+  topbar.onclick = toggleClientSummary;
+  topbar.onkeydown = (event) => {
+    if (event.key !== "Enter" && event.key !== " ") {
+      return;
+    }
+
+    event.preventDefault();
+    toggleClientSummary();
+  };
+}
+
+function renderSidebarContacts(active) {
+  const aside = document.querySelector("aside");
+
+  if (aside === null) {
+    return;
+  }
+
+  const existing = aside.querySelector(".sidebar-client-contacts");
+
+  if (existing !== null) {
+    existing.remove();
+  }
+
+  if (active !== "Client") {
+    return;
+  }
+
+  const clientsData = currentStatus?.clients || {};
+  const clients = Array.isArray(clientsData.clients) ? clientsData.clients : [];
+  const panel = renderClientContactsPanel(clients);
+  panel.classList.add("sidebar-client-contacts");
+
+  const engine = aside.querySelector(".sidebar-engine");
+
+  if (engine !== null) {
+    engine.insertAdjacentElement("afterend", panel);
+    return;
+  }
+
+  aside.appendChild(panel);
+}
+
 function renderCollapsibleSection(key, titleText) {
   const section = document.createElement("details");
   section.className = "settings-block collapsible-section";
   section.open = !collapsedPanels[key];
-  section.ontoggle = () => {
-    collapsedPanels[key] = !section.open;
-  };
 
   const summary = document.createElement("summary");
   summary.className = "collapsible-header";
 
   const title = document.createElement("h2");
-  title.textContent = titleText;
+  const updateTitle = () => {
+    title.textContent = `${section.open ? "Hide" : "Show"} ${titleText}`;
+  };
+
+  updateTitle();
   summary.appendChild(title);
   section.appendChild(summary);
+  section.ontoggle = () => {
+    collapsedPanels[key] = !section.open;
+    updateTitle();
+  };
 
   return section;
 }
@@ -149,10 +243,504 @@ function renderTable(tab) {
 
 function renderClient() {
   const wrapper = document.createElement("div");
-  const block = renderCollapsibleSection("clientAccounts", "Contacts");
-
   const clientsData = currentStatus?.clients || {};
   const clients = Array.isArray(clientsData.clients) ? clientsData.clients : [];
+
+  const mobileContacts = renderClientContactsPanel(clients);
+  mobileContacts.classList.add("mobile-client-contacts");
+  wrapper.appendChild(mobileContacts);
+  wrapper.appendChild(renderClientChat(clients));
+
+  if (clientEditorState !== null) {
+    wrapper.appendChild(renderClientEditor());
+  }
+
+  if (contactMenuState !== null) {
+    wrapper.appendChild(renderContactMenu());
+  }
+
+  if (clientAccountMenuState !== null) {
+    wrapper.appendChild(renderClientAccountMenu());
+  }
+
+  if (contactModalState !== null) {
+    wrapper.appendChild(renderContactModal());
+  }
+
+  if (clearMessagesState !== null) {
+    wrapper.appendChild(renderClearMessagesModal());
+  }
+
+  return wrapper;
+}
+
+function renderAnnounces() {
+  const wrapper = document.createElement("div");
+  const section = renderCollapsibleSection("announces", "Announces");
+  section.classList.add("announces-section");
+  const announces = Array.isArray(currentStatus?.announces) ? currentStatus.announces : [];
+  const count = document.createElement("div");
+  count.className = "settings-hint";
+  const list = document.createElement("div");
+  list.className = "announce-list";
+  const refresh = () => renderAnnounceResults(announces, count, list);
+
+  const filters = document.createElement("div");
+  filters.className = "announce-filters";
+
+  filters.appendChild(renderAnnounceTypeFilter(refresh));
+  filters.appendChild(renderAnnounceTextFilter("Name", "name", refresh));
+  filters.appendChild(renderAnnounceTextFilter("Identity", "identity", refresh));
+  filters.appendChild(renderAnnounceTextFilter("LXMF", "lxmf", refresh));
+  filters.appendChild(renderAnnounceHopsFilter(refresh));
+  section.appendChild(filters);
+  section.appendChild(count);
+  refresh();
+  section.appendChild(list);
+  wrapper.appendChild(section);
+
+  if (announceModalState !== null) {
+    wrapper.appendChild(renderAnnounceModal());
+  }
+
+  return wrapper;
+}
+
+function renderNomadNet() {
+  const wrapper = document.createElement("div");
+
+  if (nomadnetBrowserState !== null) {
+    const block = document.createElement("section");
+    block.className = "settings-block nomadnet-browser";
+
+    const title = document.createElement("h2");
+    title.textContent = nomadnetBrowserState.name;
+    block.appendChild(title);
+
+    const hint = document.createElement("div");
+    hint.className = "settings-hint";
+    hint.textContent = "NomadNet browser runtime is not wired yet. This is a one-time node view from an announce.";
+    block.appendChild(hint);
+
+    for (const [label, value] of [
+      ["Destination", nomadnetBrowserState.destination_hash],
+      ["Identity", nomadnetBrowserState.identity_hash],
+      ["Hops", nomadnetBrowserState.hops],
+    ]) {
+      const row = document.createElement("div");
+      row.className = "contact-detail-row";
+
+      const rowLabel = document.createElement("div");
+      rowLabel.className = "contact-detail-label";
+      rowLabel.textContent = label;
+      row.appendChild(rowLabel);
+
+      const rowValue = document.createElement("div");
+      rowValue.className = "contact-detail-value";
+      rowValue.textContent = value === undefined || value === null || value === "" ? "-" : String(value);
+      row.appendChild(rowValue);
+      block.appendChild(row);
+    }
+
+    wrapper.appendChild(block);
+  }
+
+  wrapper.appendChild(renderTable("NomadNet"));
+  return wrapper;
+}
+
+function renderAnnounceResults(announces, count, list) {
+  const filtered = filterAnnounces(announces);
+  count.textContent = `${filtered.length} of ${announces.length} announces`;
+  list.replaceChildren();
+
+  if (filtered.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "settings-hint";
+    empty.textContent = "No announces match current filters.";
+    list.appendChild(empty);
+    return;
+  }
+
+  for (const announce of filtered) {
+    list.appendChild(renderAnnounceRow(announce));
+  }
+
+  window.setTimeout(() => {
+    list.scrollTop = list.scrollHeight;
+  }, 0);
+}
+
+function renderAnnounceTypeFilter(onChange) {
+  const field = document.createElement("label");
+  field.className = "announce-filter-field";
+
+  const label = document.createElement("span");
+  label.textContent = "Type";
+  field.appendChild(label);
+
+  const select = document.createElement("select");
+
+  for (const [value, text] of [
+    ["all", "All"],
+    ["identity", "Identity"],
+    ["nomadnet", "NomadNet"],
+    ["transport", "Transport"],
+  ]) {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = text;
+    option.selected = announceFilters.type === value;
+    select.appendChild(option);
+  }
+
+  select.onchange = () => {
+    announceFilters.type = select.value;
+    onChange();
+  };
+  field.appendChild(select);
+  return field;
+}
+
+function renderAnnounceTextFilter(labelText, key, onChange) {
+  const field = document.createElement("label");
+  field.className = "announce-filter-field";
+
+  const label = document.createElement("span");
+  label.textContent = labelText;
+  field.appendChild(label);
+
+  const input = document.createElement("input");
+  input.type = "search";
+  input.value = announceFilters[key] || "";
+  input.oninput = () => {
+    announceFilters[key] = input.value;
+    onChange();
+  };
+  field.appendChild(input);
+  return field;
+}
+
+function renderAnnounceHopsFilter(onChange) {
+  const field = document.createElement("label");
+  field.className = "announce-filter-field announce-hops-filter";
+
+  const label = document.createElement("span");
+  label.textContent = "Hops";
+  field.appendChild(label);
+
+  const input = document.createElement("input");
+  input.type = "number";
+  input.min = "0";
+  input.step = "1";
+  input.value = String(announceFilters.hops || 0);
+  input.oninput = () => {
+    announceFilters.hops = Math.max(0, Number(input.value) || 0);
+    onChange();
+  };
+  field.appendChild(input);
+  return field;
+}
+
+function filterAnnounces(announces) {
+  const type = announceFilters.type;
+  const name = announceFilters.name.trim().toLowerCase();
+  const identity = announceFilters.identity.trim().toLowerCase();
+  const lxmf = announceFilters.lxmf.trim().toLowerCase();
+  const hops = Number(announceFilters.hops) || 0;
+
+  return announces.filter((announce) => {
+    if (type !== "all" && announce.type !== type) {
+      return false;
+    }
+
+    if (name !== "" && !String(announce.name || "").toLowerCase().includes(name)) {
+      return false;
+    }
+
+    if (identity !== "" && !String(announce.identity_hash || "").toLowerCase().includes(identity)) {
+      return false;
+    }
+
+    if (lxmf !== "" && !String(announce.lxmf || "").toLowerCase().includes(lxmf)) {
+      return false;
+    }
+
+    if (hops > 0 && Number(announce.hops) > hops) {
+      return false;
+    }
+
+    return true;
+  });
+}
+
+function renderAnnounceRow(announce) {
+  const row = document.createElement("button");
+  row.type = "button";
+  row.className = "announce-row";
+  row.onclick = () => {
+    announceModalState = announce;
+    render("Announces");
+  };
+
+  const type = document.createElement("span");
+  type.className = `announce-row-type announce-type-${announce.type || "unknown"}`;
+  type.textContent = getAnnounceTypeLabel(announce.type);
+  row.appendChild(type);
+
+  const name = document.createElement("span");
+  name.className = "announce-row-name";
+  name.textContent = announce.name || announce.destination_hash || "-";
+  row.appendChild(name);
+
+  const lxmf = document.createElement("span");
+  lxmf.className = "announce-row-lxmf";
+  lxmf.textContent = announce.lxmf || announce.destination_hash || "-";
+  row.appendChild(lxmf);
+
+  const hops = document.createElement("span");
+  hops.className = "announce-row-hops";
+  hops.textContent = `${announce.hops ?? "-"}h`;
+  row.appendChild(hops);
+
+  return row;
+}
+
+function renderAnnounceDetailCard(announce) {
+  const card = document.createElement("article");
+  card.className = "announce-detail-card";
+
+  const header = document.createElement("div");
+  header.className = "announce-card-header";
+
+  const title = document.createElement("div");
+  title.className = "announce-card-title";
+  title.textContent = announce.name || announce.destination_hash || "-";
+  header.appendChild(title);
+
+  const badge = document.createElement("div");
+  badge.className = `announce-type announce-type-${announce.type || "unknown"}`;
+  badge.textContent = getAnnounceTypeLabel(announce.type);
+  header.appendChild(badge);
+  card.appendChild(header);
+
+  const meta = document.createElement("div");
+  meta.className = "announce-card-meta";
+
+  for (const [label, value] of [
+    ["Aspect", announce.aspect],
+    ["Identity", announce.identity_hash],
+    ["LXMF", announce.lxmf],
+    ["Destination", announce.destination_hash],
+    ["Interface", announce.interface],
+    ["Hops", announce.hops],
+    ["Time", announce.time],
+  ]) {
+    const row = document.createElement("div");
+    row.className = "announce-meta-row";
+
+    const rowLabel = document.createElement("span");
+    rowLabel.textContent = label;
+    row.appendChild(rowLabel);
+
+    const rowValue = document.createElement("strong");
+    rowValue.textContent = value === undefined || value === null || value === "" ? "-" : String(value);
+    row.appendChild(rowValue);
+    meta.appendChild(row);
+  }
+
+  card.appendChild(meta);
+  return card;
+}
+
+function renderAnnounceModal() {
+  const overlay = document.createElement("div");
+  overlay.className = "client-editor-overlay";
+
+  const dialog = document.createElement("section");
+  dialog.className = "client-editor announce-modal";
+
+  const title = document.createElement("h2");
+  title.textContent = announceModalState.name || announceModalState.destination_hash || "Announce";
+  dialog.appendChild(title);
+  dialog.appendChild(renderAnnounceDetailCard(announceModalState));
+
+  const actions = document.createElement("div");
+  actions.className = "client-editor-actions announce-modal-actions";
+
+  const addContactButton = document.createElement("button");
+  addContactButton.type = "button";
+  addContactButton.textContent = "Add contact";
+  addContactButton.onclick = () => addAnnounceContact(announceModalState);
+  actions.appendChild(addContactButton);
+
+  const bookmarkButton = document.createElement("button");
+  bookmarkButton.type = "button";
+  bookmarkButton.textContent = nomadnetBookmarks.has(getAnnounceBookmarkId(announceModalState))
+    ? "Bookmarked"
+    : "Bookmark";
+  bookmarkButton.disabled = announceModalState.type !== "nomadnet";
+  bookmarkButton.onclick = () => bookmarkAnnounceNode(announceModalState);
+  actions.appendChild(bookmarkButton);
+
+  const chatButton = document.createElement("button");
+  chatButton.type = "button";
+  chatButton.textContent = "Open chat";
+  chatButton.disabled = !announceCanOpenChat(announceModalState);
+  chatButton.onclick = () => openAnnounceChat(announceModalState);
+  actions.appendChild(chatButton);
+
+  const pageButton = document.createElement("button");
+  pageButton.type = "button";
+  pageButton.textContent = "Open page";
+  pageButton.disabled = announceModalState.type !== "nomadnet";
+  pageButton.onclick = () => openAnnounceNomadnetPage(announceModalState);
+  actions.appendChild(pageButton);
+
+  const closeButton = document.createElement("button");
+  closeButton.type = "button";
+  closeButton.textContent = "Close";
+  closeButton.onclick = () => {
+    announceModalState = null;
+    render("Announces");
+  };
+  actions.appendChild(closeButton);
+
+  dialog.appendChild(actions);
+  overlay.appendChild(dialog);
+  overlay.onclick = (event) => {
+    if (event.target !== overlay) {
+      return;
+    }
+
+    announceModalState = null;
+    render("Announces");
+  };
+  return overlay;
+}
+
+function getAnnounceTypeLabel(type) {
+  if (type === "identity") {
+    return "Identity";
+  }
+
+  if (type === "nomadnet") {
+    return "NomadNet";
+  }
+
+  if (type === "transport") {
+    return "Transport";
+  }
+
+  return "Unknown";
+}
+
+function announceCanOpenChat(announce) {
+  return String(announce.lxmf || announce.destination_hash || "") !== "";
+}
+
+function announceToContact(announce) {
+  const destination = String(announce.lxmf || announce.destination_hash || "");
+  return {
+    id: `announce-${destination.slice(0, 12) || announce.id || "contact"}`,
+    name: announce.name || getAnnounceTypeLabel(announce.type),
+    destination_hash: announce.destination_hash || destination,
+    identity_hash: announce.identity_hash || "",
+    lxmf_address: announce.lxmf ? `lxmf://${announce.lxmf}` : "",
+    last_announce: announce.time || "",
+    hops: announce.hops,
+    path_status: "announced",
+  };
+}
+
+function getAnnounceBookmarkId(announce) {
+  return String(announce.destination_hash || announce.lxmf || announce.id || "");
+}
+
+async function addAnnounceContact(announce) {
+  const clients = Array.isArray(currentStatus?.clients?.clients) ? currentStatus.clients.clients : [];
+
+  if (clients.length === 0) {
+    return;
+  }
+
+  const client = selectActiveClient(clients);
+  const contact = announceToContact(announce);
+
+  try {
+    const response = await fetch(`/api/clients/${encodeURIComponent(client.id)}/contacts`, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(contact),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Add contact failed: HTTP ${response.status}`);
+    }
+
+    announceModalState = null;
+    await fetchStatus();
+    activeClientId = client.id;
+    activeContactId = contact.id;
+    render("Client");
+  } catch (error) {
+    appendUiError(error);
+    render("Logs");
+  }
+}
+
+function bookmarkAnnounceNode(announce) {
+  if (announce.type !== "nomadnet") {
+    return;
+  }
+
+  nomadnetBookmarks.add(getAnnounceBookmarkId(announce));
+  render("Announces");
+}
+
+function openAnnounceChat(announce) {
+  const clients = Array.isArray(currentStatus?.clients?.clients) ? currentStatus.clients.clients : [];
+
+  if (clients.length === 0 || !announceCanOpenChat(announce)) {
+    return;
+  }
+
+  const client = selectActiveClient(clients);
+  const contact = announceToContact(announce);
+  activeClientId = client.id;
+  activeContactId = contact.id;
+  transientConversation = {
+    client_id: client.id,
+    contact,
+    last_message: "",
+    unread: 0,
+    message_count: 0,
+    messages: [],
+  };
+  announceModalState = null;
+  render("Client");
+}
+
+function openAnnounceNomadnetPage(announce) {
+  if (announce.type !== "nomadnet") {
+    return;
+  }
+
+  nomadnetBrowserState = {
+    name: announce.name || "NomadNet node",
+    destination_hash: announce.destination_hash || "",
+    identity_hash: announce.identity_hash || "",
+    hops: announce.hops,
+  };
+  announceModalState = null;
+  render("NomadNet");
+}
+
+function renderClientContactsPanel(clients) {
+  const block = renderCollapsibleSection("clientAccounts", "Contacts");
 
   const actionRow = document.createElement("div");
   actionRow.className = "settings-row client-actions";
@@ -177,43 +765,53 @@ function renderClient() {
   for (const client of clients) {
     const card = document.createElement("div");
     card.className = "client-account-card";
+    card.tabIndex = 0;
+    card.setAttribute("role", "button");
+    card.onclick = () => openClientConversations(client);
+    card.onkeydown = (event) => {
+      if (event.key !== "Enter" && event.key !== " ") {
+        return;
+      }
 
-    const actions = document.createElement("div");
-    actions.className = "client-row-actions";
-
-    const editButton = document.createElement("button");
-    editButton.type = "button";
-    editButton.textContent = "Edit";
-    editButton.onclick = () => openClientEditor(client);
-    actions.appendChild(editButton);
-
-    const removeButton = document.createElement("button");
-    removeButton.type = "button";
-    removeButton.textContent = "Remove";
-    removeButton.onclick = () => removeClient(client);
-    actions.appendChild(removeButton);
-
-    card.appendChild(actions);
+      event.preventDefault();
+      openClientConversations(client);
+    };
 
     const summary = document.createElement("div");
     summary.className = "client-account-summary";
-    summary.appendChild(renderClientAccountField("Name", client.display_name || client.id || "-"));
-    card.appendChild(summary);
 
-    const detailsButton = document.createElement("button");
-    detailsButton.type = "button";
-    detailsButton.className = "client-details-toggle";
-    detailsButton.textContent = expandedClientDetails.has(client.id) ? "Hide details" : "Show details";
-    detailsButton.onclick = () => {
-      if (expandedClientDetails.has(client.id)) {
-        expandedClientDetails.delete(client.id);
-      } else {
-        expandedClientDetails.add(client.id);
-      }
+    const summaryText = document.createElement("div");
+    summaryText.className = "client-account-summary-text";
 
+    const accountName = document.createElement("div");
+    accountName.className = "client-account-name";
+    accountName.textContent = client.display_name || client.id || "-";
+    summaryText.appendChild(accountName);
+
+    const accountLxmf = document.createElement("div");
+    accountLxmf.className = "client-account-lxmf";
+    accountLxmf.textContent = client.lxmf_destination_hash || "LXMF destination not created";
+    summaryText.appendChild(accountLxmf);
+    summary.appendChild(summaryText);
+
+    const menuButton = document.createElement("button");
+    menuButton.type = "button";
+    menuButton.className = "client-account-menu-button";
+    menuButton.title = "Contact actions";
+    menuButton.setAttribute("aria-label", "Contact actions");
+    menuButton.textContent = "...";
+    menuButton.onclick = (event) => {
+      const rect = menuButton.getBoundingClientRect();
+      clientAccountMenuState = {
+        client,
+        x: rect.left,
+        y: rect.bottom + 6,
+      };
+      event.stopPropagation();
       render("Client");
     };
-    card.appendChild(detailsButton);
+    summary.appendChild(menuButton);
+    card.appendChild(summary);
 
     if (expandedClientDetails.has(client.id)) {
       const fields = document.createElement("div");
@@ -235,26 +833,65 @@ function renderClient() {
   }
 
   block.appendChild(accountList);
-  wrapper.appendChild(block);
-  wrapper.appendChild(renderClientChat(clients));
+  return block;
+}
 
-  if (clientEditorState !== null) {
-    wrapper.appendChild(renderClientEditor());
+function openClientConversations(client) {
+  activeClientId = client.id || "";
+  activeContactId = "";
+  clientAccountMenuState = null;
+  collapsedPanels.conversations = false;
+  render("Client");
+}
+
+function renderClientAccountMenu() {
+  const overlay = document.createElement("div");
+  overlay.className = "contact-menu-dismiss";
+  overlay.onclick = () => {
+    clientAccountMenuState = null;
+    render("Client");
+  };
+
+  const menu = document.createElement("div");
+  menu.className = "contact-menu client-account-menu";
+  menu.style.left = `${clientAccountMenuState.x}px`;
+  menu.style.top = `${clientAccountMenuState.y}px`;
+  menu.onclick = (event) => {
+    event.stopPropagation();
+  };
+
+  const client = clientAccountMenuState.client;
+
+  for (const [label, action] of [
+    ["Edit", () => {
+      clientAccountMenuState = null;
+      openClientEditor(client);
+    }],
+    ["Remove", () => {
+      clientAccountMenuState = null;
+      removeClient(client);
+    }],
+    [expandedClientDetails.has(client.id) ? "Hide details" : "Show details", () => {
+      if (expandedClientDetails.has(client.id)) {
+        expandedClientDetails.delete(client.id);
+      } else {
+        expandedClientDetails.add(client.id);
+      }
+
+      clientAccountMenuState = null;
+      render("Client");
+    }],
+    ["Share", () => shareClientAccount(client)],
+  ]) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = label;
+    button.onclick = action;
+    menu.appendChild(button);
   }
 
-  if (contactMenuState !== null) {
-    wrapper.appendChild(renderContactMenu());
-  }
-
-  if (contactModalState !== null) {
-    wrapper.appendChild(renderContactModal());
-  }
-
-  if (clearMessagesState !== null) {
-    wrapper.appendChild(renderClearMessagesModal());
-  }
-
-  return wrapper;
+  overlay.appendChild(menu);
+  return overlay;
 }
 
 function renderClientAccountField(label, value) {
@@ -292,9 +929,20 @@ function renderClientChat(clients) {
   }
 
   const activeClient = selectActiveClient(clients);
-  const conversations = Array.isArray(activeClient.conversations)
+  let conversations = Array.isArray(activeClient.conversations)
     ? activeClient.conversations
     : [];
+
+  if (transientConversation !== null && transientConversation.client_id === activeClient.id) {
+    const hasContact = conversations.some(
+      (conversation) => conversation.contact?.id === transientConversation.contact.id
+    );
+
+    if (!hasContact) {
+      conversations = [...conversations, transientConversation];
+    }
+  }
+
   const activeConversation = selectActiveConversation(conversations);
   const activeContact = activeConversation?.contact || null;
   const messages = Array.isArray(activeConversation?.messages)
@@ -1811,6 +2459,8 @@ function resizeMessageInput(input) {
 function renderSettings() {
   const wrapper = document.createElement("div");
 
+  wrapper.appendChild(renderAccessSettings());
+
   const runtimeBlock = document.createElement("section");
   runtimeBlock.className = "settings-block";
 
@@ -1865,14 +2515,392 @@ function renderSettings() {
   return wrapper;
 }
 
+function renderAccessSettings() {
+  const block = document.createElement("section");
+  block.className = "settings-block";
+
+  const title = document.createElement("h2");
+  title.textContent = "Access";
+  block.appendChild(title);
+
+  const config = currentStatus?.config || {};
+  const port = config.controller_port || 8787;
+  const bindHost = config.controller_host || "127.0.0.1";
+  const enabled = config.ssh_access_enabled !== false;
+  const host = config.ssh_tunnel_host || "";
+  const user = config.ssh_tunnel_user || "";
+
+  const row = document.createElement("label");
+  row.className = "settings-checkbox-row";
+
+  const label = document.createElement("span");
+  label.textContent = "Use encrypted SSH tunnel access";
+  row.appendChild(label);
+
+  const checkbox = document.createElement("input");
+  checkbox.type = "checkbox";
+  checkbox.checked = enabled;
+  checkbox.onchange = () => saveSshAccessSetting({ ssh_access_enabled: checkbox.checked });
+  row.appendChild(checkbox);
+  block.appendChild(row);
+
+  const bindGrid = document.createElement("div");
+  bindGrid.className = "access-endpoint-grid";
+  bindGrid.appendChild(renderAccessTextInput("Additional HTTP bind host", bindHost, "127.0.0.1", (value) => {
+    saveSshAccessSetting({ controller_host: value });
+  }));
+  bindGrid.appendChild(renderAccessTextInput("HTTP bind port", String(port), "8787", (value) => {
+    saveSshAccessSetting({ controller_port: Number(value) || 8787 });
+  }));
+  block.appendChild(bindGrid);
+
+  block.appendChild(renderNetworkInterfacePicker(bindHost, port));
+
+  const bindHint = document.createElement("div");
+  bindHint.className = "settings-hint";
+  bindHint.textContent = "FriendlyNode always keeps 127.0.0.1 open. For Tailscale direct access, add your Tailscale IP or 0.0.0.0, then apply and restart the HTTP server.";
+  block.appendChild(bindHint);
+
+  const endpoint = document.createElement("div");
+  endpoint.className = "access-endpoint-grid";
+
+  endpoint.appendChild(renderAccessTextInput("Windows SSH host", host, "192.168.88.161", (value) => {
+    saveSshAccessSetting({ ssh_tunnel_host: value });
+  }));
+  endpoint.appendChild(renderAccessTextInput("Windows SSH user", user, "user", (value) => {
+    saveSshAccessSetting({ ssh_tunnel_user: value });
+  }));
+  block.appendChild(endpoint);
+
+  const hint = document.createElement("div");
+  hint.className = "settings-hint";
+  hint.textContent = enabled
+    ? "Run this command on the other machine, then open the forwarded localhost URL there. FriendlyNode still listens only on localhost."
+    : "SSH tunnel access is disabled in FriendlyNode settings. Local browser access still works.";
+  block.appendChild(hint);
+
+  const commandRow = document.createElement("div");
+  commandRow.className = "settings-command-row";
+
+  const command = document.createElement("code");
+  command.className = "settings-command";
+  command.textContent = buildSshTunnelCommand(port, host, user);
+  commandRow.appendChild(command);
+
+  const copyButton = document.createElement("button");
+  copyButton.type = "button";
+  copyButton.textContent = "Copy";
+  copyButton.onclick = () => copyTextToClipboard(command.textContent);
+  commandRow.appendChild(copyButton);
+  block.appendChild(commandRow);
+
+  const browserUrl = document.createElement("code");
+  browserUrl.className = "settings-command";
+  browserUrl.textContent = `http://127.0.0.1:${port}/`;
+  block.appendChild(browserUrl);
+
+  block.appendChild(renderSshAccessStatus(currentStatus?.access?.ssh || null));
+  block.appendChild(renderAccessHelperCommands(port, host, user));
+
+  return block;
+}
+
+function renderAccessHelperCommands(port, host, user) {
+  const panel = document.createElement("div");
+  panel.className = "access-status";
+
+  const title = document.createElement("div");
+  title.className = "settings-hint";
+  title.textContent = "Desktop SSH starter commands";
+  panel.appendChild(title);
+
+  for (const commandText of [
+    "python scripts\\access_starter.py check",
+    "python scripts\\access_starter.py setup-server",
+    "python scripts\\access_starter.py setup-server --apply",
+    buildAccessStarterTunnelCommand(port, host, user),
+  ]) {
+    const row = document.createElement("div");
+    row.className = "settings-command-row";
+
+    const command = document.createElement("code");
+    command.className = "settings-command";
+    command.textContent = commandText;
+    row.appendChild(command);
+
+    const copy = document.createElement("button");
+    copy.type = "button";
+    copy.textContent = "Copy";
+    copy.onclick = () => copyTextToClipboard(commandText);
+    row.appendChild(copy);
+    panel.appendChild(row);
+  }
+
+  return panel;
+}
+
+function renderNetworkInterfacePicker(bindHost, port) {
+  const panel = document.createElement("div");
+  panel.className = "network-interface-panel";
+
+  const header = document.createElement("div");
+  header.className = "access-status-header";
+
+  const title = document.createElement("strong");
+  title.textContent = "Network interfaces";
+  header.appendChild(title);
+
+  const refresh = document.createElement("button");
+  refresh.type = "button";
+  refresh.textContent = "Scan";
+  refresh.onclick = refreshNetworkInterfaces;
+  header.appendChild(refresh);
+  panel.appendChild(header);
+
+  const interfaces = currentStatus?.access?.network?.interfaces || [];
+  const list = document.createElement("div");
+  list.className = "network-interface-list";
+
+  for (const iface of interfaces) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = iface.address === bindHost ? "active" : "";
+    button.onclick = () => saveSshAccessSetting({ controller_host: iface.address });
+
+    const name = document.createElement("span");
+    name.textContent = `${iface.name || "interface"} (${iface.kind || "network"})`;
+    button.appendChild(name);
+
+    const address = document.createElement("code");
+    address.textContent = iface.address || "-";
+    button.appendChild(address);
+    list.appendChild(button);
+  }
+
+  panel.appendChild(list);
+
+  const apply = document.createElement("button");
+  apply.type = "button";
+  apply.className = "restart-http-button";
+  apply.textContent = "Apply & restart HTTP server";
+  apply.onclick = () => restartHttpServerFromUi(bindHost, port);
+  panel.appendChild(apply);
+  return panel;
+}
+
+function renderSshAccessStatus(status) {
+  const panel = document.createElement("div");
+  panel.className = "access-status";
+
+  const header = document.createElement("div");
+  header.className = "access-status-header";
+
+  const title = document.createElement("strong");
+  title.textContent = status?.ready ? "SSH server ready" : "SSH server needs setup";
+  header.appendChild(title);
+
+  const refresh = document.createElement("button");
+  refresh.type = "button";
+  refresh.textContent = "Refresh";
+  refresh.onclick = refreshSshAccessStatus;
+  header.appendChild(refresh);
+  panel.appendChild(header);
+
+  const rows = [
+    ["Platform", status?.platform || "-"],
+    ["sshd", status?.sshd_found ? status.sshd_path || "found" : "not found"],
+    ["Port 22", status?.port_open ? "listening" : "not listening"],
+  ];
+
+  for (const [label, value] of rows) {
+    const row = document.createElement("div");
+    row.className = "access-status-row";
+
+    const rowLabel = document.createElement("span");
+    rowLabel.textContent = label;
+    row.appendChild(rowLabel);
+
+    const rowValue = document.createElement("code");
+    rowValue.textContent = String(value);
+    row.appendChild(rowValue);
+    panel.appendChild(row);
+  }
+
+  const notes = Array.isArray(status?.notes) ? status.notes : [];
+
+  for (const note of notes) {
+    const item = document.createElement("div");
+    item.className = "settings-hint";
+    item.textContent = note;
+    panel.appendChild(item);
+  }
+
+  const commands = Array.isArray(status?.setup_commands) ? status.setup_commands : [];
+
+  if (commands.length > 0 && !status?.ready) {
+    const commandBlock = document.createElement("div");
+    commandBlock.className = "access-setup-commands";
+
+    for (const commandText of commands) {
+      const row = document.createElement("div");
+      row.className = "settings-command-row";
+
+      const command = document.createElement("code");
+      command.className = "settings-command";
+      command.textContent = commandText;
+      row.appendChild(command);
+
+      const copy = document.createElement("button");
+      copy.type = "button";
+      copy.textContent = "Copy";
+      copy.onclick = () => copyTextToClipboard(commandText);
+      row.appendChild(copy);
+      commandBlock.appendChild(row);
+    }
+
+    panel.appendChild(commandBlock);
+  }
+
+  return panel;
+}
+
+function renderAccessTextInput(labelText, value, placeholder, onChange) {
+  const field = document.createElement("label");
+  field.className = "access-field";
+
+  const label = document.createElement("span");
+  label.textContent = labelText;
+  field.appendChild(label);
+
+  const input = document.createElement("input");
+  input.type = "text";
+  input.value = value;
+  input.placeholder = placeholder;
+  input.onchange = () => onChange(input.value);
+  field.appendChild(input);
+
+  return field;
+}
+
+function buildSshTunnelCommand(port, host, user) {
+  const targetHost = host || "<windows-host>";
+  const endpoint = user === "" ? targetHost : `${user}@${targetHost}`;
+  return `ssh -L ${port}:127.0.0.1:${port} ${endpoint}`;
+}
+
+function buildAccessStarterTunnelCommand(port, host, user) {
+  const parts = [
+    "python scripts\\access_starter.py tunnel",
+    "--local-port",
+    String(port),
+    "--remote-port",
+    String(port),
+  ];
+
+  if (host !== "") {
+    parts.push("--host", host);
+  }
+
+  if (user !== "") {
+    parts.push("--user", user);
+  }
+
+  return parts.join(" ");
+}
+
+async function refreshSshAccessStatus() {
+  try {
+    const response = await fetch("/api/access/ssh/status", {
+      headers: {
+        Accept: "application/json",
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`SSH access status failed: HTTP ${response.status}`);
+    }
+
+    const status = await response.json();
+    currentStatus = {
+      ...(currentStatus || {}),
+      access: {
+        ...((currentStatus || {}).access || {}),
+        ssh: status,
+      },
+    };
+    render("Settings");
+  } catch (error) {
+    appendUiError(error);
+    render("Logs");
+  }
+}
+
+async function refreshNetworkInterfaces() {
+  try {
+    const response = await fetch("/api/status", {
+      headers: {
+        Accept: "application/json",
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Network interface scan failed: HTTP ${response.status}`);
+    }
+
+    currentStatus = await response.json();
+    updateSummaryCards(currentStatus);
+    render("Settings");
+  } catch (error) {
+    appendUiError(error);
+    render("Logs");
+  }
+}
+
+async function restartHttpServerFromUi(host, port) {
+  try {
+    const response = await fetch("/api/controller/restart", {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        controller_host: host,
+        controller_port: Number(port) || 8787,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP server restart failed: HTTP ${response.status}`);
+    }
+
+    const content = document.querySelector("#content");
+
+    if (content !== null) {
+      const notice = document.createElement("div");
+      notice.className = "settings-block";
+      notice.textContent = `HTTP server is restarting on ${host}:${Number(port) || 8787}. Reopen the page at the selected address.`;
+      content.replaceChildren(notice);
+    }
+  } catch (error) {
+    appendUiError(error);
+    render("Logs");
+  }
+}
+
 function render(tab = "Client") {
   if (tab !== "Client") {
     contactMenuState = null;
+    clientAccountMenuState = null;
   }
 
-  renderNav(tab);
+  if (tab !== "Announces") {
+    announceModalState = null;
+  }
 
   document.querySelector("h1").textContent = tab;
+  renderNav(tab);
+  renderClientSummaryState(tab);
 
   const content = document.querySelector("#content");
   content.innerHTML = "";
@@ -1884,6 +2912,16 @@ function render(tab = "Client") {
 
   if (tab === "Client") {
     content.appendChild(renderClient());
+    return;
+  }
+
+  if (tab === "Announces") {
+    content.appendChild(renderAnnounces());
+    return;
+  }
+
+  if (tab === "NomadNet") {
+    content.appendChild(renderNomadNet());
     return;
   }
 
@@ -2078,6 +3116,43 @@ async function selectRuntimeFromUi() {
   }
 }
 
+async function saveSshAccessSetting(payload) {
+  try {
+    const response = await fetch("/api/config", {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Config save failed: HTTP ${response.status}`);
+    }
+
+    await fetchStatus();
+    render("Settings");
+  } catch (error) {
+    appendUiError(error);
+    render("Logs");
+  }
+}
+
+async function copyTextToClipboard(text) {
+  try {
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+
+    copyTextFallback(text);
+  } catch (error) {
+    appendUiError(error);
+    render("Logs");
+  }
+}
+
 async function openNewClientEditor() {
   try {
     const response = await fetch("/api/clients/draft", {
@@ -2157,6 +3232,42 @@ async function removeClient(client) {
     appendUiError(error);
     render("Logs");
   }
+}
+
+async function shareClientAccount(client) {
+  const text = [
+    `Name: ${client.display_name || client.id || "-"}`,
+    `Client id: ${client.id || "-"}`,
+    `Identity: ${client.identity_hash || "-"}`,
+    `LXMF destination: ${client.lxmf_destination_hash || "-"}`,
+  ].join("\n");
+
+  clientAccountMenuState = null;
+
+  try {
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+      await navigator.clipboard.writeText(text);
+    } else {
+      copyTextFallback(text);
+    }
+
+    render("Client");
+  } catch (error) {
+    appendUiError(error);
+    render("Logs");
+  }
+}
+
+function copyTextFallback(text) {
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "readonly");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  document.body.appendChild(textarea);
+  textarea.select();
+  document.execCommand("copy");
+  textarea.remove();
 }
 
 function selectActiveClient(clients) {
@@ -2572,6 +3683,16 @@ document.addEventListener("keydown", (event) => {
   if (contactMenuState !== null) {
     contactMenuState = null;
     render("Client");
+  }
+
+  if (clientAccountMenuState !== null) {
+    clientAccountMenuState = null;
+    render("Client");
+  }
+
+  if (announceModalState !== null) {
+    announceModalState = null;
+    render("Announces");
   }
 
   if (symbolPaletteOpen) {

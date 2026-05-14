@@ -9,6 +9,7 @@ dependencies = []
 friendlynode-controller = "friendlynode.controller.main:main"
 friendlynode-engine = "friendlynode.engine.engine_main:main"
 friendlynode-launcher = "friendlynode.launcher.desktop_launcher:main"
+friendlynode-access = "friendlynode.access_starter:main"
 
 [tool.pyright]
 pythonVersion = "3.11"

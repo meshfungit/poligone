@@ -12,8 +12,22 @@ def main() -> None:
 
     try:
         app.start()
-        server = ControllerHttpServer(app)
-        server.serve_forever()
+
+        while True:
+            server = ControllerHttpServer(
+                app,
+                host=app.config.controller_host,
+                port=app.config.controller_port,
+            )
+            server.serve_forever()
+            restart_requested = server.restart_requested
+            server.close()
+            server = None
+
+            if not restart_requested:
+                break
+
+            print("FriendlyNode HTTP server restarting")
     except KeyboardInterrupt:
         print("FriendlyNode controller stopped by user")
     finally:

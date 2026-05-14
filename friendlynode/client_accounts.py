@@ -230,6 +230,30 @@ class ClientAccountStore:
             "messages": [],
         }
 
+    def save_contact(self, client_id: str, payload: dict[str, object]) -> dict[str, object]:
+        contact_id = self._normalise_client_id(
+            payload.get("id")
+            or payload.get("destination_hash")
+            or payload.get("lxmf_address")
+        )
+        contact = {
+            "id": contact_id,
+            "name": str(payload.get("name") or self._default_display_name(contact_id)),
+            "destination_hash": str(payload.get("destination_hash") or ""),
+            "identity_hash": str(payload.get("identity_hash") or ""),
+            "lxmf_address": str(payload.get("lxmf_address") or ""),
+            "last_announce": str(payload.get("last_announce") or ""),
+            "hops": payload.get("hops"),
+            "path_status": str(payload.get("path_status") or "announced"),
+        }
+        contact_path = self._contact_path(client_id, contact_id)
+        contact_path.parent.mkdir(parents=True, exist_ok=True)
+        contact_path.write_text(
+            json.dumps(contact, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        return contact
+
     def add_outbound_message(self, client_id: str, contact_id: str, content: str) -> dict[str, object]:
         text = content.strip()
         if text == "":

@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Any
 from friendlynode.client_accounts import ClientAccountStore
 from friendlynode.config.app_config import AppConfig
+from friendlynode.controller.access import build_network_interfaces_status, build_ssh_access_status
 from friendlynode.controller.engine_supervisor import EngineSupervisor
 from friendlynode.controller.runtime_manager import RuntimeInfo, RuntimeManager
 from friendlynode.controller.state_cache import StateCache
@@ -81,8 +82,61 @@ class ControllerApp:
         self.state.append_log("info", "rns-config", "Reticulum config saved")
         return parsed_config.to_dict()
 
+    def save_app_config(self, payload: dict[str, object]) -> dict[str, object]:
+        changed_controller_bind = False
+
+        if "controller_host" in payload:
+            host = str(payload.get("controller_host") or "").strip()
+            if host == "":
+                raise ValueError("controller_host cannot be empty")
+            self.config.controller_host = host
+            changed_controller_bind = True
+
+        if "controller_port" in payload:
+            port = int(payload.get("controller_port") or 0)
+            if port < 1 or port > 65535:
+                raise ValueError("controller_port must be between 1 and 65535")
+            self.config.controller_port = port
+            changed_controller_bind = True
+
+        if changed_controller_bind:
+            self.config.save()
+            self.state.append_log(
+                "info",
+                "config",
+                f"Controller bind changed: {self.config.controller_host}:{self.config.controller_port}",
+            )
+
+        if "ssh_access_enabled" in payload:
+            self.config.set_ssh_access_enabled(bool(payload.get("ssh_access_enabled")))
+            self.state.append_log(
+                "info",
+                "config",
+                f"SSH tunnel access setting changed: {self.config.ssh_access_enabled}",
+            )
+
+        if "ssh_tunnel_host" in payload or "ssh_tunnel_user" in payload:
+            self.config.set_ssh_tunnel_endpoint(
+                str(payload.get("ssh_tunnel_host", self.config.ssh_tunnel_host)),
+                str(payload.get("ssh_tunnel_user", self.config.ssh_tunnel_user)),
+            )
+            self.state.append_log("info", "config", "SSH tunnel endpoint changed")
+
+        return self.config.to_dict()
+
+    def get_access_status(self) -> dict[str, object]:
+        return {
+            "network": build_network_interfaces_status(),
+            "ssh": build_ssh_access_status(),
+        }
+
     def list_clients(self) -> dict[str, object]:
         return self.client_store.to_dict()
+
+    def list_announces(self) -> dict[str, object]:
+        return {
+            "announces": self.state.snapshot_announces(),
+        }
 
     def build_client_draft(self) -> dict[str, object]:
         return self.client_store.build_draft().to_dict()
@@ -114,6 +168,15 @@ class ControllerApp:
         result = self.client_store.clear_messages(client_id, contact_id)
         self.state.append_log("info", "client", f"Messages cleared: {client_id}/{contact_id}")
         return result
+
+    def save_client_contact(self, client_id: str, payload: dict[str, object]) -> dict[str, object]:
+        contact = self.client_store.save_contact(client_id, payload)
+        self.state.append_log("info", "client", f"Contact saved: {client_id}/{contact['id']}")
+        return {
+            "client_id": client_id,
+            "contact": contact,
+            "conversations": self.client_store.list_conversations(client_id),
+        }
 
     def send_client_message(
         self,

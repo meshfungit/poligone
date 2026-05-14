@@ -23,6 +23,9 @@ from friendlynode.config.defaults import (
 class AppConfig:
     controller_host: str = DEFAULT_CONTROLLER_HOST
     controller_port: int = DEFAULT_CONTROLLER_PORT
+    ssh_access_enabled: bool = True
+    ssh_tunnel_host: str = ""
+    ssh_tunnel_user: str = ""
 
     engine_name: str = DEFAULT_ENGINE_NAME
 
@@ -48,6 +51,9 @@ class AppConfig:
 
         config.controller_host = str(raw.get("controller_host", config.controller_host))
         config.controller_port = int(raw.get("controller_port", config.controller_port))
+        config.ssh_access_enabled = bool(raw.get("ssh_access_enabled", config.ssh_access_enabled))
+        config.ssh_tunnel_host = str(raw.get("ssh_tunnel_host", config.ssh_tunnel_host))
+        config.ssh_tunnel_user = str(raw.get("ssh_tunnel_user", config.ssh_tunnel_user))
         config.engine_name = str(raw.get("engine_name", config.engine_name))
 
         config.rns_config_dir = config._read_path(raw, "rns_config_dir", config.rns_config_dir)
@@ -68,6 +74,9 @@ class AppConfig:
         payload = {
             "controller_host": self.controller_host,
             "controller_port": self.controller_port,
+            "ssh_access_enabled": self.ssh_access_enabled,
+            "ssh_tunnel_host": self.ssh_tunnel_host,
+            "ssh_tunnel_user": self.ssh_tunnel_user,
             "engine_name": self.engine_name,
             "rns_config_dir": str(self.rns_config_dir),
             "database_path": str(self.database_path),
@@ -87,6 +96,15 @@ class AppConfig:
         self.engine_name = engine_name
         self.save()
 
+    def set_ssh_access_enabled(self, enabled: bool) -> None:
+        self.ssh_access_enabled = enabled
+        self.save()
+
+    def set_ssh_tunnel_endpoint(self, host: str, user: str) -> None:
+        self.ssh_tunnel_host = host.strip()
+        self.ssh_tunnel_user = user.strip()
+        self.save()
+
     def ensure_dirs(self) -> None:
         self.app_config_path.parent.mkdir(parents=True, exist_ok=True)
         self.rns_config_dir.mkdir(parents=True, exist_ok=True)
@@ -98,6 +116,9 @@ class AppConfig:
         return {
             "controller_host": self.controller_host,
             "controller_port": self.controller_port,
+            "ssh_access_enabled": self.ssh_access_enabled,
+            "ssh_tunnel_host": self.ssh_tunnel_host,
+            "ssh_tunnel_user": self.ssh_tunnel_user,
             "engine_name": self.engine_name,
             "app_config_path": str(self.app_config_path),
             "rns_config_dir": str(self.rns_config_dir),

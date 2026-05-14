@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import mimetypes
+import threading
+import time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -35,19 +37,57 @@ class ControllerHttpServer:
         self.host = host
         self.port = port
         self.web_root = web_root.resolve()
+        self.restart_requested = False
         handler_class = self._build_handler()
-        self.httpd = ReusableThreadingHTTPServer((self.host, self.port), handler_class)
+        self.listen_hosts = self._build_listen_hosts(self.host)
+        self.httpds = [
+            ReusableThreadingHTTPServer((listen_host, self.port), handler_class)
+            for listen_host in self.listen_hosts
+        ]
 
     def serve_forever(self) -> None:
-        print(f"FriendlyNode controller listening on http://{self.host}:{self.port}/")
-        self.httpd.serve_forever()
+        threads = []
+
+        for listen_host, httpd in zip(self.listen_hosts, self.httpds, strict=True):
+            print(f"FriendlyNode controller listening on http://{listen_host}:{self.port}/")
+            thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+            thread.start()
+            threads.append(thread)
+
+        while any(thread.is_alive() for thread in threads):
+            for thread in threads:
+                thread.join(0.5)
 
     def close(self) -> None:
-        self.httpd.server_close()
+        for httpd in self.httpds:
+            httpd.server_close()
+
+    def request_restart(self) -> None:
+        self.restart_requested = True
+        thread = threading.Thread(target=self._shutdown_after_response, daemon=True)
+        thread.start()
+
+    def _shutdown_after_response(self) -> None:
+        time.sleep(0.2)
+        for httpd in self.httpds:
+            httpd.shutdown()
+
+    def _build_listen_hosts(self, configured_host: str) -> list[str]:
+        host = configured_host.strip()
+
+        if host in ("", "127.0.0.1", "localhost"):
+            return ["127.0.0.1"]
+
+        if host == "0.0.0.0":
+            return ["0.0.0.0"]
+
+        return ["127.0.0.1", host]
 
     def _build_handler(self) -> type[BaseHTTPRequestHandler]:
         app = self.app
         web_root = self.web_root
+        server_port = self.port
+        controller_server = self
 
         class FriendlyNodeRequestHandler(BaseHTTPRequestHandler):
             server_version = "FriendlyNodeHTTP/0.1"
@@ -62,8 +102,14 @@ class ControllerHttpServer:
                 if parsed.path == "/api/config":
                     self._send_json(self._build_config_response())
                     return
+                if parsed.path == "/api/access/ssh/status":
+                    self._send_json(app.get_access_status()["ssh"])
+                    return
                 if parsed.path == "/api/rns-config":
                     self._send_json(app.get_rns_config())
+                    return
+                if parsed.path == "/api/announces":
+                    self._send_json(app.list_announces())
                     return
                 if parsed.path == "/api/clients":
                     self._send_json(app.list_clients())
@@ -99,6 +145,26 @@ class ControllerHttpServer:
                     self._send_json(app.save_rns_config(payload))
                     return
 
+                if parsed.path == "/api/config":
+                    payload = self._read_json_body()
+                    self._send_json(app.save_app_config(payload))
+                    return
+
+                if parsed.path == "/api/controller/restart":
+                    payload = self._read_json_body()
+
+                    if payload:
+                        app.save_app_config(payload)
+
+                    self._send_json(
+                        {
+                            "status": "restarting",
+                            "config": app.config.to_dict(),
+                        }
+                    )
+                    controller_server.request_restart()
+                    return
+
                 if parsed.path == "/api/runtime/select":
                     payload = self._read_json_body()
                     runtime_name = payload.get("name")
@@ -126,6 +192,11 @@ class ControllerHttpServer:
                 client_route = self._parse_client_route(parsed.path)
                 if client_route is not None:
                     client_id, action, contact_id = client_route
+
+                    if action == "contacts":
+                        payload = self._read_json_body()
+                        self._send_json(app.save_client_contact(client_id, payload))
+                        return
 
                     if action == "messages" and contact_id is not None:
                         payload = self._read_json_body()
@@ -169,13 +240,26 @@ class ControllerHttpServer:
                     "controller": {
                         "running": True,
                         "web_root": str(web_root),
+                        "http_host": controller_server.listen_hosts[0],
+                        "http_hosts": list(controller_server.listen_hosts),
+                        "http_port": server_port,
+                        "listen_url": (
+                            f"http://{controller_server.listen_hosts[0]}:{server_port}/"
+                        ),
+                        "listen_urls": [
+                            f"http://{host}:{server_port}/"
+                            for host in controller_server.listen_hosts
+                        ],
                     },
                     "engine": app.engine_supervisor.status(),
                     "runtime": {
                         "active": active_runtime_name,
                         "available": [runtime.to_dict() for runtime in runtimes],
                     },
+                    "access": app.get_access_status(),
+                    "config": app.config.to_dict(),
                     "clients": app.list_clients(),
+                    "announces": app.state.snapshot_announces(),
                     "logs": app.state.snapshot_logs(),
                 }
 
@@ -271,6 +355,9 @@ class ControllerHttpServer:
 
                     if parts[3] == "conversations":
                         return client_id, "conversations", None
+
+                    if parts[3] == "contacts":
+                        return client_id, "contacts", None
 
                 if len(parts) == 6 and parts[0:2] == ["api", "clients"]:
                     client_id = parts[2]

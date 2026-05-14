@@ -5,6 +5,7 @@ ROUTES = {
     "restart_reticulum": "/api/reticulum/restart",
     "runtimes": "/api/runtimes",
     "interfaces": "/api/interfaces",
+    "announces": "/api/announces",
     "clients": "/api/clients",
     "client_draft": "/api/clients/draft",
     "messages": "/api/messages",
