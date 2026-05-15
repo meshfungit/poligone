@@ -1,39 +1,9 @@
 (function () {
-  const symbolGroups = [
-    {
-      name: "Micron",
-      symbols: [
-        { label: "B", style: "bold", placeholder: "bold", title: "Bold" },
-        { label: "I", style: "italic", placeholder: "emphasis", title: "Italic" },
-        { label: "U", style: "underline", placeholder: "underline", title: "Underline" },
-        { label: "\u27F3", style: "reset", title: "Reset style" },
-        { label: "\u2261", linePrefix: "`c", title: "Center align" },
-        { label: "\u21E5", linePrefix: "`r", title: "Right align" },
-        { label: "\u21E4", linePrefix: "`a", title: "Default align" },
-        { label: "Aa", style: "foreground", colorCode: "ff8800", placeholder: "orange", title: "Orange text", color: "#ff8800" },
-        { label: "Aa", style: "background", colorCode: "005555", placeholder: "background", title: "Blue background", background: "#005555" },
-        { label: "H", linePrefix: ">", placeholder: "Heading", title: "Heading" },
-        { label: "\u2500", block: "-\u223F", title: "Divider" },
-      ],
-    },
-    {
-      name: "Smile",
-      symbols: ["\u263A", "\u2639", ":-)", ";-)", ":-/", ":-D", ":-P", ":-O", "<3"],
-    },
-    {
-      name: "Arrows",
-      symbols: ["\u2190", "\u2191", "\u2192", "\u2193", "\u21D2", "\u21D4", "\u21B5", "\u27A4"],
-    },
-    {
-      name: "Graphics",
-      symbols: ["\u2500", "\u2502", "\u250C", "\u2510", "\u2514", "\u2518", "\u251C", "\u2524", "\u252C", "\u2534", "\u253C", "\u2588"],
-    },
-  ];
-
   function render(source, options = {}) {
     const selection = normalizeSelection(options.selectionStart, options.selectionEnd);
     const root = document.createElement("div");
     root.className = "micron-content";
+    root.dataset.symbolStyle = normalizeSymbolStyle(options.symbolStyle);
     const normalizedSource = String(source).replace(/\r\n/g, "\n");
     const lines = normalizedSource.split("\n");
     let literal = false;
@@ -48,9 +18,16 @@
         continue;
       }
 
-      if (!literal && (trimmed === "-" || trimmed === "-\u223F" || trimmed === "-~")) {
+      if (!literal && isDividerLine(trimmed)) {
         const divider = document.createElement("div");
         divider.className = "micron-divider";
+        divider.dataset.micronSource = trimmed;
+        const dividerText = renderDividerText(trimmed);
+
+        if (dividerText !== "") {
+          divider.textContent = dividerText;
+        }
+
         root.appendChild(divider);
         rawOffset += rawLine.length + 1;
         continue;
@@ -61,9 +38,9 @@
       line.className = parsed.className;
 
       if (literal) {
-        appendLiteral(line, rawLine, rawOffset, selection);
+        appendLiteral(line, rawLine, rawOffset, selection, options);
       } else {
-        appendInline(line, parsed.text, rawOffset + parsed.offset, selection, inlineState);
+        appendInline(line, parsed.text, rawOffset + parsed.offset, selection, inlineState, options);
       }
 
       if (parsed.toggleLiteral) {
@@ -116,7 +93,19 @@
     };
   }
 
-  function appendLiteral(parent, text, rawStart, selection) {
+  function isDividerLine(line) {
+    return line === "-" || (line.length === 2 && line[0] === "-");
+  }
+
+  function renderDividerText(line) {
+    if (line === "-") {
+      return "";
+    }
+
+    return line[1].repeat(32);
+  }
+
+  function appendLiteral(parent, text, rawStart, selection, options) {
     let buffer = "";
     let selected = false;
 
@@ -126,7 +115,7 @@
       }
 
       const span = document.createElement("span");
-      span.textContent = buffer;
+      appendRenderedText(span, buffer, options);
 
       if (selected) {
         span.classList.add("micron-selected");
@@ -160,7 +149,7 @@
     };
   }
 
-  function appendInline(parent, text, rawStart, selection, state = createInlineState()) {
+  function appendInline(parent, text, rawStart, selection, state = createInlineState(), options = {}) {
     let index = 0;
     let buffer = "";
     let bufferSelected = false;
@@ -171,7 +160,7 @@
       }
 
       const span = document.createElement("span");
-      span.textContent = buffer;
+      appendRenderedText(span, buffer, options);
 
       if (bufferSelected) {
         span.classList.add("micron-selected");
@@ -299,6 +288,137 @@
     flush();
   }
 
+  function appendRenderedText(parent, text, options) {
+    const style = normalizeSymbolStyle(options.symbolStyle);
+
+    if (style === "system") {
+      appendSymbolAwareText(parent, text, "micron-symbol micron-symbol-system");
+      return;
+    }
+
+    if (style === "text") {
+      appendSymbolAwareText(parent, text, "micron-symbol micron-symbol-text");
+      return;
+    }
+
+    appendFriendlyNodeText(parent, text);
+  }
+
+  function appendFriendlyNodeText(parent, text) {
+    const iconPack = window.FriendlyNodeMicronIconPack;
+
+    if (!iconPack || typeof iconPack.createIcon !== "function" || typeof iconPack.supports !== "function") {
+      appendSymbolAwareText(parent, text, "micron-symbol micron-symbol-friendlynode");
+      return;
+    }
+
+    let buffer = "";
+
+    function flushBuffer() {
+      if (buffer === "") {
+        return;
+      }
+
+      parent.appendChild(document.createTextNode(buffer));
+      buffer = "";
+    }
+
+    for (const token of tokenizeFriendlyNodeSymbols(text, iconPack)) {
+      if (token.symbol) {
+        flushBuffer();
+        parent.appendChild(iconPack.createIcon(token.value));
+        continue;
+      }
+
+      buffer += token.value;
+    }
+
+    flushBuffer();
+  }
+
+  function tokenizeFriendlyNodeSymbols(text, iconPack) {
+    const tokens = [];
+    const multiSymbols = typeof iconPack.getMultiCharacterSymbols === "function"
+      ? iconPack.getMultiCharacterSymbols().sort((a, b) => b.length - a.length)
+      : [];
+    let index = 0;
+
+    while (index < text.length) {
+      const multi = multiSymbols.find((symbol) => text.startsWith(symbol, index) && supportsFriendlyNodeTextSymbol(iconPack, symbol));
+
+      if (multi) {
+        tokens.push({ value: multi, symbol: true });
+        index += multi.length;
+        continue;
+      }
+
+      const char = Array.from(text.slice(index))[0];
+
+      if (!char) {
+        break;
+      }
+
+      tokens.push({
+        value: char,
+        symbol: supportsFriendlyNodeTextSymbol(iconPack, char),
+      });
+      index += char.length;
+    }
+
+    return tokens;
+  }
+
+  function supportsFriendlyNodeTextSymbol(iconPack, symbol) {
+    if (typeof iconPack.supportsText === "function") {
+      return iconPack.supportsText(symbol);
+    }
+
+    return iconPack.supports(symbol);
+  }
+
+  function appendSymbolAwareText(parent, text, symbolClassName) {
+    let buffer = "";
+
+    function flushBuffer() {
+      if (buffer === "") {
+        return;
+      }
+
+      parent.appendChild(document.createTextNode(buffer));
+      buffer = "";
+    }
+
+    for (const char of Array.from(text)) {
+      if (!isEmojiLikeSymbol(char)) {
+        buffer += char;
+        continue;
+      }
+
+      flushBuffer();
+
+      const span = document.createElement("span");
+      span.className = symbolClassName;
+      span.textContent = char;
+      parent.appendChild(span);
+    }
+
+    flushBuffer();
+  }
+
+  function normalizeSymbolStyle(value) {
+    return ["system", "friendlynode", "text"].includes(value) ? value : "system";
+  }
+
+  function isEmojiLikeSymbol(char) {
+    const code = char.codePointAt(0);
+
+    if (!Number.isInteger(code)) {
+      return false;
+    }
+
+    return (code >= 0x2600 && code <= 0x27BF) || (code >= 0x2B00 && code <= 0x2BFF);
+  }
+
   function normalizeSelection(selectionStart, selectionEnd) {
     if (!Number.isInteger(selectionStart) || !Number.isInteger(selectionEnd) || selectionStart === selectionEnd) {
       return null;
@@ -345,6 +465,8 @@
 
   window.FriendlyNodeMicron = {
     render,
-    symbolGroups,
+    symbolGroups: window.FriendlyNodeMicronPalette && Array.isArray(window.FriendlyNodeMicronPalette.symbolGroups)
+      ? window.FriendlyNodeMicronPalette.symbolGroups
+      : [],
   };
 })();

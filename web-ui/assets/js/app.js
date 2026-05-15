@@ -11,19 +11,19 @@ let announceModalState = null;
 let clearMessagesState = null;
 let transientConversation = null;
 let nomadnetBrowserState = null;
+let micronSymbolStyle = "system";
 let activeNomadNetSection = "Browser";
-let nomadnetEditorDraft = "`cFriendlyNode local page\n\nWelcome to a local NomadNet page draft.\n";
+let nomadnetEditorDraft = "`cFriendlyNode local page\n\nWelcome to a local NomadNet page draft.\n\nSymbols: \u2714 \u26A0 \u267B \u2696 \u2604\n";
 let nomadnetEditorPath = "index.mu";
 let nomadnetEditorPages = [];
 let nomadnetEditorStatus = "";
 let nomadnetEditorFileDialog = null;
 let nomadnetEditorDialogPath = "";
 let nomadnetEditorPaletteOpen = false;
-let nomadnetEditorPaletteSpacerHeight = 0;
 let nomadnetEditorSelection = null;
 let nomadnetEditorLinePoints = null;
 let nomadnetEditorRawSelection = null;
-let showNomadNetEditorUnprintable = true;
+let showNomadNetEditorUnprintable = false;
 const nomadnetBookmarks = new Set();
 const collapsedPanels = {
   toolbox: false,
@@ -35,10 +35,12 @@ const collapsedPanels = {
   settingsAccess: true,
   settingsRuntime: true,
   settingsPaths: true,
+  nomadnetBrowserSettings: true,
 };
 const expandedClientDetails = new Set();
 let messageDraft = "";
 let symbolPaletteOpen = false;
+let symbolPaletteSpacerHeight = 0;
 let messageEditorSelection = null;
 let showMessageUnprintable = false;
 const announceFilters = {
@@ -396,6 +398,7 @@ function renderNomadNetBrowser() {
   };
   actions.appendChild(bookmarkButton);
   block.appendChild(actions);
+  block.appendChild(renderNomadNetBrowserSettings());
 
   const details = document.createElement("div");
   details.className = "settings-compact-grid";
@@ -426,7 +429,7 @@ function renderNomadNetBrowser() {
   } else if (current.source) {
     const page = document.createElement("div");
     page.className = "nomadnet-page";
-    page.appendChild(renderMessageContent(current.source));
+    page.appendChild(renderMicronContent(current.source));
     block.appendChild(page);
   } else {
     const hint = document.createElement("div");
@@ -436,6 +439,43 @@ function renderNomadNetBrowser() {
   }
 
   return block;
+}
+
+function renderNomadNetBrowserSettings() {
+  const section = renderCollapsibleSection("nomadnetBrowserSettings", "Settings");
+  section.classList.add("nomadnet-browser-settings");
+
+  const grid = document.createElement("div");
+  grid.className = "settings-compact-grid";
+
+  const field = document.createElement("label");
+  field.className = "settings-field";
+  field.textContent = "Symbols";
+
+  const select = document.createElement("select");
+
+  for (const [value, label] of [
+    ["system", "System"],
+    ["friendlynode", "FriendlyNode"],
+    ["text", "Text"],
+  ]) {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = label;
+    option.selected = value === micronSymbolStyle;
+    select.appendChild(option);
+  }
+
+  select.onchange = () => {
+    micronSymbolStyle = select.value;
+    render("NomadNet");
+  };
+
+  field.appendChild(select);
+  grid.appendChild(field);
+  section.appendChild(grid);
+
+  return section;
 }
 
 function renderNomadNetBookmarks() {
@@ -612,7 +652,7 @@ function renderNomadNetEditor() {
     renderedInput.tabIndex = 0;
     renderedInput.dataset.editor = "nomadnet";
     renderedInput.dataset.raw = "false";
-    renderedInput.appendChild(renderMessageContent(nomadnetEditorDraft));
+    renderedInput.appendChild(renderMicronContent(nomadnetEditorDraft));
     renderedInput.oninput = () => {
       nomadnetEditorDraft = serializeMessageEditor(renderedInput);
       rememberNomadNetEditorSelection(renderedInput);
@@ -682,11 +722,8 @@ function renderNomadNetEditor() {
 
   block.appendChild(editor);
 
-  if (nomadnetEditorPaletteOpen && nomadnetEditorPaletteSpacerHeight > 0) {
-    const spacer = document.createElement("div");
-    spacer.className = "nomadnet-palette-spacer";
-    spacer.style.height = `${nomadnetEditorPaletteSpacerHeight}px`;
-    block.appendChild(spacer);
+  if (nomadnetEditorPaletteOpen && symbolPaletteSpacerHeight > 0) {
+    block.appendChild(renderPaletteSpacer());
   }
 
   if (nomadnetEditorFileDialog !== null) {
@@ -1719,12 +1756,17 @@ function renderMessageThread(contact, messages) {
   for (const message of messages) {
     const bubble = document.createElement("div");
     bubble.className = message.direction === "outbound" ? "message-bubble outbound" : "message-bubble inbound";
-    bubble.appendChild(renderMessageContent(message.content || ""));
+    bubble.appendChild(renderMicronContent(message.content || ""));
     list.appendChild(bubble);
   }
 
   panel.appendChild(list);
   panel.appendChild(renderMessageComposer(contact));
+
+  if (symbolPaletteOpen && symbolPaletteSpacerHeight > 0) {
+    panel.appendChild(renderPaletteSpacer());
+  }
+
   scrollMessageListToBottom(list);
   return panel;
 }
@@ -1805,8 +1847,7 @@ function renderMessageComposer(contact) {
 
     if (event.key === "Enter") {
       event.preventDefault();
-      document.execCommand("insertLineBreak");
-      messageDraft = serializeMessageEditor(input);
+      insertMessageText(input, "\n");
       rememberMessageEditorSelection(input);
       updateMessageEditorSelectionStatus(selectionStatus);
       resizeMessageInput(input);
@@ -1827,6 +1868,20 @@ function renderMessageComposer(contact) {
     render("Client");
   };
   composer.appendChild(paletteButton);
+
+  const newlineButton = document.createElement("button");
+  newlineButton.type = "button";
+  newlineButton.className = "message-newline-button";
+  newlineButton.title = "New line";
+  newlineButton.setAttribute("aria-label", "Insert new line");
+  newlineButton.textContent = "\u21B5";
+  newlineButton.onclick = () => {
+    insertMessageText(input, "\n");
+    rememberMessageEditorSelection(input);
+    updateMessageEditorSelectionStatus(selectionStatus);
+    resizeMessageInput(input);
+  };
+  composer.appendChild(newlineButton);
 
   const button = document.createElement("button");
   button.type = "submit";
@@ -1850,6 +1905,27 @@ function renderMessageSymbolPalette(input, editorKind = "message") {
   palette.onmousedown = (event) => {
     event.preventDefault();
   };
+
+  const header = document.createElement("div");
+  header.className = "message-symbol-palette-header";
+  const heading = document.createElement("div");
+  heading.className = "message-symbol-palette-title";
+  heading.textContent = "Micron";
+  header.appendChild(heading);
+
+  const closeButton = document.createElement("button");
+  closeButton.type = "button";
+  closeButton.className = "message-symbol-palette-close";
+  closeButton.title = "Close palette";
+  closeButton.setAttribute("aria-label", "Close symbol palette");
+  closeButton.textContent = "\u00D7";
+  closeButton.onmousedown = (event) => {
+    event.preventDefault();
+  };
+  closeButton.onclick = () => closeMessageSymbolPalette(editorKind);
+  header.appendChild(closeButton);
+  palette.appendChild(header);
+
   const micron = window.FriendlyNodeMicron;
   const groups = micron && Array.isArray(micron.symbolGroups) ? micron.symbolGroups : [];
 
@@ -1873,8 +1949,15 @@ function renderMessageSymbolPalette(input, editorKind = "message") {
       item.type = "button";
       item.tabIndex = -1;
       item.className = symbolInsert.length > 3 ? "wide" : "";
-      item.textContent = symbolLabel;
       item.title = symbolTitle;
+
+      const iconPack = window.FriendlyNodeMicronIconPack;
+
+      if (shouldUsePaletteIcon(symbol, symbolLabel, iconPack)) {
+        item.appendChild(iconPack.createIcon(symbolLabel));
+      } else {
+        item.textContent = symbolLabel;
+      }
 
       if (typeof symbol !== "string") {
         if (symbol.color) {
@@ -1908,6 +1991,40 @@ function renderMessageSymbolPalette(input, editorKind = "message") {
   return palette;
 }
 
+function closeMessageSymbolPalette(editorKind) {
+  if (editorKind === "nomadnet") {
+    nomadnetEditorPaletteOpen = false;
+    render("NomadNet");
+    return;
+  }
+
+  symbolPaletteOpen = false;
+  render("Client");
+}
+
+function renderPaletteSpacer() {
+  const spacer = document.createElement("div");
+  spacer.className = "symbol-palette-spacer";
+  spacer.style.height = `${symbolPaletteSpacerHeight}px`;
+  return spacer;
+}
+
+function shouldUsePaletteIcon(symbol, label, iconPack) {
+  if (!iconPack || typeof iconPack.createIcon !== "function" || typeof iconPack.supports !== "function") {
+    return false;
+  }
+
+  if (typeof label !== "string" || !iconPack.supports(label)) {
+    return false;
+  }
+
+  if (typeof symbol === "string") {
+    return true;
+  }
+
+  return Boolean(symbol && (typeof symbol.block === "string" || typeof symbol.insert === "string"));
+}
+
 function positionMessageSymbolPalette(palette, input) {
   const margin = 12;
   const gap = 8;
@@ -1926,7 +2043,7 @@ function positionMessageSymbolPalette(palette, input) {
     palette.style.left = `${Math.round(Math.max(margin, (window.innerWidth - compactWidth) / 2))}px`;
     palette.style.top = `${Math.round(window.innerHeight - compactHeight - margin)}px`;
     palette.style.width = `${Math.round(compactWidth)}px`;
-    setNomadNetPaletteSpacerHeight(Math.ceil(palette.getBoundingClientRect().height) + margin + 8);
+    setSymbolPaletteSpacerHeight(Math.ceil(palette.getBoundingClientRect().height) + margin + 8);
     return;
   }
 
@@ -1947,18 +2064,23 @@ function positionMessageSymbolPalette(palette, input) {
   palette.style.left = `${Math.round(left)}px`;
   palette.style.top = `${Math.round(top)}px`;
   palette.style.width = "";
-  setNomadNetPaletteSpacerHeight(0);
+  setSymbolPaletteSpacerHeight(0);
 }
 
-function setNomadNetPaletteSpacerHeight(height) {
-  if (nomadnetEditorPaletteSpacerHeight === height) {
+function setSymbolPaletteSpacerHeight(height) {
+  if (symbolPaletteSpacerHeight === height) {
     return;
   }
 
-  nomadnetEditorPaletteSpacerHeight = height;
+  symbolPaletteSpacerHeight = height;
 
   if (getActiveTab() === "NomadNet" && activeNomadNetSection === "Editor" && nomadnetEditorPaletteOpen) {
     window.setTimeout(() => render("NomadNet"), 0);
+    return;
+  }
+
+  if (getActiveTab() === "Client" && symbolPaletteOpen) {
+    window.setTimeout(() => render("Client"), 0);
   }
 }
 
@@ -2087,7 +2209,8 @@ function getNomadNetRawSelection(input) {
     return { start, end };
   }
 
-  return documentVisibleSelectionToRawRange(nomadnetEditorDraft, start, end);
+  return editorSelectionToRawRange(input, nomadnetEditorDraft)
+    || documentVisibleSelectionToRawRange(nomadnetEditorDraft, start, end);
 }
 
 function setNomadNetEditorCursor(input, rawOffset, scrollTop) {
@@ -2109,9 +2232,9 @@ function setNomadNetEditorCursor(input, rawOffset, scrollTop) {
     setEditorSelectionOffsets(input, rawOffset, rawOffset);
     nomadnetEditorSelection = { start: rawOffset, end: rawOffset };
   } else {
-    const visible = rawRangeToDocumentVisibleSelection(nomadnetEditorDraft, rawOffset, rawOffset);
-    setEditorSelectionOffsets(input, visible.end, visible.end);
-    nomadnetEditorSelection = { start: visible.end, end: visible.end };
+    const point = rawOffsetToEditorLinePoint(nomadnetEditorDraft, rawOffset);
+    setEditorLinePointSelection(input, point.lineIndex, point.offset);
+    nomadnetEditorSelection = getEditorSelectionOffsets(input);
   }
 
   nomadnetEditorLinePoints = getEditorSelectionLinePoints(input);
@@ -2135,7 +2258,7 @@ function insertNomadNetBlock(input, block, scrollTop, rawSelection = null) {
   const before = nomadnetEditorDraft.slice(0, start);
   const after = nomadnetEditorDraft.slice(end);
   const prefix = before === "" || before.endsWith("\n") ? "" : "\n";
-  const suffix = after === "" || after.startsWith("\n") ? "" : "\n";
+  const suffix = after === "" ? "\n" : after.startsWith("\n") ? "" : "\n";
   const text = `${prefix}${block}${suffix}`;
   nomadnetEditorDraft = `${before}${text}${after}`;
   setNomadNetEditorCursor(input, start + text.length, scrollTop);
@@ -2214,9 +2337,49 @@ function getNomadNetRawLineRange(source, selection) {
 }
 
 function insertMessageText(input, text) {
+  const source = serializeMessageEditor(input);
+  const selection = getMessageRawSelection(input, source);
+  const start = selection === null ? source.length : Math.min(selection.start, selection.end);
+  const end = selection === null ? start : Math.max(selection.start, selection.end);
+
+  messageDraft = `${source.slice(0, start)}${text}${source.slice(end)}`;
+  setMessageEditorCursor(input, start + text.length);
+}
+
+function getMessageRawSelection(input, source) {
+  const selection = getEditorSelectionOffsets(input);
+
+  if (selection === null) {
+    return messageEditorSelection;
+  }
+
+  const start = Math.min(selection.start, selection.end);
+  const end = Math.max(selection.start, selection.end);
+
+  if (input.dataset.raw === "true") {
+    return { start, end };
+  }
+
+  return editorSelectionToRawRange(input, source)
+    || visibleSelectionToRawRange(source, start, end);
+}
+
+function setMessageEditorCursor(input, rawOffset) {
+  renderMessageEditorContent(input, messageDraft);
   input.focus();
-  document.execCommand("insertText", false, text);
-  messageDraft = serializeMessageEditor(input);
+
+  if (input.dataset.raw === "true") {
+    setEditorSelectionOffsets(input, rawOffset, rawOffset);
+    messageEditorSelection = {
+      start: rawOffset,
+      end: rawOffset,
+    };
+  } else {
+    const point = rawOffsetToEditorLinePoint(messageDraft, rawOffset);
+    setEditorLinePointSelection(input, point.lineIndex, point.offset);
+    messageEditorSelection = getEditorSelectionOffsets(input);
+  }
+
   resizeMessageInput(input);
 }
 
@@ -2445,19 +2608,17 @@ function getVisibleLength(source) {
 }
 
 function insertMessageBlock(input, block) {
-  const selection = getEditorSelectionOffsets(input);
-  const value = getMessagePlainText(input);
-  const start = selection === null ? value.length : selection.start;
-  const end = selection === null ? start : selection.end;
-  const before = value.slice(0, start);
-  const after = value.slice(end);
+  const source = serializeMessageEditor(input);
+  const selection = getMessageRawSelection(input, source);
+  const start = selection === null ? source.length : Math.min(selection.start, selection.end);
+  const end = selection === null ? start : Math.max(selection.start, selection.end);
+  const before = source.slice(0, start);
+  const after = source.slice(end);
   const prefix = before === "" || before.endsWith("\n") ? "" : "\n";
-  const suffix = after === "" || after.startsWith("\n") ? "" : "\n";
+  const suffix = after === "" ? "\n" : after.startsWith("\n") ? "" : "\n";
   const text = `${prefix}${block}${suffix}`;
   messageDraft = `${before}${text}${after}`;
-  renderMessageEditorContent(input, messageDraft);
-  input.focus();
-  resizeMessageInput(input);
+  setMessageEditorCursor(input, start + text.length);
 }
 
 function restoreVisibleSelection(input, selection) {
@@ -2539,24 +2700,29 @@ function renderMessageEditorContent(input, source) {
     return;
   }
 
-  input.appendChild(renderMessageContent(source));
+  input.appendChild(renderMicronContent(source));
 }
 
 function serializeMessageEditor(input) {
   if (input.dataset.raw === "true") {
-    return getMessagePlainText(input);
+    return input.textContent.replace(/\r\n/g, "\n");
   }
 
   const content = input.querySelector(".micron-content");
   const root = content || input;
   const lines = [];
-  const lineNodes = Array.from(root.querySelectorAll(".micron-line"));
+  const lineNodes = Array.from(root.querySelectorAll(".micron-line, .micron-divider"));
 
   if (lineNodes.length === 0) {
     return getMessagePlainText(input);
   }
 
   for (const line of lineNodes) {
+    if (line.classList.contains("micron-divider")) {
+      lines.push(line.dataset.micronSource || "-");
+      continue;
+    }
+
     lines.push(`${serializeMessageLinePrefix(line)}${serializeMessageInlineNode(line)}`);
   }
 
@@ -2601,6 +2767,12 @@ function serializeMessageInlineNode(root) {
     }
 
     if (node.nodeType !== Node.ELEMENT_NODE) {
+      return;
+    }
+
+    if (node.dataset && typeof node.dataset.micronSymbol === "string") {
+      applyInlineStyleTransition(state, inherited, appendToken);
+      output.push(escapeInlineVisibleText(node.dataset.micronSymbol));
       return;
     }
 
@@ -2670,7 +2842,7 @@ function getEditorSelectionOffsets(input) {
 
 function getEditorTextOffset(root, node, offset) {
   let total = 0;
-  const lines = Array.from(root.querySelectorAll(".micron-line"));
+  const lines = getEditorLineNodes(root);
 
   if (lines.length === 0) {
     return getPlainDomTextOffset(root, node, offset);
@@ -2730,7 +2902,7 @@ function getEditorSelectionLinePoints(input) {
   }
 
   const range = selection.getRangeAt(0);
-  const lines = Array.from(input.querySelectorAll(".micron-line"));
+  const lines = getEditorLineNodes(input);
 
   if (lines.length === 0) {
     return null;
@@ -2744,6 +2916,10 @@ function getEditorSelectionLinePoints(input) {
   }
 
   return getEditorSelectionLinePointsByIntersection(lines, range);
+}
+
+function getEditorLineNodes(root) {
+  return Array.from(root.querySelectorAll(".micron-line, .micron-divider"));
 }
 
 function getEditorLinePoint(lines, node, offset) {
@@ -2802,6 +2978,35 @@ function getEditorSelectionLinePointsByIntersection(lines, range) {
   return { start, end };
 }
 
+function setEditorRawRangeSelection(input, source, rawStart, rawEnd) {
+  setEditorLinePointRangeSelection(input, {
+    start: rawOffsetToEditorLinePoint(source, rawStart),
+    end: rawOffsetToEditorLinePoint(source, rawEnd),
+  });
+}
+
+function rawOffsetToEditorLinePoint(source, rawOffset) {
+  const ranges = getSerializedLineRanges(source);
+  const offset = Math.max(0, Math.min(source.length, rawOffset));
+
+  for (let index = 0; index < ranges.length; index += 1) {
+    const range = ranges[index];
+    const isLast = index === ranges.length - 1;
+
+    if (offset <= range.end || isLast) {
+      return {
+        lineIndex: index,
+        offset: lineRawOffsetToVisibleOffset(range.text, offset - range.start),
+      };
+    }
+  }
+
+  return {
+    lineIndex: Math.max(0, ranges.length - 1),
+    offset: 0,
+  };
+}
+
 function rangeIntersectsNodeContents(range, node) {
   const nodeRange = document.createRange();
   nodeRange.selectNodeContents(node);
@@ -2811,7 +3016,7 @@ function rangeIntersectsNodeContents(range, node) {
 }
 
 function setEditorLinePointSelection(input, lineIndex, lineOffset) {
-  const lines = Array.from(input.querySelectorAll(".micron-line"));
+  const lines = getEditorLineNodes(input);
   const line = lines[lineIndex];
 
   if (!line) {
@@ -2835,7 +3040,7 @@ function setEditorLinePointSelection(input, lineIndex, lineOffset) {
 }
 
 function setEditorLinePointRangeSelection(input, points) {
-  const lines = Array.from(input.querySelectorAll(".micron-line"));
+  const lines = getEditorLineNodes(input);
   const ordered = getOrderedLineSelectionPoints(points);
   const startLine = lines[ordered.start.lineIndex];
   const endLine = lines[ordered.end.lineIndex];
@@ -2874,6 +3079,19 @@ function findLineDomPoint(line, targetOffset) {
     }
 
     lastText = node;
+
+    const icon = getMicronSymbolIcon(node);
+
+    if (icon !== null) {
+      const iconLength = getMicronSymbolLength(icon);
+
+      if (offset <= iconLength) {
+        return getMicronSymbolBoundaryPoint(icon, offset > 0);
+      }
+
+      offset -= iconLength;
+      continue;
+    }
 
     if (offset <= node.nodeValue.length) {
       return {
@@ -2949,6 +3167,31 @@ function lineVisibleOffsetToRawOffset(line, visibleOffset) {
   return visibleChars[visibleOffset].rawStart;
 }
 
+function lineRawOffsetToVisibleOffset(line, rawOffset) {
+  if (isMicronDividerSource(line)) {
+    return rawOffset <= 0 ? 0 : 32;
+  }
+
+  const visibleChars = getStyleVisibleChars(parseInlineStyleText(line).chars);
+  const offset = Math.max(0, Math.min(line.length, rawOffset));
+  let visibleOffset = 0;
+
+  for (const char of visibleChars) {
+    if (char.rawEnd > offset) {
+      break;
+    }
+
+    visibleOffset += 1;
+  }
+
+  return visibleOffset;
+}
+
+function isMicronDividerSource(line) {
+  const trimmed = String(line).trim();
+  return trimmed === "-" || (trimmed.length === 2 && trimmed[0] === "-");
+}
+
 function getPlainDomTextOffset(root, node, offset) {
   const range = document.createRange();
   range.selectNodeContents(root);
@@ -2958,6 +3201,11 @@ function getPlainDomTextOffset(root, node, offset) {
 
 function getLineDomTextOffset(line, node, offset) {
   let total = 0;
+
+  if (node.nodeType === Node.ELEMENT_NODE) {
+    return getLineElementDomTextOffset(line, node, offset);
+  }
+
   const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
 
   while (true) {
@@ -2965,6 +3213,19 @@ function getLineDomTextOffset(line, node, offset) {
 
     if (current === null) {
       break;
+    }
+
+    const icon = getMicronSymbolIcon(current);
+
+    if (icon !== null) {
+      const iconLength = getMicronSymbolLength(icon);
+
+      if (current === node) {
+        return total + (offset > 0 ? iconLength : 0);
+      }
+
+      total += iconLength;
+      continue;
     }
 
     if (current === node) {
@@ -2988,9 +3249,70 @@ function getVisibleLineTextLength(line) {
       break;
     }
 
+    const icon = getMicronSymbolIcon(current);
+
+    if (icon !== null) {
+      total += getMicronSymbolLength(icon);
+      continue;
+    }
+
     total += current.nodeValue.length;
   }
 
+  return total;
+}
+
+function getMicronSymbolIcon(node) {
+  const element = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+
+  if (!element) {
+    return null;
+  }
+
+  return element.closest(".micron-symbol-icon[data-micron-symbol]");
+}
+
+function getMicronSymbolLength(icon) {
+  return (icon.dataset.micronSymbol || "").length;
+}
+
+function getMicronSymbolBoundaryPoint(icon, after) {
+  const parent = icon.parentNode;
+
+  if (!parent) {
+    return {
+      node: icon,
+      offset: 0,
+    };
+  }
+
+  const offset = Array.prototype.indexOf.call(parent.childNodes, icon) + (after ? 1 : 0);
+  return {
+    node: parent,
+    offset,
+  };
+}
+
+function getLineElementDomTextOffset(line, node, offset) {
+  let total = 0;
+  const range = document.createRange();
+  range.setStart(line, 0);
+
+  try {
+    range.setEnd(node, offset);
+  } catch (error) {
+    return getVisibleLineTextLength(line);
+  }
+
+  const fragment = range.cloneContents();
+  const icons = Array.from(fragment.querySelectorAll(".micron-symbol-icon[data-micron-symbol]"));
+
+  for (const icon of icons) {
+    total += getMicronSymbolLength(icon);
+    icon.textContent = "";
+  }
+
+  total += fragment.textContent.length;
   return total;
 }
 
@@ -3136,7 +3458,6 @@ function restoreNomadNetRenderedSelection(input, shouldFocus = false) {
 
   const start = Math.max(0, Math.min(nomadnetEditorDraft.length, selection.start));
   const end = Math.max(0, Math.min(nomadnetEditorDraft.length, selection.end));
-  const visible = rawRangeToDocumentVisibleSelection(nomadnetEditorDraft, start, end);
 
   if (shouldFocus) {
     try {
@@ -3146,8 +3467,8 @@ function restoreNomadNetRenderedSelection(input, shouldFocus = false) {
     }
   }
 
-  setEditorSelectionOffsets(input, visible.start, visible.end);
-  nomadnetEditorSelection = { start: visible.start, end: visible.end };
+  setEditorRawRangeSelection(input, nomadnetEditorDraft, start, end);
+  nomadnetEditorSelection = getEditorSelectionOffsets(input);
   nomadnetEditorRawSelection = { start, end };
 }
 
@@ -3242,7 +3563,7 @@ function setEditorSelectionOffsets(input, start, end) {
 }
 
 function findEditorDomPoint(root, targetOffset) {
-  const lines = Array.from(root.querySelectorAll(".micron-line"));
+  const lines = getEditorLineNodes(root);
 
   if (lines.length > 0) {
     return findEditorLineDomPoint(lines, targetOffset);
@@ -3766,6 +4087,13 @@ function renderMessageContent(source, options = {}) {
   fallback.className = "micron-content";
   fallback.textContent = String(source);
   return fallback;
+}
+
+function renderMicronContent(source, options = {}) {
+  return renderMessageContent(source, {
+    symbolStyle: micronSymbolStyle,
+    ...options,
+  });
 }
 
 function resizeMessageInput(input) {

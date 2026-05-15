@@ -161,6 +161,7 @@ class ControllerApp:
             ">Stub page\n\n"
             f"`!Destination`!: {destination or '-'}\n\n"
             f"`!Path`!: {page_path}\n\n"
+            "Symbols: ✔ ⚠ ♻ ⚖ ☄\n\n"
             "Real NomadNet page retrieval is not wired yet.\n"
         )
         self.state.append_log("info", "nomadnet", f"Page requested: {destination or '-'}{page_path}")
