@@ -19,6 +19,7 @@ let nomadnetEditorStatus = "";
 let nomadnetEditorFileDialog = null;
 let nomadnetEditorDialogPath = "";
 let nomadnetEditorPaletteOpen = false;
+let nomadnetEditorPaletteSpacerHeight = 0;
 let nomadnetEditorSelection = null;
 let nomadnetEditorLinePoints = null;
 let nomadnetEditorRawSelection = null;
@@ -544,6 +545,9 @@ function renderNomadNetEditor() {
     if (input instanceof HTMLTextAreaElement) {
       nomadnetEditorDraft = input.value;
       rememberNomadNetEditorSelection(input);
+    } else if (input !== null) {
+      nomadnetEditorDraft = serializeMessageEditor(input);
+      rememberNomadNetEditorSelection(input);
     }
 
     showNomadNetEditorUnprintable = unprintableToggle.checked;
@@ -603,14 +607,43 @@ function renderNomadNetEditor() {
     renderedInput.className = "nomadnet-rendered-input nomadnet-rich-input";
     renderedInput.setAttribute("role", "textbox");
     renderedInput.setAttribute("aria-label", "NomadNet Micron preview");
+    renderedInput.contentEditable = "true";
+    renderedInput.spellcheck = false;
     renderedInput.tabIndex = 0;
     renderedInput.dataset.editor = "nomadnet";
     renderedInput.dataset.raw = "false";
     renderedInput.appendChild(renderMessageContent(nomadnetEditorDraft));
+    renderedInput.oninput = () => {
+      nomadnetEditorDraft = serializeMessageEditor(renderedInput);
+      rememberNomadNetEditorSelection(renderedInput);
+      resizeNomadNetEditorInput(renderedInput);
+    };
     renderedInput.onmouseup = () => rememberNomadNetEditorSelection(renderedInput);
     renderedInput.onkeyup = () => rememberNomadNetEditorSelection(renderedInput);
+    renderedInput.onblur = () => {
+      nomadnetEditorDraft = serializeMessageEditor(renderedInput);
+      rememberNomadNetEditorSelection(renderedInput);
+    };
+    renderedInput.onpaste = (event) => {
+      event.preventDefault();
+      const text = event.clipboardData ? event.clipboardData.getData("text/plain") : "";
+      nomadnetEditorDraft = serializeMessageEditor(renderedInput);
+      insertNomadNetText(renderedInput, text, renderedInput.scrollTop, getNomadNetRawSelection(renderedInput));
+      resizeNomadNetEditorInput(renderedInput);
+    };
+    renderedInput.onkeydown = (event) => {
+      if (event.key !== "Enter") {
+        return;
+      }
+
+      event.preventDefault();
+      nomadnetEditorDraft = serializeMessageEditor(renderedInput);
+      insertNomadNetText(renderedInput, "\n", renderedInput.scrollTop, getNomadNetRawSelection(renderedInput));
+      resizeNomadNetEditorInput(renderedInput);
+    };
     window.setTimeout(() => {
       restoreNomadNetRenderedSelection(renderedInput, nomadnetEditorPaletteOpen);
+      resizeNomadNetEditorInput(renderedInput);
     }, 0);
     editor.appendChild(renderedInput);
     input = renderedInput;
@@ -648,6 +681,13 @@ function renderNomadNetEditor() {
   }
 
   block.appendChild(editor);
+
+  if (nomadnetEditorPaletteOpen && nomadnetEditorPaletteSpacerHeight > 0) {
+    const spacer = document.createElement("div");
+    spacer.className = "nomadnet-palette-spacer";
+    spacer.style.height = `${nomadnetEditorPaletteSpacerHeight}px`;
+    block.appendChild(spacer);
+  }
 
   if (nomadnetEditorFileDialog !== null) {
     block.appendChild(renderNomadNetFileDialog());
@@ -1806,6 +1846,7 @@ function renderMessageComposer(contact) {
 function renderMessageSymbolPalette(input, editorKind = "message") {
   const palette = document.createElement("div");
   palette.className = "message-symbol-palette";
+  window.setTimeout(() => positionMessageSymbolPalette(palette, input), 0);
   palette.onmousedown = (event) => {
     event.preventDefault();
   };
@@ -1865,6 +1906,105 @@ function renderMessageSymbolPalette(input, editorKind = "message") {
   }
 
   return palette;
+}
+
+function positionMessageSymbolPalette(palette, input) {
+  const margin = 12;
+  const gap = 8;
+  const anchor = getEditorAnchorRect(input);
+  const width = palette.offsetWidth || 360;
+  const height = palette.offsetHeight || 260;
+  const compactHeight = Math.min(220, Math.max(128, Math.floor(window.innerHeight * 0.38)));
+
+  palette.classList.remove("compact");
+  palette.style.maxHeight = "";
+
+  if (window.innerHeight < 640 || height > window.innerHeight * 0.56) {
+    const compactWidth = Math.min(520, window.innerWidth - (margin * 2));
+    palette.classList.add("compact");
+    palette.style.maxHeight = `${compactHeight}px`;
+    palette.style.left = `${Math.round(Math.max(margin, (window.innerWidth - compactWidth) / 2))}px`;
+    palette.style.top = `${Math.round(window.innerHeight - compactHeight - margin)}px`;
+    palette.style.width = `${Math.round(compactWidth)}px`;
+    setNomadNetPaletteSpacerHeight(Math.ceil(palette.getBoundingClientRect().height) + margin + 8);
+    return;
+  }
+
+  const maxLeft = Math.max(margin, window.innerWidth - width - margin);
+  const maxTop = Math.max(margin, window.innerHeight - height - margin);
+  let left = anchor.left;
+  let top = anchor.bottom + gap;
+
+  if (top + height > window.innerHeight - margin) {
+    top = anchor.top - height - gap;
+  }
+
+  if (top < margin) {
+    top = Math.min(Math.max(anchor.top, margin), maxTop);
+  }
+
+  left = Math.min(Math.max(left, margin), maxLeft);
+  palette.style.left = `${Math.round(left)}px`;
+  palette.style.top = `${Math.round(top)}px`;
+  palette.style.width = "";
+  setNomadNetPaletteSpacerHeight(0);
+}
+
+function setNomadNetPaletteSpacerHeight(height) {
+  if (nomadnetEditorPaletteSpacerHeight === height) {
+    return;
+  }
+
+  nomadnetEditorPaletteSpacerHeight = height;
+
+  if (getActiveTab() === "NomadNet" && activeNomadNetSection === "Editor" && nomadnetEditorPaletteOpen) {
+    window.setTimeout(() => render("NomadNet"), 0);
+  }
+}
+
+function getEditorAnchorRect(input) {
+  const selection = window.getSelection();
+
+  if (!(input instanceof HTMLTextAreaElement) && selection !== null && selection.rangeCount > 0) {
+    const range = selection.getRangeAt(0);
+
+    if (input.contains(range.startContainer) && input.contains(range.endContainer)) {
+      const rect = getRangeViewportRect(range);
+
+      if (rect !== null) {
+        return rect;
+      }
+    }
+  }
+
+  const inputRect = input.getBoundingClientRect();
+  const top = Math.min(Math.max(inputRect.top, 0), Math.max(0, window.innerHeight - 1));
+  const bottom = Math.min(Math.max(inputRect.bottom, top), window.innerHeight);
+
+  return {
+    left: inputRect.left,
+    right: inputRect.right,
+    top,
+    bottom,
+    width: inputRect.width,
+    height: Math.max(1, bottom - top),
+  };
+}
+
+function getRangeViewportRect(range) {
+  const rect = range.getBoundingClientRect();
+
+  if (rect.width > 0 || rect.height > 0) {
+    return rect;
+  }
+
+  const rects = range.getClientRects();
+
+  if (rects.length > 0) {
+    return rects[0];
+  }
+
+  return null;
 }
 
 function getMessageSymbolInsert(symbol) {
