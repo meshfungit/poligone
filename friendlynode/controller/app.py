@@ -4,7 +4,11 @@ from __future__ import annotations
 from typing import Any
 from friendlynode.client_accounts import ClientAccountStore
 from friendlynode.config.app_config import AppConfig
-from friendlynode.controller.access import build_network_interfaces_status, build_ssh_access_status
+from friendlynode.controller.access import (
+    build_channel_security_status,
+    build_network_interfaces_status,
+    build_ssh_access_status,
+)
 from friendlynode.controller.engine_supervisor import EngineSupervisor
 from friendlynode.controller.runtime_manager import RuntimeInfo, RuntimeManager
 from friendlynode.controller.state_cache import StateCache
@@ -127,8 +131,21 @@ class ControllerApp:
     def get_access_status(self) -> dict[str, object]:
         return {
             "network": build_network_interfaces_status(),
+            "security": build_channel_security_status(self.config.controller_host),
             "ssh": build_ssh_access_status(),
         }
+
+    def get_channel_security_status(
+        self,
+        *,
+        request_is_https: bool = False,
+        forwarded_proto: str = "",
+    ) -> dict[str, object]:
+        return build_channel_security_status(
+            self.config.controller_host,
+            request_is_https=request_is_https,
+            forwarded_proto=forwarded_proto,
+        )
 
     def list_clients(self) -> dict[str, object]:
         return self.client_store.to_dict()

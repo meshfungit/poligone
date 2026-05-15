@@ -76,6 +76,23 @@ main {
 .topbar.client-summary-toggle:hover {
   border-color: var(--accent);
 }
+.channel-security-warning {
+  margin-bottom: 10px;
+  border: 1px solid #ef4444;
+  border-radius: 8px;
+  background: rgba(127, 29, 29, 0.36);
+  color: #fecaca;
+  padding: 8px 10px;
+  font-size: 13px;
+  font-weight: 700;
+}
+.insecure-channel .nomadnet-browser,
+.insecure-channel .nomadnet-page,
+.insecure-channel .client-chat,
+.insecure-channel .message-composer {
+  border-color: #ef4444;
+  box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.35);
+}
 .status-pill { border: 1px solid var(--line); border-radius: 999px; padding: 6px 10px; color: var(--muted); background: var(--panel); font-size: 13px; }
 .grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-bottom: 12px; }
 .grid.client-summary-collapsed {

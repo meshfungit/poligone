@@ -4675,6 +4675,7 @@ function render(tab = "Client") {
   }
 
   document.querySelector("h1").textContent = tab;
+  renderChannelSecurityWarning();
   renderNav(tab);
   renderClientSummaryState(tab);
 
@@ -4712,6 +4713,70 @@ function render(tab = "Client") {
   }
 
   content.appendChild(renderTable(tab));
+}
+
+function renderChannelSecurityWarning() {
+  const security = getChannelSecurityStatus();
+  const insecure = !security.secure;
+  document.body.classList.toggle("insecure-channel", insecure);
+
+  const main = document.querySelector("main");
+  const topbar = document.querySelector(".topbar");
+
+  if (main === null || topbar === null) {
+    return;
+  }
+
+  let warning = main.querySelector(".channel-security-warning");
+
+  if (!insecure) {
+    if (warning !== null) {
+      warning.remove();
+    }
+
+    return;
+  }
+
+  if (warning === null) {
+    warning = document.createElement("div");
+    warning.className = "channel-security-warning";
+    warning.setAttribute("role", "status");
+    main.insertBefore(warning, topbar);
+  }
+
+  warning.textContent = `Your channel is not secure: ${security.reason}`;
+}
+
+function getChannelSecurityStatus() {
+  const backendSecurity = currentStatus?.access?.security;
+
+  if (backendSecurity && typeof backendSecurity.secure === "boolean") {
+    return {
+      secure: backendSecurity.secure,
+      reason: String(backendSecurity.reason || backendSecurity.level || "backend security assessment"),
+    };
+  }
+
+  if (isBrowserChannelSecure()) {
+    return {
+      secure: true,
+      reason: "Browser reports a secure local or HTTPS context.",
+    };
+  }
+
+  return {
+    secure: false,
+    reason: "Plain HTTP over a non-local browser address.",
+  };
+}
+
+function isBrowserChannelSecure() {
+  return window.isSecureContext
+    || window.location.protocol === "https:"
+    || window.location.hostname === "localhost"
+    || window.location.hostname === "127.0.0.1"
+    || window.location.hostname === "::1"
+    || window.location.hostname === "[::1]";
 }
 
 function setText(selector, value) {

@@ -105,6 +105,9 @@ class ControllerHttpServer:
                 if parsed.path == "/api/access/ssh/status":
                     self._send_json(app.get_access_status()["ssh"])
                     return
+                if parsed.path == "/api/access/security":
+                    self._send_json(self._build_security_response())
+                    return
                 if parsed.path == "/api/rns-config":
                     self._send_json(app.get_rns_config())
                     return
@@ -287,6 +290,12 @@ class ControllerHttpServer:
 
             def _build_config_response(self) -> dict[str, object]:
                 return app.config.to_dict()
+
+            def _build_security_response(self) -> dict[str, object]:
+                return app.get_channel_security_status(
+                    request_is_https=False,
+                    forwarded_proto="",
+                )
 
             def _build_runtimes_response(self) -> dict[str, object]:
                 runtimes = app.runtime_manager.list_runtimes()

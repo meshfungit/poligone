@@ -13,6 +13,7 @@ from pathlib import Path
 SSH_PORT = 22
 SSH_CONNECT_TIMEOUT_SECONDS = 0.2
 COMMAND_TIMEOUT_SECONDS = 2
+TRUSTED_TUNNEL_KINDS = {"tailscale", "wireguard", "vpn"}
 
 
 def build_ssh_access_status() -> dict[str, object]:
@@ -67,6 +68,75 @@ def build_network_interfaces_status() -> dict[str, object]:
         "platform": system or "unknown",
         "interfaces": unique_interfaces,
     }
+
+
+def build_channel_security_status(
+    configured_host: str,
+    *,
+    request_is_https: bool = False,
+    forwarded_proto: str = "",
+) -> dict[str, object]:
+    host = configured_host.strip().lower()
+    forwarded = forwarded_proto.strip().lower()
+    network = build_network_interfaces_status()
+    interfaces = network["interfaces"]
+    matching_interface = _find_interface_for_host(interfaces, host)
+
+    if request_is_https or forwarded == "https":
+        return _build_security_result(
+            True,
+            "https",
+            "UI access is protected by HTTPS.",
+            configured_host,
+            matching_interface,
+        )
+
+    if host in ("", "127.0.0.1", "localhost", "::1", "[::1]"):
+        return _build_security_result(
+            True,
+            "local",
+            "UI is bound to localhost. Remote access should use a local tunnel.",
+            configured_host,
+            matching_interface,
+        )
+
+    if matching_interface is not None:
+        kind = str(matching_interface.get("kind") or "")
+
+        if kind in TRUSTED_TUNNEL_KINDS:
+            return _build_security_result(
+                True,
+                kind,
+                f"UI is bound to a {kind} adapter.",
+                configured_host,
+                matching_interface,
+            )
+
+        if kind == "loopback":
+            return _build_security_result(
+                True,
+                "local",
+                "UI is bound to a loopback adapter.",
+                configured_host,
+                matching_interface,
+            )
+
+    if host == "0.0.0.0":
+        return _build_security_result(
+            False,
+            "plain_http",
+            "UI is open on all interfaces over plain HTTP.",
+            configured_host,
+            matching_interface,
+        )
+
+    return _build_security_result(
+        False,
+        "plain_http",
+        "UI is reachable over plain HTTP on a non-tunnel interface.",
+        configured_host,
+        matching_interface,
+    )
 
 
 def _find_sshd(system: str) -> Path | None:
@@ -210,13 +280,54 @@ def _classify_ipv4_address(name: str, address: str) -> str:
     if address.startswith("127."):
         return "loopback"
 
-    if lower_name.startswith("tailscale") or address.startswith("100."):
+    if "tailscale" in lower_name or _is_tailscale_address(address):
         return "tailscale"
+
+    if "wireguard" in lower_name or lower_name.startswith("wg") or "wintun" in lower_name:
+        return "wireguard"
+
+    if any(token in lower_name for token in ("vpn", "openvpn", "zerotier", "tap", "tun")):
+        return "vpn"
 
     if _is_private_network_address(address):
         return "private"
 
     return "public"
+
+
+def _find_interface_for_host(
+    interfaces: object,
+    host: str,
+) -> dict[str, object] | None:
+    if not isinstance(interfaces, list):
+        return None
+
+    for item in interfaces:
+        if not isinstance(item, dict):
+            continue
+
+        address = str(item.get("address") or "").lower()
+
+        if address == host:
+            return item
+
+    return None
+
+
+def _build_security_result(
+    secure: bool,
+    level: str,
+    reason: str,
+    configured_host: str,
+    interface: dict[str, object] | None,
+) -> dict[str, object]:
+    return {
+        "secure": secure,
+        "level": level,
+        "reason": reason,
+        "configured_host": configured_host,
+        "adapter": interface or {},
+    }
 
 
 def _is_private_network_address(address: str) -> bool:
@@ -229,8 +340,17 @@ def _is_private_network_address(address: str) -> bool:
         parts[0] == 10
         or (parts[0] == 172 and 16 <= parts[1] <= 31)
         or (parts[0] == 192 and parts[1] == 168)
-        or parts[0] == 100
+        or _is_tailscale_address(address)
     )
+
+
+def _is_tailscale_address(address: str) -> bool:
+    parts = [int(part) for part in address.split(".") if part.isdigit()]
+
+    if len(parts) != 4:
+        return False
+
+    return parts[0] == 100 and 64 <= parts[1] <= 127
 
 
 def _is_local_port_open(port: int) -> bool:
