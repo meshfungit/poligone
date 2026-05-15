@@ -171,6 +171,71 @@ class ControllerApp:
             "runtime": "stub",
         }
 
+    def list_nomadnet_pages(self) -> dict[str, object]:
+        pages_dir = self.config.nomadnet_pages_dir
+        pages_dir.mkdir(parents=True, exist_ok=True)
+        pages = []
+
+        for path in sorted(pages_dir.rglob("*.mu")):
+            if not path.is_file():
+                continue
+
+            pages.append(
+                {
+                    "path": path.relative_to(pages_dir).as_posix(),
+                    "size": path.stat().st_size,
+                }
+            )
+
+        return {
+            "pages_dir": str(pages_dir),
+            "pages": pages,
+        }
+
+    def load_nomadnet_local_page(self, path: str) -> dict[str, object]:
+        page_path = self._resolve_nomadnet_page_path(path)
+
+        if not page_path.exists():
+            raise FileNotFoundError(f"NomadNet page not found: {path}")
+
+        return {
+            "path": page_path.relative_to(self.config.nomadnet_pages_dir).as_posix(),
+            "source": page_path.read_text(encoding="utf-8"),
+        }
+
+    def save_nomadnet_local_page(self, payload: dict[str, object]) -> dict[str, object]:
+        page_path = self._resolve_nomadnet_page_path(str(payload.get("path") or "index.mu"))
+        source = str(payload.get("source") or "")
+        page_path.parent.mkdir(parents=True, exist_ok=True)
+        page_path.write_text(source, encoding="utf-8")
+        self.state.append_log(
+            "info",
+            "nomadnet",
+            f"Local page saved: {page_path.relative_to(self.config.nomadnet_pages_dir).as_posix()}",
+        )
+        return {
+            "path": page_path.relative_to(self.config.nomadnet_pages_dir).as_posix(),
+            "source": source,
+            "size": page_path.stat().st_size,
+        }
+
+    def _resolve_nomadnet_page_path(self, raw_path: str) -> Path:
+        pages_dir = self.config.nomadnet_pages_dir.resolve()
+        relative = raw_path.strip().replace("\\", "/").lstrip("/")
+
+        if relative == "":
+            relative = "index.mu"
+
+        candidate = (pages_dir / relative).resolve()
+
+        if pages_dir != candidate and pages_dir not in candidate.parents:
+            raise ValueError("NomadNet page path escapes pages directory")
+
+        if candidate.suffix != ".mu":
+            raise ValueError("NomadNet page path must end with .mu")
+
+        return candidate
+
     def build_client_draft(self) -> dict[str, object]:
         return self.client_store.build_draft().to_dict()
 

@@ -13,6 +13,16 @@ let transientConversation = null;
 let nomadnetBrowserState = null;
 let activeNomadNetSection = "Browser";
 let nomadnetEditorDraft = "`cFriendlyNode local page\n\nWelcome to a local NomadNet page draft.\n";
+let nomadnetEditorPath = "index.mu";
+let nomadnetEditorPages = [];
+let nomadnetEditorStatus = "";
+let nomadnetEditorFileDialog = null;
+let nomadnetEditorDialogPath = "";
+let nomadnetEditorPaletteOpen = false;
+let nomadnetEditorSelection = null;
+let nomadnetEditorLinePoints = null;
+let nomadnetEditorRawSelection = null;
+let showNomadNetEditorUnprintable = true;
 const nomadnetBookmarks = new Set();
 const collapsedPanels = {
   toolbox: false,
@@ -502,24 +512,401 @@ function renderNomadNetEditor() {
   title.textContent = "Editor";
   block.appendChild(title);
 
-  const textarea = document.createElement("textarea");
-  textarea.value = nomadnetEditorDraft;
-  textarea.spellcheck = false;
-  textarea.oninput = () => {
-    nomadnetEditorDraft = textarea.value;
+  block.appendChild(renderNomadNetEditorFilePanel());
+
+  if (nomadnetEditorStatus !== "") {
+    const status = document.createElement("div");
+    status.className = nomadnetEditorStatus.startsWith("Error:") ? "settings-error" : "settings-hint";
+    status.textContent = nomadnetEditorStatus;
+    block.appendChild(status);
+  }
+
+  const editor = document.createElement("div");
+  editor.className = "message-editor nomadnet-micron-editor";
+
+  const editorTools = document.createElement("label");
+  editorTools.className = "message-editor-toggle";
+
+  const unprintableToggle = document.createElement("input");
+  unprintableToggle.type = "checkbox";
+  unprintableToggle.checked = showNomadNetEditorUnprintable;
+  editorTools.appendChild(unprintableToggle);
+  editorTools.appendChild(document.createTextNode("show unprintable"));
+
+  const selectionStatus = document.createElement("span");
+  selectionStatus.className = "message-editor-selection";
+  editorTools.appendChild(selectionStatus);
+  editor.appendChild(editorTools);
+
+  let input = null;
+
+  unprintableToggle.onchange = () => {
+    if (input instanceof HTMLTextAreaElement) {
+      nomadnetEditorDraft = input.value;
+      rememberNomadNetEditorSelection(input);
+    }
+
+    showNomadNetEditorUnprintable = unprintableToggle.checked;
+    nomadnetEditorPaletteOpen = false;
+    render("NomadNet");
   };
-  block.appendChild(textarea);
 
-  const previewTitle = document.createElement("div");
-  previewTitle.className = "settings-hint";
-  previewTitle.textContent = "Preview";
-  block.appendChild(previewTitle);
+  if (showNomadNetEditorUnprintable) {
+    input = document.createElement("textarea");
+    input.className = "nomadnet-source-input nomadnet-rich-input";
+    input.setAttribute("role", "textbox");
+    input.setAttribute("aria-label", "NomadNet Micron source");
+    input.placeholder = "NomadNet Micron page";
+    input.dataset.editor = "nomadnet";
+    input.dataset.raw = "true";
+    input.value = nomadnetEditorDraft;
+    window.setTimeout(() => {
+      resizeNomadNetEditorInput(input);
+      restoreNomadNetTextareaSelection(input, nomadnetEditorPaletteOpen);
+      updateNomadNetEditorSelectionStatus(selectionStatus);
+    }, 0);
 
-  const preview = document.createElement("div");
-  preview.className = "nomadnet-page";
-  preview.appendChild(renderMessageContent(nomadnetEditorDraft));
-  block.appendChild(preview);
+    input.oninput = () => {
+      nomadnetEditorDraft = input.value;
+      rememberNomadNetEditorSelection(input);
+      updateNomadNetEditorSelectionStatus(selectionStatus);
+      resizeNomadNetEditorInput(input);
+    };
+    input.onkeyup = () => {
+      rememberNomadNetEditorSelection(input);
+      updateNomadNetEditorSelectionStatus(selectionStatus);
+    };
+    input.onmouseup = () => {
+      rememberNomadNetEditorSelection(input);
+      updateNomadNetEditorSelectionStatus(selectionStatus);
+    };
+    input.onblur = () => {
+      rememberNomadNetEditorSelection(input);
+      updateNomadNetEditorSelectionStatus(selectionStatus);
+    };
+    input.onkeydown = (event) => {
+      if (event.key !== "Enter") {
+        return;
+      }
+
+      event.preventDefault();
+      insertNomadNetText(input, "\n", input.scrollTop, getNomadNetRawSelection(input));
+      nomadnetEditorDraft = input.value;
+      rememberNomadNetEditorSelection(input);
+      updateNomadNetEditorSelectionStatus(selectionStatus);
+      resizeNomadNetEditorInput(input);
+    };
+
+    editor.appendChild(input);
+  } else {
+    const renderedInput = document.createElement("div");
+    renderedInput.className = "nomadnet-rendered-input nomadnet-rich-input";
+    renderedInput.setAttribute("role", "textbox");
+    renderedInput.setAttribute("aria-label", "NomadNet Micron preview");
+    renderedInput.tabIndex = 0;
+    renderedInput.dataset.editor = "nomadnet";
+    renderedInput.dataset.raw = "false";
+    renderedInput.appendChild(renderMessageContent(nomadnetEditorDraft));
+    renderedInput.onmouseup = () => rememberNomadNetEditorSelection(renderedInput);
+    renderedInput.onkeyup = () => rememberNomadNetEditorSelection(renderedInput);
+    window.setTimeout(() => {
+      restoreNomadNetRenderedSelection(renderedInput, nomadnetEditorPaletteOpen);
+    }, 0);
+    editor.appendChild(renderedInput);
+    input = renderedInput;
+  }
+
+  updateNomadNetEditorSelectionStatus(selectionStatus);
+
+  const editorActions = document.createElement("div");
+  editorActions.className = "nomadnet-editor-actions";
+
+  const paletteButton = document.createElement("button");
+  paletteButton.type = "button";
+  paletteButton.className = "message-symbol-button";
+  paletteButton.title = "Symbols";
+  paletteButton.setAttribute("aria-label", "Open symbol palette");
+  paletteButton.textContent = "\u263A";
+  paletteButton.onmousedown = (event) => {
+    event.preventDefault();
+  };
+  paletteButton.onclick = () => {
+    if (input instanceof HTMLTextAreaElement) {
+      rememberNomadNetEditorSelection(input);
+    } else if (input !== null) {
+      rememberNomadNetEditorSelection(input);
+    }
+
+    nomadnetEditorPaletteOpen = !nomadnetEditorPaletteOpen;
+    render("NomadNet");
+  };
+  editorActions.appendChild(paletteButton);
+  editor.appendChild(editorActions);
+
+  if (input !== null && nomadnetEditorPaletteOpen) {
+    editor.appendChild(renderMessageSymbolPalette(input, "nomadnet"));
+  }
+
+  block.appendChild(editor);
+
+  if (nomadnetEditorFileDialog !== null) {
+    block.appendChild(renderNomadNetFileDialog());
+  }
+
+  const hint = document.createElement("div");
+  hint.className = "settings-hint";
+  hint.textContent = "Source editing follows Micron Composer semantics: formatting wraps the selected raw text directly. Publish is not wired yet.";
+  block.appendChild(hint);
+
   return block;
+}
+
+function renderNomadNetEditorFilePanel() {
+  const section = renderCollapsibleSection("nomadnetEditorFile", "File");
+  section.classList.add("nomadnet-editor-file-section");
+
+  const summary = document.createElement("div");
+  summary.className = "nomadnet-editor-current-file";
+  summary.appendChild(renderCompactSetting("Current", nomadnetEditorPath));
+  section.appendChild(summary);
+
+  const actions = document.createElement("div");
+  actions.className = "nomadnet-editor-file-buttons";
+
+  const newButton = document.createElement("button");
+  newButton.type = "button";
+  newButton.textContent = "New";
+  newButton.onclick = () => {
+    nomadnetEditorPath = "index.mu";
+    nomadnetEditorDraft = "";
+    nomadnetEditorSelection = null;
+    nomadnetEditorLinePoints = null;
+    nomadnetEditorRawSelection = null;
+    nomadnetEditorStatus = "New page draft.";
+    render("NomadNet");
+  };
+  actions.appendChild(newButton);
+
+  const openButton = document.createElement("button");
+  openButton.type = "button";
+  openButton.textContent = "Open";
+  openButton.onclick = () => openNomadNetFileDialog("open");
+  actions.appendChild(openButton);
+
+  const saveButton = document.createElement("button");
+  saveButton.type = "button";
+  saveButton.textContent = "Save";
+  saveButton.onclick = () => openNomadNetFileDialog("save");
+  actions.appendChild(saveButton);
+
+  section.appendChild(actions);
+  return section;
+}
+
+function openNomadNetFileDialog(mode) {
+  nomadnetEditorFileDialog = mode;
+  nomadnetEditorDialogPath = nomadnetEditorPath;
+
+  if (mode === "open") {
+    refreshNomadNetEditorPages();
+  }
+
+  render("NomadNet");
+}
+
+function renderNomadNetFileDialog() {
+  const overlay = document.createElement("div");
+  overlay.className = "client-editor-overlay";
+
+  const dialog = document.createElement("section");
+  dialog.className = "client-editor nomadnet-file-dialog";
+  dialog.onclick = (event) => event.stopPropagation();
+
+  const title = document.createElement("h2");
+  title.textContent = nomadnetEditorFileDialog === "open" ? "Open Micron page" : "Save Micron page";
+  dialog.appendChild(title);
+
+  const pathField = renderAccessTextInput("Page path", nomadnetEditorDialogPath, "index.mu", (value) => {
+    nomadnetEditorDialogPath = normaliseNomadNetEditorPath(value);
+  });
+  const pathInput = pathField.querySelector("input");
+  pathInput.oninput = () => {
+    nomadnetEditorDialogPath = normaliseNomadNetEditorPath(pathInput.value);
+  };
+  dialog.appendChild(pathField);
+
+  if (nomadnetEditorFileDialog === "open") {
+    dialog.appendChild(renderNomadNetOpenFileList(pathInput));
+  }
+
+  const actions = document.createElement("div");
+  actions.className = "settings-row client-editor-actions";
+
+  if (nomadnetEditorFileDialog === "open") {
+    const refreshButton = document.createElement("button");
+    refreshButton.type = "button";
+    refreshButton.textContent = "Refresh";
+    refreshButton.onclick = refreshNomadNetEditorPages;
+    actions.appendChild(refreshButton);
+
+    const openButton = document.createElement("button");
+    openButton.type = "button";
+    openButton.textContent = "Open";
+    openButton.onclick = () => {
+      nomadnetEditorFileDialog = null;
+      loadNomadNetEditorPage(nomadnetEditorDialogPath);
+    };
+    actions.appendChild(openButton);
+  } else {
+    const saveButton = document.createElement("button");
+    saveButton.type = "button";
+    saveButton.textContent = "Save";
+    saveButton.onclick = () => {
+      nomadnetEditorPath = normaliseNomadNetEditorPath(nomadnetEditorDialogPath);
+      nomadnetEditorFileDialog = null;
+      saveNomadNetEditorPage();
+    };
+    actions.appendChild(saveButton);
+  }
+
+  const cancelButton = document.createElement("button");
+  cancelButton.type = "button";
+  cancelButton.textContent = "Cancel";
+  cancelButton.onclick = () => {
+    nomadnetEditorFileDialog = null;
+    render("NomadNet");
+  };
+  actions.appendChild(cancelButton);
+  dialog.appendChild(actions);
+
+  overlay.appendChild(dialog);
+  overlay.onclick = () => {
+    nomadnetEditorFileDialog = null;
+    render("NomadNet");
+  };
+  return overlay;
+}
+
+function renderNomadNetOpenFileList(pathInput) {
+  const list = document.createElement("div");
+  list.className = "nomadnet-file-list";
+
+  if (nomadnetEditorPages.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "settings-hint";
+    empty.textContent = "No saved .mu pages loaded.";
+    list.appendChild(empty);
+    return list;
+  }
+
+  for (const page of nomadnetEditorPages) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = page.path;
+    button.onclick = () => {
+      nomadnetEditorDialogPath = page.path;
+      pathInput.value = page.path;
+    };
+    list.appendChild(button);
+  }
+
+  return list;
+}
+
+function normaliseNomadNetEditorPath(path) {
+  const clean = String(path || "").trim().replaceAll("\\", "/").replace(/^\/+/, "");
+  return clean === "" ? "index.mu" : clean;
+}
+
+async function refreshNomadNetEditorPages() {
+  try {
+    const response = await fetch("/api/nomadnet/pages", {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`NomadNet page list failed: HTTP ${response.status}`);
+    }
+
+    const payload = await response.json();
+    nomadnetEditorPages = Array.isArray(payload.pages) ? payload.pages : [];
+    nomadnetEditorStatus = `Loaded ${nomadnetEditorPages.length} page records.`;
+  } catch (error) {
+    nomadnetEditorStatus = `Error: ${error instanceof Error ? error.message : String(error)}`;
+  }
+
+  if (getActiveTab() === "NomadNet" && activeNomadNetSection === "Editor") {
+    render("NomadNet");
+  }
+}
+
+async function loadNomadNetEditorPage(path) {
+  const pagePath = normaliseNomadNetEditorPath(path);
+
+  try {
+    const query = new URLSearchParams({
+      path: pagePath,
+    });
+    const response = await fetch(`/api/nomadnet/local-page?${query.toString()}`, {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`NomadNet page load failed: HTTP ${response.status}`);
+    }
+
+    const payload = await response.json();
+    nomadnetEditorPath = payload.path || pagePath;
+    nomadnetEditorDraft = payload.source || "";
+    nomadnetEditorSelection = null;
+    nomadnetEditorLinePoints = null;
+    nomadnetEditorRawSelection = null;
+    nomadnetEditorStatus = `Loaded ${nomadnetEditorPath}.`;
+  } catch (error) {
+    nomadnetEditorStatus = `Error: ${error instanceof Error ? error.message : String(error)}`;
+  }
+
+  if (getActiveTab() === "NomadNet" && activeNomadNetSection === "Editor") {
+    render("NomadNet");
+  }
+}
+
+async function saveNomadNetEditorPage() {
+  const pagePath = normaliseNomadNetEditorPath(nomadnetEditorPath);
+
+  try {
+    const response = await fetch("/api/nomadnet/local-page", {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        path: pagePath,
+        source: nomadnetEditorDraft,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`NomadNet page save failed: HTTP ${response.status}`);
+    }
+
+    const payload = await response.json();
+    nomadnetEditorPath = payload.path || pagePath;
+    nomadnetEditorStatus = `Saved ${nomadnetEditorPath}.`;
+    await refreshNomadNetEditorPages();
+  } catch (error) {
+    nomadnetEditorStatus = `Error: ${error instanceof Error ? error.message : String(error)}`;
+    if (getActiveTab() === "NomadNet" && activeNomadNetSection === "Editor") {
+      render("NomadNet");
+    }
+  }
 }
 
 function getNomadNetBrowserState() {
@@ -1338,6 +1725,7 @@ function renderMessageComposer(contact) {
   input.setAttribute("role", "textbox");
   input.setAttribute("aria-label", "Message");
   input.dataset.placeholder = "Message";
+  input.dataset.editor = "message";
   input.dataset.raw = showMessageUnprintable ? "true" : "false";
   renderMessageEditorContent(input, messageDraft);
   unprintableToggle.onchange = () => {
@@ -1415,7 +1803,7 @@ function renderMessageComposer(contact) {
   return composer;
 }
 
-function renderMessageSymbolPalette(input) {
+function renderMessageSymbolPalette(input, editorKind = "message") {
   const palette = document.createElement("div");
   palette.className = "message-symbol-palette";
   palette.onmousedown = (event) => {
@@ -1461,6 +1849,11 @@ function renderMessageSymbolPalette(input) {
         event.preventDefault();
       };
       item.onclick = () => {
+        if (editorKind === "nomadnet") {
+          applyNomadNetSymbol(input, symbol);
+          return;
+        }
+
         restoreMessageEditorSelection(input);
         applyMessageSymbol(input, symbol);
       };
@@ -1504,6 +1897,180 @@ function applyMessageSymbol(input, symbol) {
   }
 
   insertMessageText(input, symbol.insert || "");
+}
+
+function applyNomadNetSymbol(input, symbol) {
+  const savedScrollTop = input.scrollTop;
+  const rawSelection = getNomadNetRawSelection(input) || nomadnetEditorRawSelection;
+
+  if (typeof symbol === "string") {
+    insertNomadNetText(input, symbol, savedScrollTop, rawSelection);
+    return;
+  }
+
+  if (symbol.style) {
+    applyNomadNetStyle(input, symbol, savedScrollTop, rawSelection);
+    return;
+  }
+
+  if (symbol.linePrefix) {
+    applyNomadNetLinePrefix(input, symbol.linePrefix, symbol.placeholder || "", savedScrollTop, rawSelection);
+    return;
+  }
+
+  if (symbol.block) {
+    insertNomadNetBlock(input, symbol.block, savedScrollTop, rawSelection);
+    return;
+  }
+
+  insertNomadNetText(input, symbol.insert || "", savedScrollTop, rawSelection);
+}
+
+function getNomadNetRawSelection(input) {
+  if (input instanceof HTMLTextAreaElement) {
+    return {
+      start: input.selectionStart,
+      end: input.selectionEnd,
+    };
+  }
+
+  const selection = getEditorSelectionOffsets(input);
+
+  if (selection === null) {
+    return nomadnetEditorRawSelection;
+  }
+
+  const start = Math.min(selection.start, selection.end);
+  const end = Math.max(selection.start, selection.end);
+
+  if (input.dataset.raw === "true") {
+    return { start, end };
+  }
+
+  return documentVisibleSelectionToRawRange(nomadnetEditorDraft, start, end);
+}
+
+function setNomadNetEditorCursor(input, rawOffset, scrollTop) {
+  if (input instanceof HTMLTextAreaElement) {
+    input.value = nomadnetEditorDraft;
+    input.focus();
+    input.setSelectionRange(rawOffset, rawOffset);
+    nomadnetEditorSelection = { start: rawOffset, end: rawOffset };
+    nomadnetEditorRawSelection = { start: rawOffset, end: rawOffset };
+    resizeNomadNetEditorInput(input);
+    input.scrollTop = Math.min(scrollTop, input.scrollHeight);
+    return;
+  }
+
+  renderMessageEditorContent(input, nomadnetEditorDraft);
+  input.focus();
+
+  if (input.dataset.raw === "true") {
+    setEditorSelectionOffsets(input, rawOffset, rawOffset);
+    nomadnetEditorSelection = { start: rawOffset, end: rawOffset };
+  } else {
+    const visible = rawRangeToDocumentVisibleSelection(nomadnetEditorDraft, rawOffset, rawOffset);
+    setEditorSelectionOffsets(input, visible.end, visible.end);
+    nomadnetEditorSelection = { start: visible.end, end: visible.end };
+  }
+
+  nomadnetEditorLinePoints = getEditorSelectionLinePoints(input);
+  nomadnetEditorRawSelection = { start: rawOffset, end: rawOffset };
+  resizeNomadNetEditorInput(input);
+  input.scrollTop = Math.min(scrollTop, input.scrollHeight);
+}
+
+function insertNomadNetText(input, text, scrollTop, rawSelection = null) {
+  const selection = rawSelection || getNomadNetRawSelection(input);
+  const start = selection === null ? nomadnetEditorDraft.length : Math.min(selection.start, selection.end);
+  const end = selection === null ? start : Math.max(selection.start, selection.end);
+  nomadnetEditorDraft = `${nomadnetEditorDraft.slice(0, start)}${text}${nomadnetEditorDraft.slice(end)}`;
+  setNomadNetEditorCursor(input, start + text.length, scrollTop);
+}
+
+function insertNomadNetBlock(input, block, scrollTop, rawSelection = null) {
+  const selection = rawSelection || getNomadNetRawSelection(input);
+  const start = selection === null ? nomadnetEditorDraft.length : Math.min(selection.start, selection.end);
+  const end = selection === null ? start : Math.max(selection.start, selection.end);
+  const before = nomadnetEditorDraft.slice(0, start);
+  const after = nomadnetEditorDraft.slice(end);
+  const prefix = before === "" || before.endsWith("\n") ? "" : "\n";
+  const suffix = after === "" || after.startsWith("\n") ? "" : "\n";
+  const text = `${prefix}${block}${suffix}`;
+  nomadnetEditorDraft = `${before}${text}${after}`;
+  setNomadNetEditorCursor(input, start + text.length, scrollTop);
+}
+
+function applyNomadNetStyle(input, symbol, scrollTop, rawSelection = null) {
+  const selection = rawSelection || getNomadNetRawSelection(input);
+
+  if (selection === null || selection.start === selection.end) {
+    input.focus();
+    return;
+  }
+
+  const start = Math.min(selection.start, selection.end);
+  const end = Math.max(selection.start, selection.end);
+  const transformed = applyNomadNetStyleTransform(nomadnetEditorDraft, start, end, symbol);
+  nomadnetEditorDraft = transformed.text;
+  setNomadNetEditorCursor(input, transformed.selectionEnd, scrollTop);
+}
+
+function applyNomadNetStyleTransform(source, start, end, symbol) {
+  if (symbol.style === "reset") {
+    return resetNomadNetStyle(source, start, end);
+  }
+
+  return applyStyleTransform(source, start, end, symbol);
+}
+
+function applyNomadNetLinePrefix(input, prefix, placeholder, scrollTop, rawSelection = null) {
+  if (prefix === ">") {
+    applyNomadNetHeading(input, placeholder, scrollTop, rawSelection);
+    return;
+  }
+
+  const range = getNomadNetRawLineRange(nomadnetEditorDraft, rawSelection || getNomadNetRawSelection(input));
+  const selectedBlock = nomadnetEditorDraft.slice(range.start, range.end);
+  const block = selectedBlock || placeholder;
+  const prefixed = block
+    .split("\n")
+    .map((line) => applyLinePrefix(line, prefix))
+    .join("\n");
+  nomadnetEditorDraft = `${nomadnetEditorDraft.slice(0, range.start)}${prefixed}${nomadnetEditorDraft.slice(range.end)}`;
+  setNomadNetEditorCursor(input, range.start + prefixed.length, scrollTop);
+}
+
+function applyNomadNetHeading(input, placeholder, scrollTop, rawSelection = null) {
+  const range = getNomadNetRawLineRange(nomadnetEditorDraft, rawSelection || getNomadNetRawSelection(input));
+  const selectedBlock = nomadnetEditorDraft.slice(range.start, range.end);
+  const block = selectedBlock || placeholder;
+  const toggled = block
+    .split("\n")
+    .map(toggleHeadingPrefix)
+    .join("\n");
+  nomadnetEditorDraft = `${nomadnetEditorDraft.slice(0, range.start)}${toggled}${nomadnetEditorDraft.slice(range.end)}`;
+  setNomadNetEditorCursor(input, range.start + toggled.length, scrollTop);
+}
+
+function getNomadNetRawLineRange(source, selection) {
+  if (selection === null) {
+    return {
+      start: source.length,
+      end: source.length,
+    };
+  }
+
+  const start = Math.min(selection.start, selection.end);
+  const end = Math.max(selection.start, selection.end);
+  const lineStart = source.lastIndexOf("\n", Math.max(0, start - 1)) + 1;
+  const endProbe = end > start ? end - 1 : end;
+  const lineEndIndex = source.indexOf("\n", Math.max(0, endProbe));
+
+  return {
+    start: lineStart,
+    end: lineEndIndex === -1 ? source.length : lineEndIndex,
+  };
 }
 
 function insertMessageText(input, text) {
@@ -1589,6 +2156,7 @@ function prefixMessageLine(input, prefix, placeholder) {
 
   const selection = getEditorSelectionOffsets(input);
   const restoreSelection = selection === null ? null : { ...selection };
+  const restoreLinePoints = input.dataset.raw === "true" ? null : getEditorSelectionLinePoints(input);
   const value = serializeMessageEditor(input);
   const lineRange = getEditorSerializedLineRange(input, value, selection);
   const selectedBlock = value.slice(lineRange.start, lineRange.end);
@@ -1601,13 +2169,14 @@ function prefixMessageLine(input, prefix, placeholder) {
   messageDraft = `${value.slice(0, lineRange.start)}${prefixed}${value.slice(lineRange.end)}`;
   renderMessageEditorContent(input, messageDraft);
   input.focus();
-  restoreVisibleSelection(input, restoreSelection);
+  restoreEditorLineSelection(input, restoreLinePoints, restoreSelection);
   resizeMessageInput(input);
 }
 
 function toggleHeadingLine(input, placeholder) {
   const selection = getEditorSelectionOffsets(input);
   const restoreSelection = selection === null ? null : { ...selection };
+  const restoreLinePoints = input.dataset.raw === "true" ? null : getEditorSelectionLinePoints(input);
   const value = serializeMessageEditor(input);
   const lineRange = getEditorSerializedLineRange(input, value, selection);
   const selectedBlock = value.slice(lineRange.start, lineRange.end);
@@ -1620,7 +2189,7 @@ function toggleHeadingLine(input, placeholder) {
   messageDraft = `${value.slice(0, lineRange.start)}${toggled}${value.slice(lineRange.end)}`;
   renderMessageEditorContent(input, messageDraft);
   input.focus();
-  restoreVisibleSelection(input, restoreSelection);
+  restoreEditorLineSelection(input, restoreLinePoints, restoreSelection);
   resizeMessageInput(input);
 }
 
@@ -1665,27 +2234,39 @@ function splitLinePrefixes(line) {
 }
 
 function getEditorSerializedLineRange(input, serialized, selection) {
-  const lineIndex = getEditorSelectedLineIndex(input, selection);
-  let start = 0;
+  const linePoints = input.dataset.raw === "true" ? null : getEditorSelectionLinePoints(input);
 
-  for (let index = 0; index < lineIndex; index += 1) {
-    const nextBreak = serialized.indexOf("\n", start);
+  if (linePoints !== null) {
+    const ranges = getSerializedLineRanges(serialized);
+    const ordered = getOrderedLineSelectionPoints(linePoints);
+    const startLine = ranges[ordered.start.lineIndex];
+    const endLine = ranges[ordered.end.lineIndex];
 
-    if (nextBreak === -1) {
+    if (startLine && endLine) {
       return {
-        start: serialized.length,
-        end: serialized.length,
+        start: startLine.start,
+        end: endLine.end,
       };
     }
-
-    start = nextBreak + 1;
   }
 
-  const endIndex = serialized.indexOf("\n", start);
+  return getSerializedLineRangeByIndex(serialized, getEditorSelectedLineIndex(input, selection));
+}
+
+function getSerializedLineRangeByIndex(serialized, lineIndex) {
+  const ranges = getSerializedLineRanges(serialized);
+  const line = ranges[Math.max(0, lineIndex)];
+
+  if (!line) {
+    return {
+      start: serialized.length,
+      end: serialized.length,
+    };
+  }
 
   return {
-    start,
-    end: endIndex === -1 ? serialized.length : endIndex,
+    start: line.start,
+    end: line.end,
   };
 }
 
@@ -1749,6 +2330,16 @@ function restoreVisibleSelection(input, selection) {
   const end = Math.min(selection.end, visibleLength);
   setEditorSelectionOffsets(input, start, end);
   messageEditorSelection = { start, end };
+}
+
+function restoreEditorLineSelection(input, linePoints, fallbackSelection) {
+  if (linePoints !== null) {
+    setEditorLinePointRangeSelection(input, linePoints);
+    messageEditorSelection = getEditorSelectionOffsets(input);
+    return;
+  }
+
+  restoreVisibleSelection(input, fallbackSelection);
 }
 
 function collapseTransformedStyleSelection(input, transformed, symbol, originalLinePoints) {
@@ -2008,11 +2599,11 @@ function getEditorSelectionLinePoints(input) {
   const start = getEditorLinePoint(lines, range.startContainer, range.startOffset);
   const end = getEditorLinePoint(lines, range.endContainer, range.endOffset);
 
-  if (start === null || end === null) {
-    return null;
+  if (start !== null && end !== null) {
+    return { start, end };
   }
 
-  return { start, end };
+  return getEditorSelectionLinePointsByIntersection(lines, range);
 }
 
 function getEditorLinePoint(lines, node, offset) {
@@ -2022,12 +2613,61 @@ function getEditorLinePoint(lines, node, offset) {
     if (line.contains(node)) {
       return {
         lineIndex: index,
-        offset: normalizeEditorLineOffset(line, getLineDomTextOffset(line, node, offset), index),
+        offset: normalizeEditorLineOffset(line, getLineDomTextOffset(line, node, offset)),
       };
     }
   }
 
   return null;
+}
+
+function getEditorSelectionLinePointsByIntersection(lines, range) {
+  let start = null;
+  let end = null;
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+
+    if (!rangeIntersectsNodeContents(range, line)) {
+      continue;
+    }
+
+    const lineLength = getVisibleLineTextLength(line);
+    const startOffset = line.contains(range.startContainer)
+      ? normalizeEditorLineOffset(line, getLineDomTextOffset(line, range.startContainer, range.startOffset))
+      : 0;
+    const endOffset = line.contains(range.endContainer)
+      ? normalizeEditorLineOffset(line, getLineDomTextOffset(line, range.endContainer, range.endOffset))
+      : lineLength;
+    const lineStart = {
+      lineIndex: index,
+      offset: start === null ? startOffset : 0,
+    };
+    const lineEnd = {
+      lineIndex: index,
+      offset: endOffset,
+    };
+
+    if (start === null) {
+      start = lineStart;
+    }
+
+    end = lineEnd;
+  }
+
+  if (start === null || end === null) {
+    return null;
+  }
+
+  return { start, end };
+}
+
+function rangeIntersectsNodeContents(range, node) {
+  const nodeRange = document.createRange();
+  nodeRange.selectNodeContents(node);
+
+  return range.compareBoundaryPoints(Range.END_TO_START, nodeRange) > 0
+    && range.compareBoundaryPoints(Range.START_TO_END, nodeRange) < 0;
 }
 
 function setEditorLinePointSelection(input, lineIndex, lineOffset) {
@@ -2043,6 +2683,33 @@ function setEditorLinePointSelection(input, lineIndex, lineOffset) {
   const range = document.createRange();
   range.setStart(point.node, point.offset);
   range.setEnd(point.node, point.offset);
+
+  const selection = window.getSelection();
+
+  if (selection === null) {
+    return;
+  }
+
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
+
+function setEditorLinePointRangeSelection(input, points) {
+  const lines = Array.from(input.querySelectorAll(".micron-line"));
+  const ordered = getOrderedLineSelectionPoints(points);
+  const startLine = lines[ordered.start.lineIndex];
+  const endLine = lines[ordered.end.lineIndex];
+
+  if (!startLine || !endLine) {
+    setEditorSelectionOffsets(input, 0, 0);
+    return;
+  }
+
+  const startPoint = findLineDomPoint(startLine, ordered.start.offset);
+  const endPoint = findLineDomPoint(endLine, ordered.end.offset);
+  const range = document.createRange();
+  range.setStart(startPoint.node, startPoint.offset);
+  range.setEnd(endPoint.node, endPoint.offset);
 
   const selection = window.getSelection();
 
@@ -2091,14 +2758,14 @@ function findLineDomPoint(line, targetOffset) {
   };
 }
 
-function normalizeEditorLineOffset(line, offset, lineIndex) {
+function normalizeEditorLineOffset(line, offset) {
   const lineLength = getVisibleLineTextLength(line);
 
   if (offset <= 0 || lineLength === 0) {
     return 0;
   }
 
-  return Math.max(0, Math.min(lineLength, offset - lineIndex));
+  return Math.max(0, Math.min(lineLength, offset));
 }
 
 function getSerializedLineRanges(source) {
@@ -2202,9 +2869,36 @@ function visibleSelectionToRawRange(source, visibleStart, visibleEnd) {
   };
 }
 
+function documentVisibleSelectionToRawRange(source, visibleStart, visibleEnd) {
+  const parsed = parseInlineStyleText(source);
+  const visibleChars = getDocumentVisibleChars(parsed.chars);
+  const startIndex = Math.min(visibleStart, visibleEnd);
+  const endIndex = Math.max(visibleStart, visibleEnd);
+  const startChar = visibleChars[startIndex];
+  const nextChar = visibleChars[endIndex];
+  const endChar = visibleChars[endIndex - 1];
+
+  return {
+    start: startChar ? startChar.rawStart : source.length,
+    end: nextChar ? nextChar.rawStart : endChar ? endChar.rawEnd : source.length,
+  };
+}
+
 function rawRangeToVisibleSelection(source, rawStart, rawEnd) {
   const parsed = parseInlineStyleText(source);
   const visibleChars = getStyleVisibleChars(parsed.chars);
+  const start = visibleChars.findIndex((char) => char.rawEnd > rawStart);
+  const end = visibleChars.findIndex((char) => char.rawStart >= rawEnd);
+
+  return {
+    start: start === -1 ? visibleChars.length : start,
+    end: end === -1 ? visibleChars.length : end,
+  };
+}
+
+function rawRangeToDocumentVisibleSelection(source, rawStart, rawEnd) {
+  const parsed = parseInlineStyleText(source);
+  const visibleChars = getDocumentVisibleChars(parsed.chars);
   const start = visibleChars.findIndex((char) => char.rawEnd > rawStart);
   const end = visibleChars.findIndex((char) => char.rawStart >= rawEnd);
 
@@ -2218,8 +2912,103 @@ function getStyleVisibleChars(chars) {
   return chars.filter((char) => !char.hidden && char.value !== "\n");
 }
 
+function getDocumentVisibleChars(chars) {
+  return chars.filter((char) => !char.hidden);
+}
+
 function rememberMessageEditorSelection(input) {
   messageEditorSelection = getEditorSelectionOffsets(input);
+}
+
+function rememberNomadNetEditorSelection(input) {
+  if (input instanceof HTMLTextAreaElement) {
+    nomadnetEditorSelection = {
+      start: input.selectionStart,
+      end: input.selectionEnd,
+    };
+
+    if (input.selectionStart !== input.selectionEnd) {
+      nomadnetEditorRawSelection = {
+        start: input.selectionStart,
+        end: input.selectionEnd,
+      };
+    }
+
+    nomadnetEditorLinePoints = null;
+    return;
+  }
+
+  const selection = getEditorSelectionOffsets(input);
+
+  if (selection === null) {
+    return;
+  }
+
+  nomadnetEditorSelection = selection;
+
+  const rawSelection = getNomadNetRawSelection(input);
+
+  if (rawSelection !== null && rawSelection.start !== rawSelection.end) {
+    nomadnetEditorRawSelection = rawSelection;
+  }
+
+  if (input.dataset.raw === "true") {
+    nomadnetEditorLinePoints = null;
+    return;
+  }
+
+  const linePoints = getEditorSelectionLinePoints(input);
+
+  if (linePoints !== null) {
+    nomadnetEditorLinePoints = linePoints;
+  }
+}
+
+function restoreNomadNetTextareaSelection(input, shouldFocus = false) {
+  const selection = nomadnetEditorRawSelection || nomadnetEditorSelection;
+  const fallback = nomadnetEditorDraft.length;
+  const start = selection === null
+    ? fallback
+    : Math.max(0, Math.min(nomadnetEditorDraft.length, selection.start));
+  const end = selection === null
+    ? fallback
+    : Math.max(0, Math.min(nomadnetEditorDraft.length, selection.end));
+
+  if (shouldFocus) {
+    try {
+      input.focus({ preventScroll: true });
+    } catch (error) {
+      input.focus();
+    }
+  }
+
+  input.setSelectionRange(start, end);
+  nomadnetEditorSelection = { start, end };
+  nomadnetEditorRawSelection = { start, end };
+}
+
+function restoreNomadNetRenderedSelection(input, shouldFocus = false) {
+  const selection = nomadnetEditorRawSelection;
+
+  if (selection === null) {
+    return;
+  }
+
+  const start = Math.max(0, Math.min(nomadnetEditorDraft.length, selection.start));
+  const end = Math.max(0, Math.min(nomadnetEditorDraft.length, selection.end));
+  const visible = rawRangeToDocumentVisibleSelection(nomadnetEditorDraft, start, end);
+
+  if (shouldFocus) {
+    try {
+      input.focus({ preventScroll: true });
+    } catch (error) {
+      input.focus();
+    }
+  }
+
+  setEditorSelectionOffsets(input, visible.start, visible.end);
+  nomadnetEditorSelection = { start: visible.start, end: visible.end };
+  nomadnetEditorRawSelection = { start, end };
 }
 
 function updateMessageEditorSelectionStatus(node) {
@@ -2236,12 +3025,58 @@ function updateMessageEditorSelectionStatus(node) {
   node.textContent = `selection: ${messageEditorSelection.start}..${messageEditorSelection.end}`;
 }
 
+function updateNomadNetEditorSelectionStatus(node) {
+  if (!showNomadNetEditorUnprintable) {
+    node.textContent = "";
+    return;
+  }
+
+  if (nomadnetEditorSelection === null) {
+    node.textContent = "selection: none";
+    return;
+  }
+
+  node.textContent = `selection: ${nomadnetEditorSelection.start}..${nomadnetEditorSelection.end}`;
+}
+
 function restoreMessageEditorSelection(input) {
+  if (input.dataset.editor === "nomadnet" && input.dataset.raw !== "true" && nomadnetEditorLinePoints !== null) {
+    setEditorLinePointRangeSelection(input, nomadnetEditorLinePoints);
+    return;
+  }
+
   if (messageEditorSelection === null) {
     return;
   }
 
   setEditorSelectionOffsets(input, messageEditorSelection.start, messageEditorSelection.end);
+}
+
+function runNomadNetEditorOperation(input, operation) {
+  const savedDraft = messageDraft;
+  const savedSelection = messageEditorSelection;
+  const savedUnprintable = showMessageUnprintable;
+  const savedScrollTop = input.scrollTop;
+  const savedNomadNetLinePoints = nomadnetEditorLinePoints;
+
+  messageDraft = nomadnetEditorDraft;
+  messageEditorSelection = nomadnetEditorSelection;
+  showMessageUnprintable = showNomadNetEditorUnprintable;
+
+  operation();
+
+  nomadnetEditorDraft = messageDraft;
+  nomadnetEditorSelection = messageEditorSelection;
+  nomadnetEditorLinePoints = getEditorSelectionLinePoints(input) || savedNomadNetLinePoints;
+  showNomadNetEditorUnprintable = showMessageUnprintable;
+
+  messageDraft = savedDraft;
+  messageEditorSelection = savedSelection;
+  showMessageUnprintable = savedUnprintable;
+
+  input.dataset.raw = showNomadNetEditorUnprintable ? "true" : "false";
+  resizeNomadNetEditorInput(input);
+  input.scrollTop = Math.min(savedScrollTop, input.scrollHeight);
 }
 
 function setEditorSelectionOffsets(input, start, end) {
@@ -2397,6 +3232,91 @@ function resetInlineStyle(source, selectionStart, selectionEnd) {
   }
 
   return serializeInlineStyleText(parsed.chars, visibleStart, visibleEnd);
+}
+
+function resetNomadNetStyle(source, selectionStart, selectionEnd) {
+  const unprefixed = removeLinePrefixesInRawRange(source, selectionStart, selectionEnd);
+  return resetInlineStyle(unprefixed.text, unprefixed.selectionStart, unprefixed.selectionEnd);
+}
+
+function removeLinePrefixesInRawRange(source, selectionStart, selectionEnd) {
+  const start = Math.min(selectionStart, selectionEnd);
+  const end = Math.max(selectionStart, selectionEnd);
+  const removals = getLinePrefixRemovals(source, start, end);
+
+  if (removals.length === 0) {
+    return {
+      text: source,
+      selectionStart: start,
+      selectionEnd: end,
+    };
+  }
+
+  const ordered = [...removals].sort((left, right) => right.start - left.start);
+  let text = source;
+
+  for (const removal of ordered) {
+    text = `${text.slice(0, removal.start)}${text.slice(removal.end)}`;
+  }
+
+  return {
+    text,
+    selectionStart: mapRawOffsetAfterRemovals(start, removals),
+    selectionEnd: mapRawOffsetAfterRemovals(end, removals),
+  };
+}
+
+function getLinePrefixRemovals(source, selectionStart, selectionEnd) {
+  const removals = [];
+  const rangeEnd = selectionEnd > selectionStart ? selectionEnd - 1 : selectionEnd;
+  let lineStart = source.lastIndexOf("\n", Math.max(0, selectionStart - 1)) + 1;
+
+  while (lineStart <= source.length) {
+    const lineBreak = source.indexOf("\n", lineStart);
+    const lineEnd = lineBreak === -1 ? source.length : lineBreak;
+
+    if (lineStart > rangeEnd && lineStart > selectionStart) {
+      break;
+    }
+
+    if (lineEnd >= selectionStart && lineStart <= rangeEnd) {
+      const prefix = readLinePrefix(source, lineStart);
+
+      if (prefix.nextIndex > lineStart) {
+        removals.push({
+          start: lineStart,
+          end: prefix.nextIndex,
+        });
+      }
+    }
+
+    if (lineBreak === -1 || lineEnd >= rangeEnd) {
+      break;
+    }
+
+    lineStart = lineBreak + 1;
+  }
+
+  return removals;
+}
+
+function mapRawOffsetAfterRemovals(offset, removals) {
+  let mapped = offset;
+
+  for (const removal of [...removals].sort((left, right) => left.start - right.start)) {
+    const length = removal.end - removal.start;
+
+    if (removal.end <= offset) {
+      mapped -= length;
+      continue;
+    }
+
+    if (removal.start < offset) {
+      mapped -= offset - removal.start;
+    }
+  }
+
+  return Math.max(0, mapped);
 }
 
 function parseInlineStyleText(source) {
@@ -2709,9 +3629,23 @@ function renderMessageContent(source, options = {}) {
 }
 
 function resizeMessageInput(input) {
+  if (input.dataset.editor === "nomadnet") {
+    resizeNomadNetEditorInput(input);
+    return;
+  }
+
   const messageList = document.querySelector(".message-list");
   const listHeight = messageList instanceof HTMLElement ? messageList.clientHeight : 240;
   const maxHeight = Math.max(48, Math.floor(listHeight / 3));
+
+  input.style.height = "auto";
+  input.style.maxHeight = `${maxHeight}px`;
+  input.style.height = `${Math.min(input.scrollHeight, maxHeight)}px`;
+  input.style.overflowY = input.scrollHeight > maxHeight ? "auto" : "hidden";
+}
+
+function resizeNomadNetEditorInput(input) {
+  const maxHeight = 800;
 
   input.style.height = "auto";
   input.style.maxHeight = `${maxHeight}px`;
@@ -4080,16 +5014,27 @@ document.addEventListener("keydown", (event) => {
     symbolPaletteOpen = false;
     render("Client");
   }
+
+  if (nomadnetEditorPaletteOpen) {
+    nomadnetEditorPaletteOpen = false;
+    render("NomadNet");
+  }
+
+  if (nomadnetEditorFileDialog !== null) {
+    nomadnetEditorFileDialog = null;
+    render("NomadNet");
+  }
 });
 
 document.addEventListener("selectionchange", () => {
-  const editor = document.querySelector(".message-rich-input");
+  const activeElement = document.activeElement;
+  const editor = activeElement instanceof HTMLElement
+    ? activeElement.closest(".message-rich-input")
+    : null;
 
   if (editor === null) {
     return;
   }
-
-  const activeElement = document.activeElement;
 
   if (activeElement !== null && activeElement.closest(".message-symbol-palette") !== null) {
     return;
@@ -4097,7 +5042,28 @@ document.addEventListener("selectionchange", () => {
 
   const selection = getEditorSelectionOffsets(editor);
 
-  if (selection !== null) {
+  if (selection === null) {
+    return;
+  }
+
+  if (editor.dataset.editor === "nomadnet") {
+    nomadnetEditorSelection = selection;
+    const rawSelection = getNomadNetRawSelection(editor);
+
+    if (rawSelection !== null && rawSelection.start !== rawSelection.end) {
+      nomadnetEditorRawSelection = rawSelection;
+    }
+
+    if (editor.dataset.raw === "true") {
+      nomadnetEditorLinePoints = null;
+    } else {
+      const linePoints = getEditorSelectionLinePoints(editor);
+
+      if (linePoints !== null) {
+        nomadnetEditorLinePoints = linePoints;
+      }
+    }
+  } else {
     messageEditorSelection = selection;
   }
 });

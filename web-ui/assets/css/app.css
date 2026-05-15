@@ -198,6 +198,136 @@ tr:last-child td { border-bottom: 0; }
   font: 13px/1.45 ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
 }
 
+.nomadnet-micron-editor {
+  position: relative;
+  margin-top: 10px;
+}
+
+.nomadnet-rich-input {
+  min-height: 220px;
+  max-height: 800px;
+}
+
+.nomadnet-source-input {
+  min-width: 0;
+  width: 100%;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--text);
+  padding: 9px 10px;
+  font: 13px/1.45 ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  resize: none;
+  white-space: pre-wrap;
+}
+
+.nomadnet-source-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.nomadnet-rendered-input {
+  min-width: 0;
+  width: 100%;
+  max-height: 800px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--text);
+  padding: 9px 10px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.nomadnet-rendered-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.nomadnet-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.nomadnet-editor-file-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(160px, 260px);
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.nomadnet-editor-file-row select {
+  min-width: 0;
+  width: 100%;
+  align-self: end;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  padding: 8px 10px;
+}
+
+.nomadnet-editor-file-actions {
+  margin-top: 10px;
+}
+
+.nomadnet-editor-file-section {
+  margin-top: 10px;
+}
+
+.nomadnet-editor-current-file {
+  margin-top: 10px;
+}
+
+.nomadnet-editor-file-buttons {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 92px));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.nomadnet-editor-file-buttons button,
+.nomadnet-file-list button {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel2);
+  color: var(--text);
+  padding: 7px 9px;
+  cursor: pointer;
+}
+
+.nomadnet-editor-file-buttons button:hover,
+.nomadnet-file-list button:hover {
+  border-color: var(--accent);
+}
+
+.nomadnet-file-list {
+  display: grid;
+  gap: 6px;
+  max-height: min(42vh, 320px);
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  padding: 8px;
+  margin-top: 10px;
+}
+
+.nomadnet-file-list button {
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.nomadnet-editor .message-symbol-palette {
+  left: auto;
+  right: 0;
+  top: 100%;
+  bottom: auto;
+}
+
 .sidebar-engine {
   margin-top: 18px;
 }
@@ -1471,6 +1601,7 @@ tr:last-child td { border-bottom: 0; }
 
   .access-endpoint-grid,
   .nomadnet-address-row,
+  .nomadnet-editor-file-row,
   .nomadnet-tabs,
   .settings-compact-grid,
   .settings-command-row {

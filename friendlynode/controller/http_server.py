@@ -114,6 +114,14 @@ class ControllerHttpServer:
                 if parsed.path == "/api/nomadnet/nodes":
                     self._send_json(app.list_nomadnet_nodes())
                     return
+                if parsed.path == "/api/nomadnet/pages":
+                    self._send_json(app.list_nomadnet_pages())
+                    return
+                if parsed.path == "/api/nomadnet/local-page":
+                    params = parse_qs(parsed.query)
+                    path = params.get("path", ["index.mu"])[0]
+                    self._send_json(app.load_nomadnet_local_page(path))
+                    return
                 if parsed.path == "/api/nomadnet/page":
                     params = parse_qs(parsed.query)
                     destination_hash = params.get("destination_hash", [""])[0]
@@ -187,6 +195,11 @@ class ControllerHttpServer:
 
                     app.select_runtime(runtime_name)
                     self._send_json(self._build_status_response())
+                    return
+
+                if parsed.path == "/api/nomadnet/local-page":
+                    payload = self._read_json_body()
+                    self._send_json(app.save_nomadnet_local_page(payload))
                     return
 
                 if parsed.path == "/api/clients/draft":

@@ -38,6 +38,7 @@
     const lines = normalizedSource.split("\n");
     let literal = false;
     let rawOffset = 0;
+    const inlineState = createInlineState();
 
     for (const rawLine of lines) {
       const trimmed = rawLine.trim();
@@ -62,7 +63,7 @@
       if (literal) {
         appendLiteral(line, rawLine, rawOffset, selection);
       } else {
-        appendInline(line, parsed.text, rawOffset + parsed.offset, selection);
+        appendInline(line, parsed.text, rawOffset + parsed.offset, selection, inlineState);
       }
 
       if (parsed.toggleLiteral) {
@@ -149,17 +150,20 @@
     flush();
   }
 
-  function appendInline(parent, text, rawStart, selection) {
-    let index = 0;
-    let buffer = "";
-    let bufferSelected = false;
-    const state = {
+  function createInlineState() {
+    return {
       bold: false,
       italic: false,
       underline: false,
       foreground: "",
       background: "",
     };
+  }
+
+  function appendInline(parent, text, rawStart, selection, state = createInlineState()) {
+    let index = 0;
+    let buffer = "";
+    let bufferSelected = false;
 
     function flush() {
       if (buffer === "") {
