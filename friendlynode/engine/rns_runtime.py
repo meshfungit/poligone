@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import sys
+import signal
+import threading
+from contextlib import contextmanager
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -93,7 +96,8 @@ class RnsRuntime:
 
         self.RNS, self.LXMF, self.using_stubs = self._load_modules()
 
-        self.reticulum = self.RNS.Reticulum(configdir=self.config_dir)
+        with self._reticulum_signal_context():
+            self.reticulum = self.RNS.Reticulum(configdir=str(self.config_dir))
 
         for aspect in DEFAULT_ANNOUNCE_ASPECTS:
             handler = GenericAnnounceHandler(aspect, self.bus)
@@ -128,6 +132,7 @@ class RnsRuntime:
             ),
             "rns_version": getattr(self.RNS, "__version__", None) if self.RNS is not None else None,
             "lxmf_version": getattr(self.LXMF, "__version__", None) if self.LXMF is not None else None,
+            "interfaces": self._interface_status(),
         }
 
     def _load_modules(
@@ -135,13 +140,73 @@ class RnsRuntime:
     ) -> tuple[ModuleType | type[StubRnsModule], ModuleType | type[StubLxmfModule], bool]:
         if self.runtime_source_path is not None and self.runtime_source_path.exists():
             sys.path.insert(0, str(self.runtime_source_path))
+            self._unload_runtime_modules()
 
-            try:
-                import RNS
-                import LXMF
+        try:
+            import RNS
 
-                return RNS, LXMF, False
-            except ImportError:
-                pass
+            rns_module: ModuleType | type[StubRnsModule] = RNS
+            rns_stub = False
+        except ImportError:
+            rns_module = StubRnsModule
+            rns_stub = True
 
-        return StubRnsModule, StubLxmfModule, True
+        try:
+            import LXMF
+
+            lxmf_module: ModuleType | type[StubLxmfModule] = LXMF
+            lxmf_stub = False
+        except ImportError:
+            lxmf_module = StubLxmfModule
+            lxmf_stub = True
+
+        return rns_module, lxmf_module, rns_stub or lxmf_stub
+
+    def _unload_runtime_modules(self) -> None:
+        for module_name in list(sys.modules):
+            if module_name == "RNS" or module_name.startswith("RNS."):
+                del sys.modules[module_name]
+
+            if module_name == "LXMF" or module_name.startswith("LXMF."):
+                del sys.modules[module_name]
+
+    def _interface_status(self) -> list[dict[str, object]]:
+        transport = getattr(self.RNS, "Transport", None) if self.RNS is not None else None
+        interfaces = getattr(transport, "interfaces", []) if transport is not None else []
+        result = []
+
+        for interface in interfaces:
+            result.append(
+                {
+                    "name": str(getattr(interface, "name", type(interface).__name__)),
+                    "type": type(interface).__name__,
+                    "online": bool(getattr(interface, "online", False)),
+                    "in": bool(getattr(interface, "IN", False)),
+                    "out": bool(getattr(interface, "OUT", False)),
+                    "mode": int(getattr(interface, "mode", 0) or 0),
+                    "bind_ip": str(getattr(interface, "bind_ip", "")),
+                    "bind_port": str(getattr(interface, "bind_port", "")),
+                    "target_host": str(getattr(interface, "target_ip", "")),
+                    "target_port": str(getattr(interface, "target_port", "")),
+                }
+            )
+
+        return result
+
+    @contextmanager
+    def _reticulum_signal_context(self):
+        if threading.current_thread() is threading.main_thread():
+            yield
+            return
+
+        original_signal = signal.signal
+
+        def ignore_thread_signal(signalnum, handler):
+            return None
+
+        signal.signal = ignore_thread_signal
+
+        try:
+            yield
+        finally:
+            signal.signal = original_signal

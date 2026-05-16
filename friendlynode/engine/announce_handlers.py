@@ -26,7 +26,8 @@ class GenericAnnounceHandler:
         destination_hash: bytes,
         announced_identity: Any,
         app_data: bytes,
-        *args: Any,
+        announce_packet_hash: bytes | None = None,
+        is_path_response: bool = False,
     ) -> None:
         self.bus.publish(
             EngineEvent(
@@ -35,6 +36,8 @@ class GenericAnnounceHandler:
                     "aspect": self.aspect_filter,
                     "destination_hash": destination_hash.hex(),
                     "app_data_hex": app_data.hex() if isinstance(app_data, bytes) else "",
+                    "announce_packet_hash": announce_packet_hash.hex() if isinstance(announce_packet_hash, bytes) else "",
+                    "is_path_response": is_path_response,
                 },
             )
         )

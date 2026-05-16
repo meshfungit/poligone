@@ -1,0 +1,18 @@
+{
+  "description": "Managed Reticulum runtime installed by FriendlyNode.",
+  "enabled": true,
+  "features": {
+    "rngit": false
+  },
+  "interface_types": [
+    "AutoInterface",
+    "BackboneInterface",
+    "TCPClientInterface",
+    "TCPServerInterface"
+  ],
+  "kind": "reticulum",
+  "label": "Reticulum 1.2.5",
+  "name": "rns-1.2.5",
+  "release_version": "1.2.5",
+  "source_path": "src"
+}

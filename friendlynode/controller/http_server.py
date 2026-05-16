@@ -108,6 +108,9 @@ class ControllerHttpServer:
                 if parsed.path == "/api/access/security":
                     self._send_json(self._build_security_response())
                     return
+                if parsed.path == "/api/runtime/releases":
+                    self._send_json(app.get_runtime_overview())
+                    return
                 if parsed.path == "/api/rns-config":
                     self._send_json(app.get_rns_config())
                     return
@@ -200,6 +203,45 @@ class ControllerHttpServer:
                     self._send_json(self._build_status_response())
                     return
 
+                if parsed.path == "/api/runtime/install":
+                    payload = self._read_json_body()
+                    version = payload.get("version")
+
+                    if not isinstance(version, str) or version == "":
+                        self._send_json(
+                            {"error": "bad_request", "message": "Reticulum version is required"},
+                            HTTPStatus.BAD_REQUEST,
+                        )
+                        return
+
+                    app.install_reticulum_release(version)
+                    self._send_json(self._build_status_response())
+                    return
+
+                if parsed.path == "/api/runtime/feature":
+                    payload = self._read_json_body()
+                    runtime_name = payload.get("runtime")
+                    feature_name = payload.get("feature")
+                    enabled = payload.get("enabled")
+
+                    if not isinstance(runtime_name, str) or runtime_name == "":
+                        self._send_json(
+                            {"error": "bad_request", "message": "Runtime name is required"},
+                            HTTPStatus.BAD_REQUEST,
+                        )
+                        return
+
+                    if not isinstance(feature_name, str) or feature_name == "":
+                        self._send_json(
+                            {"error": "bad_request", "message": "Runtime feature is required"},
+                            HTTPStatus.BAD_REQUEST,
+                        )
+                        return
+
+                    app.set_runtime_feature(runtime_name, feature_name, bool(enabled))
+                    self._send_json(self._build_status_response())
+                    return
+
                 if parsed.path == "/api/nomadnet/local-page":
                     payload = self._read_json_body()
                     self._send_json(app.save_nomadnet_local_page(payload))
@@ -258,9 +300,6 @@ class ControllerHttpServer:
                 print(f"[http] {self.address_string()} - {fmt % args}")
 
             def _build_status_response(self) -> dict[str, object]:
-                runtimes = app.runtime_manager.list_runtimes()
-                active_runtime_name = app.config.engine_name
-
                 return {
                     "controller": {
                         "running": True,
@@ -277,10 +316,7 @@ class ControllerHttpServer:
                         ],
                     },
                     "engine": app.engine_supervisor.status(),
-                    "runtime": {
-                        "active": active_runtime_name,
-                        "available": [runtime.to_dict() for runtime in runtimes],
-                    },
+                    "runtime": app.get_runtime_overview(),
                     "access": app.get_access_status(
                         request_is_https=self._request_is_https(),
                         forwarded_proto=self._trusted_forwarded_proto(),
@@ -344,12 +380,7 @@ class ControllerHttpServer:
                     return False
 
             def _build_runtimes_response(self) -> dict[str, object]:
-                runtimes = app.runtime_manager.list_runtimes()
-
-                return {
-                    "active": app.config.engine_name,
-                    "available": [runtime.to_dict() for runtime in runtimes],
-                }
+                return app.get_runtime_overview()
 
             def _serve_static(self, request_path: str) -> None:
                 if request_path in ("", "/"):

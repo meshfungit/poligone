@@ -4204,6 +4204,14 @@ function renderRuntimeSettings() {
   const engineRuntime = engine.runtime || {};
   const activeRuntime = runtime.active || "stub";
   const availableRuntimes = Array.isArray(runtime.available) ? runtime.available : [];
+  const releases = Array.isArray(runtime.releases) ? runtime.releases : [];
+  const capabilities = Array.isArray(runtime.interface_capabilities)
+    ? runtime.interface_capabilities
+    : [];
+  const currentRuntime = availableRuntimes.find((item) => item.name === activeRuntime) || {};
+  const featureCapabilities = Array.isArray(currentRuntime.feature_capabilities)
+    ? currentRuntime.feature_capabilities
+    : [];
 
   for (const [label, value] of [
     ["Active", activeRuntime],
@@ -4248,12 +4256,154 @@ function renderRuntimeSettings() {
   row.appendChild(button);
   runtimeBlock.appendChild(row);
 
+  if (releases.length > 0) {
+    const releaseRow = document.createElement("div");
+    releaseRow.className = "settings-row";
+
+    const releaseSelect = document.createElement("select");
+    releaseSelect.id = "runtime-release-select";
+
+    for (const release of releases) {
+      const option = document.createElement("option");
+      const activeReleaseVersion = currentRuntime.release_version || "";
+      option.value = release.version;
+      option.textContent = [
+        release.label || release.version,
+        release.version === activeReleaseVersion ? "active" : "",
+        release.recommended ? "recommended" : "",
+        release.installed ? "installed" : "",
+        release.verified === false ? "PyPI only" : "",
+      ].filter(Boolean).join(" - ");
+
+      if (release.version === activeReleaseVersion) {
+        option.selected = true;
+      }
+
+      releaseSelect.appendChild(option);
+    }
+
+    const installButton = document.createElement("button");
+    installButton.type = "button";
+    installButton.id = "install-runtime-release";
+    installButton.textContent = "Install release";
+    installButton.onclick = installRuntimeReleaseFromUi;
+
+    releaseRow.appendChild(releaseSelect);
+    releaseRow.appendChild(installButton);
+    runtimeBlock.appendChild(releaseRow);
+  }
+
+  runtimeBlock.appendChild(renderRuntimeInterfaceCapabilities(capabilities));
+  runtimeBlock.appendChild(renderRuntimeFeatureCapabilities(activeRuntime, featureCapabilities));
+
   const hint = document.createElement("div");
   hint.className = "settings-hint";
   hint.textContent = "Changing runtime saves controller config and restarts the Reticulum engine.";
   runtimeBlock.appendChild(hint);
 
   return runtimeBlock;
+}
+
+function renderRuntimeInterfaceCapabilities(capabilities) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "runtime-interface-capabilities";
+
+  const title = document.createElement("h3");
+  title.textContent = "Interface capabilities";
+  wrapper.appendChild(title);
+
+  const table = document.createElement("table");
+  const thead = document.createElement("thead");
+  const header = document.createElement("tr");
+
+  for (const label of ["Type", "Installed", "Configured", "Enabled"]) {
+    const th = document.createElement("th");
+    th.textContent = label;
+    header.appendChild(th);
+  }
+
+  thead.appendChild(header);
+  table.appendChild(thead);
+
+  const tbody = document.createElement("tbody");
+
+  if (capabilities.length === 0) {
+    const row = document.createElement("tr");
+    const cell = document.createElement("td");
+    cell.colSpan = 4;
+    cell.textContent = "No runtime interface capabilities available.";
+    row.appendChild(cell);
+    tbody.appendChild(row);
+  }
+
+  for (const item of capabilities) {
+    const row = document.createElement("tr");
+
+    for (const value of [
+      item.type || "-",
+      item.installed ? "yes" : "no",
+      String(item.configured || 0),
+      String(item.enabled || 0),
+    ]) {
+      const cell = document.createElement("td");
+      cell.textContent = value;
+      row.appendChild(cell);
+    }
+
+    tbody.appendChild(row);
+  }
+
+  table.appendChild(tbody);
+  wrapper.appendChild(table);
+  return wrapper;
+}
+
+function renderRuntimeFeatureCapabilities(activeRuntime, features) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "runtime-feature-capabilities";
+
+  const title = document.createElement("h3");
+  title.textContent = "Runtime features";
+  wrapper.appendChild(title);
+
+  if (features.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "settings-hint";
+    empty.textContent = "No optional runtime features available.";
+    wrapper.appendChild(empty);
+    return wrapper;
+  }
+
+  for (const feature of features) {
+    const row = document.createElement("label");
+    row.className = "settings-checkbox-row";
+
+    const label = document.createElement("span");
+    label.textContent = [
+      feature.label || feature.name,
+      feature.installed ? "installed" : "not installed",
+    ].filter(Boolean).join(" - ");
+    row.appendChild(label);
+
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = Boolean(feature.enabled);
+    checkbox.disabled = activeRuntime === "stub";
+    checkbox.onchange = () => setRuntimeFeatureFromUi(
+      activeRuntime,
+      feature.name,
+      checkbox.checked,
+    );
+    row.appendChild(checkbox);
+    wrapper.appendChild(row);
+
+    const hint = document.createElement("div");
+    hint.className = "settings-hint";
+    hint.textContent = feature.description || "";
+    wrapper.appendChild(hint);
+  }
+
+  return wrapper;
 }
 
 function renderPathSettings() {
@@ -4805,6 +4955,7 @@ function updateSummaryCards(status) {
   const logs = Array.isArray(status.logs) ? status.logs : [];
   const runtime = status.runtime || {};
   const availableRuntimes = Array.isArray(runtime.available) ? runtime.available : [];
+  const rnsInterfaces = Array.isArray(rns.interfaces) ? rns.interfaces : [];
 
   setText("#engine-status", engine.running ? "engine: running" : "engine: stopped");
 
@@ -4827,8 +4978,22 @@ function updateSummaryCards(status) {
     ["Engine runtime source", engineRuntime.source_path || "-"],
     ["RNS version", rns.rns_version || "-"],
     ["LXMF version", rns.lxmf_version || "-"],
+    ["RNS interfaces", String(rnsInterfaces.length)],
     ["Config dir", rns.config_dir || "-"],
     ["Web root", status.controller?.web_root || "-"],
+  ];
+
+  rows.Interfaces = [
+    ["Name", "Type", "Online", "IN", "OUT", "Bind", "Target"],
+    ...rnsInterfaces.map((iface) => [
+      iface.name || "-",
+      iface.type || "-",
+      iface.online ? "yes" : "no",
+      iface.in ? "yes" : "no",
+      iface.out ? "yes" : "no",
+      iface.bind_ip || iface.bind_port ? `${iface.bind_ip || "*"}:${iface.bind_port || "-"}` : "-",
+      iface.target_host || iface.target_port ? `${iface.target_host || "-"}:${iface.target_port || "-"}` : "-",
+    ]),
   ];
 
   rows.Settings = [
@@ -4972,6 +5137,77 @@ async function selectRuntimeFromUi() {
       button.disabled = false;
       button.textContent = "Apply runtime";
     }
+  }
+}
+
+async function installRuntimeReleaseFromUi() {
+  const select = document.querySelector("#runtime-release-select");
+  const button = document.querySelector("#install-runtime-release");
+
+  if (select === null) {
+    return;
+  }
+
+  if (button !== null) {
+    button.disabled = true;
+    button.textContent = "Installing...";
+  }
+
+  try {
+    const response = await fetch("/api/runtime/install", {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        version: select.value,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Runtime install failed: HTTP ${response.status}`);
+    }
+
+    currentStatus = await response.json();
+    updateSummaryCards(currentStatus);
+    render("Settings");
+  } catch (error) {
+    appendUiError(error);
+    render("Logs");
+  } finally {
+    if (button !== null) {
+      button.disabled = false;
+      button.textContent = "Install release";
+    }
+  }
+}
+
+async function setRuntimeFeatureFromUi(runtimeName, featureName, enabled) {
+  try {
+    const response = await fetch("/api/runtime/feature", {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        runtime: runtimeName,
+        feature: featureName,
+        enabled,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Runtime feature update failed: HTTP ${response.status}`);
+    }
+
+    currentStatus = await response.json();
+    updateSummaryCards(currentStatus);
+    render("Settings");
+  } catch (error) {
+    appendUiError(error);
+    render("Logs");
   }
 }
 

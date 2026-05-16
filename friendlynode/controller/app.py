@@ -77,6 +77,54 @@ class ControllerApp:
 
         return runtime
 
+    def install_reticulum_release(self, version: str) -> RuntimeInfo:
+        self.state.append_log("info", "runtime", f"Reticulum install requested: {version}")
+
+        runtime = self.runtime_manager.install_reticulum_release(version)
+        self.config.set_engine_name(runtime.name)
+        runtime = self._apply_active_runtime()
+
+        self.state.append_log(
+            "info",
+            "runtime",
+            f"Reticulum runtime installed: name={runtime.name}, version={runtime.release_version}",
+        )
+
+        self.engine_supervisor.restart()
+        self.state.append_log("info", "controller", "Reticulum restart completed")
+
+        return runtime
+
+    def set_runtime_feature(self, runtime_name: str, feature_name: str, enabled: bool) -> RuntimeInfo:
+        self.state.append_log(
+            "info",
+            "runtime",
+            f"runtime feature change requested: runtime={runtime_name}, feature={feature_name}, enabled={enabled}",
+        )
+
+        runtime = self.runtime_manager.set_runtime_feature(runtime_name, feature_name, enabled)
+
+        if runtime.name == self.config.engine_name:
+            self.engine_supervisor.restart()
+            self.state.append_log("info", "controller", "Reticulum restart completed")
+
+        return runtime
+
+    def get_runtime_overview(self) -> dict[str, object]:
+        runtimes = self.runtime_manager.list_runtimes()
+        active_runtime_name = self.config.engine_name
+        active_runtime = next(
+            (runtime for runtime in runtimes if runtime.name == active_runtime_name),
+            None,
+        )
+
+        return {
+            "active": active_runtime_name,
+            "available": [runtime.to_dict() for runtime in runtimes],
+            "releases": self.runtime_manager.list_reticulum_releases(),
+            "interface_capabilities": self._build_runtime_interface_capabilities(active_runtime),
+        }
+
     def get_rns_config(self) -> dict[str, object]:
         parsed_config = load_rns_config(self.config.rns_config_dir)
         return parsed_config.to_dict()
@@ -335,3 +383,39 @@ class ControllerApp:
         self.config.runtime_source_path = runtime.source_path
 
         return runtime
+
+    def _build_runtime_interface_capabilities(
+        self,
+        runtime: RuntimeInfo | None,
+    ) -> list[dict[str, object]]:
+        parsed_config = load_rns_config(self.config.rns_config_dir)
+        configured_interfaces = parsed_config.interfaces
+        installed_types = set(runtime.interface_types if runtime is not None else ())
+        configured_types = {
+            str(interface.get("type") or "")
+            for interface in configured_interfaces
+            if str(interface.get("type") or "") != ""
+        }
+        interface_types = sorted(installed_types | configured_types)
+
+        capabilities = []
+
+        for interface_type in interface_types:
+            configured = [
+                interface
+                for interface in configured_interfaces
+                if interface.get("type") == interface_type
+            ]
+            enabled_count = sum(1 for interface in configured if bool(interface.get("enabled")))
+
+            capabilities.append(
+                {
+                    "type": interface_type,
+                    "installed": interface_type in installed_types,
+                    "configured": len(configured),
+                    "enabled": enabled_count,
+                    "runtime": runtime.name if runtime is not None else "",
+                }
+            )
+
+        return capabilities
