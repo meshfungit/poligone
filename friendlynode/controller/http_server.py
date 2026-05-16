@@ -163,6 +163,11 @@ class ControllerHttpServer:
                     self._send_json(self._build_status_response())
                     return
 
+                if parsed.path == "/api/reticulum/announce":
+                    payload = self._read_json_body()
+                    self._send_json(app.make_announce(payload))
+                    return
+
                 if parsed.path == "/api/rns-config":
                     payload = self._read_json_body()
                     self._send_json(app.save_rns_config(payload))

@@ -22,6 +22,17 @@ class EngineMain:
     def stop(self) -> None:
         self.rns_runtime.stop()
 
+    def make_announce(
+        self,
+        *,
+        target: str = "transport",
+        interface_name: str | None = None,
+    ) -> dict[str, object]:
+        return self.rns_runtime.make_announce(
+            target=target,
+            interface_name=interface_name,
+        )
+
 
 def main() -> None:
     engine = EngineMain()

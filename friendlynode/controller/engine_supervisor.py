@@ -28,6 +28,20 @@ class EngineSupervisor:
         self.stop()
         self.start()
 
+    def make_announce(
+        self,
+        *,
+        target: str = "transport",
+        interface_name: str | None = None,
+    ) -> dict[str, object]:
+        if self.engine is None:
+            raise RuntimeError("Engine is not running")
+
+        return self.engine.make_announce(
+            target=target,
+            interface_name=interface_name,
+        )
+
     def status(self) -> dict[str, object]:
         runtime_status = self._runtime_status()
 

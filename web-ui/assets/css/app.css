@@ -748,6 +748,36 @@ tr:last-child td { border-bottom: 0; }
   word-break: break-word;
 }
 
+.rns-announce-panel {
+  margin: 10px 0 14px;
+}
+
+.rns-announce-actions {
+  margin-bottom: 10px;
+}
+
+.rns-announce-actions button {
+  background: var(--panel2);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.rns-announce-actions button:hover {
+  border-color: var(--accent);
+}
+
+.rns-announce-table {
+  table-layout: fixed;
+}
+
+.rns-announce-table th,
+.rns-announce-table td {
+  overflow-wrap: anywhere;
+}
+
 .rns-section {
   border-top: 1px solid var(--line);
   padding-top: 12px;

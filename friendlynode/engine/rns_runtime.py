@@ -5,11 +5,13 @@ from __future__ import annotations
 import sys
 import signal
 import threading
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+from friendlynode.config.rns_config_editor import load_rns_config
 from friendlynode.engine.announce_handlers import DEFAULT_ANNOUNCE_ASPECTS, GenericAnnounceHandler
 from friendlynode.engine.events import EngineEvent
 from friendlynode.engine.ipc import IpcBus
@@ -17,6 +19,9 @@ from friendlynode.engine.ipc import IpcBus
 
 STUB_RNS_VERSION = "stub-rns"
 STUB_LXMF_VERSION = "stub-lxmf"
+ANNOUNCE_MONITOR_INTERVAL_SECONDS = 2.0
+DEFAULT_ANNOUNCE_MIN_INTERVAL_SECONDS = 15
+MIN_ANNOUNCE_MIN_INTERVAL_SECONDS = 5
 
 
 class StubIdentity:
@@ -90,9 +95,18 @@ class RnsRuntime:
         self.LXMF: ModuleType | type[StubLxmfModule] | None = None
         self.reticulum: Any | None = None
         self.using_stubs = True
+        self._announce_stop = threading.Event()
+        self._announce_thread: threading.Thread | None = None
+        self._interface_signatures: dict[str, tuple[object, ...]] = {}
+        self._interface_auto_last: dict[str, float] = {}
+        self._last_announce_reason = ""
+        self._last_announce_at: float | None = None
 
     def start(self) -> None:
         self.config_dir.mkdir(parents=True, exist_ok=True)
+        self._announce_stop = threading.Event()
+        self._interface_signatures = {}
+        self._interface_auto_last = {}
 
         self.RNS, self.LXMF, self.using_stubs = self._load_modules()
 
@@ -117,8 +131,10 @@ class RnsRuntime:
                 },
             )
         )
+        self._start_announce_monitor()
 
     def stop(self) -> None:
+        self._stop_announce_monitor()
         self.reticulum = None
         self.bus.publish(EngineEvent("rns.stopped", {}))
 
@@ -133,6 +149,69 @@ class RnsRuntime:
             "rns_version": getattr(self.RNS, "__version__", None) if self.RNS is not None else None,
             "lxmf_version": getattr(self.LXMF, "__version__", None) if self.LXMF is not None else None,
             "interfaces": self._interface_status(),
+            "announce": self.announce_status(),
+        }
+
+    def make_announce(
+        self,
+        *,
+        target: str = "transport",
+        interface_name: str | None = None,
+    ) -> dict[str, object]:
+        if target == "client":
+            return {
+                "status": "unsupported",
+                "target": target,
+                "message": "Client announce requires a real local LXMF destination; it is not wired yet.",
+            }
+
+        if target not in ("transport", "all"):
+            raise ValueError(f"Unsupported announce target: {target}")
+
+        destinations = self._transport_announce_destinations()
+        interfaces = self._select_announce_interfaces(interface_name)
+        sent = 0
+        errors = []
+
+        for interface in interfaces:
+            for destination in destinations:
+                try:
+                    destination.announce(attached_interface=interface)
+                    sent += 1
+                except Exception as exc:
+                    errors.append(
+                        {
+                            "interface": self._interface_display_name(interface),
+                            "destination": str(destination),
+                            "error": str(exc),
+                        }
+                    )
+
+        now = time.time()
+
+        if sent > 0:
+            self._last_announce_at = now
+            self._last_announce_reason = "manual"
+
+        return {
+            "status": "ok" if len(errors) == 0 else "partial",
+            "target": target,
+            "interface_filter": interface_name or "",
+            "interfaces": [self._interface_display_name(interface) for interface in interfaces],
+            "destination_count": len(destinations),
+            "sent": sent,
+            "errors": errors,
+            "announced_at": now if sent > 0 else None,
+        }
+
+    def announce_status(self) -> dict[str, object]:
+        destinations = self._transport_announce_destinations()
+        return {
+            "transport_destination_count": len(destinations),
+            "last_announce_at": self._last_announce_at,
+            "last_announce_reason": self._last_announce_reason,
+            "interfaces": self._configured_interface_announce_status(),
+            "client_supported": False,
         }
 
     def _load_modules(
@@ -179,6 +258,8 @@ class RnsRuntime:
             result.append(
                 {
                     "name": str(getattr(interface, "name", type(interface).__name__)),
+                    "display_name": self._interface_display_name(interface),
+                    "parent_name": self._parent_interface_name(interface),
                     "type": type(interface).__name__,
                     "online": bool(getattr(interface, "online", False)),
                     "in": bool(getattr(interface, "IN", False)),
@@ -188,10 +269,309 @@ class RnsRuntime:
                     "bind_port": str(getattr(interface, "bind_port", "")),
                     "target_host": str(getattr(interface, "target_ip", "")),
                     "target_port": str(getattr(interface, "target_port", "")),
+                    "clients": self._interface_client_count(interface),
+                    "last_announce_at": self._interface_last_announce_at(interface),
                 }
             )
 
         return result
+
+    def _start_announce_monitor(self) -> None:
+        if self.using_stubs:
+            return
+
+        self._announce_thread = threading.Thread(
+            target=self._announce_monitor_loop,
+            name="friendlynode-announce-monitor",
+            daemon=True,
+        )
+        self._announce_thread.start()
+
+    def _stop_announce_monitor(self) -> None:
+        self._announce_stop.set()
+
+        if self._announce_thread is not None and self._announce_thread.is_alive():
+            self._announce_thread.join(timeout=2)
+
+        self._announce_thread = None
+
+    def _announce_monitor_loop(self) -> None:
+        while not self._announce_stop.is_set():
+            try:
+                self._announce_changed_interfaces()
+            except Exception as exc:
+                self.bus.publish(
+                    EngineEvent(
+                        "announce.auto_error",
+                        {
+                            "exception": type(exc).__name__,
+                            "message": str(exc),
+                        },
+                    )
+                )
+
+            self._announce_stop.wait(ANNOUNCE_MONITOR_INTERVAL_SECONDS)
+
+    def _announce_changed_interfaces(self) -> None:
+        destinations = self._transport_announce_destinations()
+
+        if len(destinations) == 0:
+            return
+
+        now = time.time()
+
+        for interface in self._select_announce_interfaces(None):
+            key = self._interface_key(interface)
+            signature = self._interface_connection_signature(interface)
+            previous = self._interface_signatures.get(key)
+            self._interface_signatures[key] = signature
+
+            if previous is not None and previous == signature:
+                continue
+
+            interval = self._announce_interval_for_interface(interface)
+            last_announce = self._interface_auto_last.get(key, 0)
+
+            if now - last_announce < interval:
+                continue
+
+            sent = 0
+
+            for destination in destinations:
+                destination.announce(attached_interface=interface)
+                sent += 1
+
+            if sent > 0:
+                self._interface_auto_last[key] = now
+                self._last_announce_at = now
+                self._last_announce_reason = "connection_changed" if previous is not None else "start"
+                self.bus.publish(
+                    EngineEvent(
+                        "announce.auto",
+                        {
+                            "interface": self._interface_display_name(interface),
+                            "reason": self._last_announce_reason,
+                            "destination_count": sent,
+                        },
+                    )
+                )
+
+    def _transport_announce_destinations(self) -> list[Any]:
+        transport = getattr(self.RNS, "Transport", None) if self.RNS is not None else None
+
+        if transport is None:
+            return []
+
+        destinations = getattr(transport, "mgmt_destinations", [])
+
+        if not isinstance(destinations, list):
+            return []
+
+        return [destination for destination in destinations if hasattr(destination, "announce")]
+
+    def _select_announce_interfaces(self, interface_name: str | None) -> list[Any]:
+        transport = getattr(self.RNS, "Transport", None) if self.RNS is not None else None
+        interfaces = getattr(transport, "interfaces", []) if transport is not None else []
+        selected = []
+
+        for interface in interfaces:
+            if not self._interface_can_send_announce(interface):
+                continue
+
+            if interface_name is None or self._interface_matches(interface, interface_name):
+                selected.append(interface)
+
+        return selected
+
+    def _interface_can_send_announce(self, interface: Any) -> bool:
+        if not bool(getattr(interface, "online", False)):
+            return False
+
+        if not bool(getattr(interface, "OUT", False)):
+            return False
+
+        if type(interface).__name__ == "TCPServerInterface":
+            return False
+
+        return True
+
+    def _interface_matches(self, interface: Any, interface_name: str) -> bool:
+        candidates = {
+            str(interface),
+            str(getattr(interface, "name", "")),
+            self._interface_display_name(interface),
+            self._parent_interface_name(interface),
+        }
+        return interface_name in candidates
+
+    def _configured_interface_announce_status(self) -> list[dict[str, object]]:
+        now = time.time()
+        configured = self._configured_enabled_interfaces()
+        live_interfaces = self._live_interfaces()
+        result = []
+
+        for item in configured:
+            name = str(item.get("name") or "")
+            matching = [
+                interface
+                for interface in live_interfaces
+                if str(getattr(interface, "name", "")) == name
+                or self._parent_interface_name(interface) == name
+            ]
+            leafs = [
+                interface
+                for interface in matching
+                if self._interface_can_send_announce(interface)
+            ]
+            online = any(bool(getattr(interface, "online", False)) for interface in matching)
+            last_announce = self._max_last_announce_at(matching)
+            interval = self._normalise_announce_interval(item.get("announce_interval"))
+            age = None if last_announce is None else max(now - last_announce, 0)
+
+            result.append(
+                {
+                    "name": name,
+                    "type": str(item.get("type") or ""),
+                    "enabled": True,
+                    "online": online,
+                    "status": "Up" if online else "Down",
+                    "announce_interval": interval,
+                    "last_announce_at": last_announce,
+                    "last_announce_age": age,
+                    "next_announce_in": interval if age is None else max(interval - age, 0),
+                    "announce_targets": len(leafs),
+                    "clients": sum(self._interface_client_count(interface) for interface in matching),
+                }
+            )
+
+        return result
+
+    def _configured_enabled_interfaces(self) -> list[dict[str, object]]:
+        try:
+            config = load_rns_config(self.config_dir)
+        except Exception:
+            return []
+
+        return [
+            interface
+            for interface in config.interfaces
+            if bool(interface.get("enabled"))
+        ]
+
+    def _live_interfaces(self) -> list[Any]:
+        transport = getattr(self.RNS, "Transport", None) if self.RNS is not None else None
+        interfaces = getattr(transport, "interfaces", []) if transport is not None else []
+        return list(interfaces)
+
+    def _announce_interval_for_interface(self, interface: Any) -> int:
+        configured_name = self._parent_interface_name(interface) or str(getattr(interface, "name", ""))
+
+        for item in self._configured_enabled_interfaces():
+            if item.get("name") == configured_name:
+                return self._normalise_announce_interval(item.get("announce_interval"))
+
+        return DEFAULT_ANNOUNCE_MIN_INTERVAL_SECONDS
+
+    def _normalise_announce_interval(self, value: object) -> int:
+        try:
+            interval = int(value)
+        except (TypeError, ValueError):
+            interval = DEFAULT_ANNOUNCE_MIN_INTERVAL_SECONDS
+
+        return max(interval, MIN_ANNOUNCE_MIN_INTERVAL_SECONDS)
+
+    def _interface_connection_signature(self, interface: Any) -> tuple[object, ...]:
+        socket_info = self._socket_info(interface)
+        parent = getattr(interface, "parent_interface", None)
+        return (
+            type(interface).__name__,
+            str(getattr(interface, "name", "")),
+            self._parent_interface_name(interface),
+            bool(getattr(interface, "online", False)),
+            bool(getattr(interface, "IN", False)),
+            bool(getattr(interface, "OUT", False)),
+            str(getattr(interface, "bind_ip", "")),
+            str(getattr(interface, "bind_port", "")),
+            str(getattr(interface, "target_ip", "")),
+            str(getattr(interface, "target_port", "")),
+            self._interface_client_count(parent) if parent is not None else self._interface_client_count(interface),
+            socket_info,
+        )
+
+    def _socket_info(self, interface: Any) -> tuple[str, str]:
+        socket_object = getattr(interface, "socket", None)
+
+        if socket_object is None:
+            return ("", "")
+
+        try:
+            local = socket_object.getsockname()
+        except OSError:
+            local = ""
+
+        try:
+            peer = socket_object.getpeername()
+        except OSError:
+            peer = ""
+
+        return (str(local), str(peer))
+
+    def _interface_key(self, interface: Any) -> str:
+        return self._interface_display_name(interface)
+
+    def _interface_display_name(self, interface: Any) -> str:
+        try:
+            return str(interface)
+        except Exception:
+            return str(getattr(interface, "name", type(interface).__name__))
+
+    def _parent_interface_name(self, interface: Any) -> str:
+        parent = getattr(interface, "parent_interface", None)
+
+        if parent is None:
+            return ""
+
+        return str(getattr(parent, "name", ""))
+
+    def _interface_client_count(self, interface: Any) -> int:
+        if interface is None:
+            return 0
+
+        clients = getattr(interface, "clients", None)
+
+        if isinstance(clients, int):
+            return clients
+
+        if callable(clients):
+            try:
+                return int(clients())
+            except (TypeError, ValueError):
+                return 0
+
+        return 0
+
+    def _interface_last_announce_at(self, interface: Any) -> float | None:
+        deque = getattr(interface, "oa_freq_deque", None)
+
+        if deque is None or len(deque) == 0:
+            return None
+
+        try:
+            return float(deque[-1])
+        except (TypeError, ValueError):
+            return None
+
+    def _max_last_announce_at(self, interfaces: list[Any]) -> float | None:
+        timestamps = [
+            timestamp
+            for timestamp in (self._interface_last_announce_at(interface) for interface in interfaces)
+            if timestamp is not None
+        ]
+
+        if len(timestamps) == 0:
+            return None
+
+        return max(timestamps)
 
     @contextmanager
     def _reticulum_signal_context(self):

@@ -1598,6 +1598,7 @@ function renderClientAccountMenu() {
       clientAccountMenuState = null;
       removeClient(client);
     }],
+    ["Make Annonce", () => makeClientAnnounce(client)],
     [expandedClientDetails.has(client.id) ? "Hide details" : "Show details", () => {
       if (expandedClientDetails.has(client.id)) {
         expandedClientDetails.delete(client.id);
@@ -4125,7 +4126,7 @@ function renderInterfaces() {
   const wrapper = document.createElement("div");
 
   if (window.FriendlyNodeRnsConfigEditor !== undefined) {
-    wrapper.appendChild(window.FriendlyNodeRnsConfigEditor.render({ mode: "interfaces" }));
+    wrapper.appendChild(window.FriendlyNodeRnsConfigEditor.render({ mode: "interfaces", status: currentStatus }));
     return wrapper;
   }
 
@@ -4139,7 +4140,7 @@ function renderTransport() {
   wrapper.appendChild(renderTransportStatusPanel());
 
   if (window.FriendlyNodeRnsConfigEditor !== undefined) {
-    wrapper.appendChild(window.FriendlyNodeRnsConfigEditor.render({ mode: "transport" }));
+    wrapper.appendChild(window.FriendlyNodeRnsConfigEditor.render({ mode: "transport", status: currentStatus }));
   }
 
   return wrapper;
@@ -5058,6 +5059,20 @@ async function fetchStatus() {
   }
 }
 
+window.FriendlyNodeRefreshStatus = fetchStatus;
+
+window.setInterval(() => {
+  if (typeof window.FriendlyNodeRnsConfigEditor?.refreshAnnounceTimers !== "function") {
+    return;
+  }
+
+  if (getActiveTab() !== "Interfaces") {
+    return;
+  }
+
+  window.FriendlyNodeRnsConfigEditor.refreshAnnounceTimers();
+}, 1000);
+
 async function restartReticulum() {
   const button = document.querySelector("#restart-reticulum");
 
@@ -5346,6 +5361,40 @@ async function shareClientAccount(client) {
       copyTextFallback(text);
     }
 
+    render("Client");
+  } catch (error) {
+    appendUiError(error);
+    render("Logs");
+  }
+}
+
+async function makeClientAnnounce(client) {
+  clientAccountMenuState = null;
+
+  try {
+    const response = await fetch("/api/reticulum/announce", {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        target: "client",
+        client_id: client.id || "",
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Client announce failed: HTTP ${response.status}`);
+    }
+
+    const payload = await response.json();
+
+    if (payload.status === "unsupported") {
+      throw new Error(payload.message || "Client announce is not wired yet.");
+    }
+
+    await fetchStatus();
     render("Client");
   } catch (error) {
     appendUiError(error);

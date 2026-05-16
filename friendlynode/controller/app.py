@@ -55,6 +55,25 @@ class ControllerApp:
         self.engine_supervisor.restart()
         self.state.append_log("info", "controller", "Reticulum restart completed")
 
+    def make_announce(self, payload: dict[str, object]) -> dict[str, object]:
+        target = str(payload.get("target") or "transport")
+        interface_name = str(payload.get("interface_name") or "").strip()
+        self.state.append_log(
+            "info",
+            "announce",
+            f"manual announce requested: target={target}, interface={interface_name or '*'}",
+        )
+        result = self.engine_supervisor.make_announce(
+            target=target,
+            interface_name=interface_name or None,
+        )
+        self.state.append_log(
+            "info",
+            "announce",
+            f"manual announce result: status={result.get('status')}, sent={result.get('sent', 0)}",
+        )
+        return result
+
     def select_runtime(self, runtime_name: str) -> RuntimeInfo:
         self.state.append_log("info", "runtime", f"runtime selection requested: {runtime_name}")
 

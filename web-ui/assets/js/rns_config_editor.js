@@ -8,6 +8,7 @@
 
   function render(options = {}) {
     const mode = options.mode || "full";
+    const status = options.status || null;
     const block = document.createElement("section");
     block.className = "settings-block rns-config-editor";
     block.id = "rns-config-editor";
@@ -63,6 +64,10 @@
     }
 
     block.appendChild(renderConfigPaths());
+
+    if (mode === "interfaces") {
+      block.appendChild(renderInterfaceAnnounceStatus(status));
+    }
 
     if (mode !== "interfaces") {
       block.appendChild(renderReticulumSection());
@@ -204,6 +209,75 @@
     return section;
   }
 
+  function renderInterfaceAnnounceStatus(status) {
+    const panel = document.createElement("div");
+    panel.className = "rns-announce-panel";
+
+    const actions = document.createElement("div");
+    actions.className = "settings-row rns-announce-actions";
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = "Make Annonce";
+    button.onclick = () => makeReticulumAnnounce("transport");
+    actions.appendChild(button);
+    panel.appendChild(actions);
+
+    const table = document.createElement("table");
+    table.className = "rns-announce-table";
+
+    const thead = document.createElement("thead");
+    const header = document.createElement("tr");
+
+    for (const label of ["Interface", "Status", "Last announce", "Next auto"]) {
+      const th = document.createElement("th");
+      th.textContent = label;
+      header.appendChild(th);
+    }
+
+    thead.appendChild(header);
+    table.appendChild(thead);
+
+    const tbody = document.createElement("tbody");
+    const announce = status?.engine?.rns?.announce || {};
+    const rows = Array.isArray(announce.interfaces) ? announce.interfaces : [];
+
+    if (rows.length === 0) {
+      const empty = document.createElement("tr");
+      const cell = document.createElement("td");
+      cell.colSpan = 4;
+      cell.textContent = "No enabled live interfaces are available for announce status.";
+      empty.appendChild(cell);
+      tbody.appendChild(empty);
+    }
+
+    for (const row of rows) {
+      const tr = document.createElement("tr");
+
+      const name = document.createElement("td");
+      name.textContent = row.name || "-";
+      tr.appendChild(name);
+
+      const state = document.createElement("td");
+      state.textContent = row.status || (row.online ? "Up" : "Down");
+      tr.appendChild(state);
+
+      const last = document.createElement("td");
+      last.appendChild(renderAgeCell(row.last_announce_at, "never"));
+      tr.appendChild(last);
+
+      const next = document.createElement("td");
+      next.appendChild(renderCountdownCell(row.last_announce_at, row.announce_interval));
+      tr.appendChild(next);
+
+      tbody.appendChild(tr);
+    }
+
+    table.appendChild(tbody);
+    panel.appendChild(table);
+    return panel;
+  }
+
   function renderAddInterfacePanel() {
     const panel = document.createElement("div");
     panel.className = "rns-add-interface-panel";
@@ -305,53 +379,78 @@
     removeRow.appendChild(removeButton);
     card.appendChild(removeRow);
 
-    const commonTitle = document.createElement("div");
-    commonTitle.className = "rns-subtitle";
-    commonTitle.textContent = "Common fields";
-    card.appendChild(commonTitle);
-
-    const commonFields = (configState.schema?.common_interface_fields || []).filter(
-      (field) => field.key !== "enabled"
-    );
-
-    for (const field of commonFields) {
-      card.appendChild(
-        renderFieldControl({
-          field,
-          value: iface[field.key],
-          onChange: (value) => {
-            iface[field.key] = value;
-
-            if (field.key === "type") {
-              applyInterfaceTypeDefaults(iface);
-              rerenderActiveRnsEditor();
-            }
-          },
-        })
-      );
-    }
-
     const typeName = iface.type || "AutoInterface";
-    const typeTitle = document.createElement("div");
-    typeTitle.className = "rns-subtitle";
-    typeTitle.textContent = `${typeName} fields`;
-    card.appendChild(typeTitle);
+    const fieldsTitle = document.createElement("div");
+    fieldsTitle.className = "rns-subtitle";
+    fieldsTitle.textContent = "Interface fields";
+    card.appendChild(fieldsTitle);
 
-    const typeFields = configState.schema?.interface_type_fields?.[typeName] || [];
+    const fields = orderedInterfaceFields(typeName);
 
-    for (const field of typeFields) {
-      card.appendChild(
-        renderFieldControl({
-          field,
-          value: iface[field.key],
-          onChange: (value) => {
-            iface[field.key] = value;
-          },
-        })
-      );
+    for (const field of fields) {
+      card.appendChild(renderInterfaceField(iface, field));
     }
 
     return card;
+  }
+
+  function orderedInterfaceFields(typeName) {
+    const commonFields = (configState.schema?.common_interface_fields || []).filter(
+      (field) => field.key !== "enabled" && field.key !== "name"
+    );
+    const typeFields = configState.schema?.interface_type_fields?.[typeName] || [];
+    const allFields = [...commonFields, ...typeFields];
+    const byKey = new Map();
+
+    for (const field of allFields) {
+      byKey.set(field.key, field);
+    }
+
+    const priority = [
+      "type",
+      "target_host",
+      "target_port",
+      "listen_ip",
+      "listen_port",
+      "mode",
+      "outgoing",
+      "bitrate",
+      "announce_interval",
+      "discoverable",
+      "network_name",
+    ];
+    const result = [];
+
+    for (const key of priority) {
+      if (byKey.has(key)) {
+        result.push(byKey.get(key));
+        byKey.delete(key);
+      }
+    }
+
+    for (const field of allFields) {
+      if (byKey.has(field.key)) {
+        result.push(field);
+        byKey.delete(field.key);
+      }
+    }
+
+    return result;
+  }
+
+  function renderInterfaceField(iface, field) {
+    return renderFieldControl({
+      field,
+      value: iface[field.key],
+      onChange: (value) => {
+        iface[field.key] = value;
+
+        if (field.key === "type") {
+          applyInterfaceTypeDefaults(iface);
+          rerenderActiveRnsEditor();
+        }
+      },
+    });
   }
 
   function renderEditorActions() {
@@ -442,6 +541,118 @@
 
     wrapper.appendChild(input);
     return wrapper;
+  }
+
+  function renderAgeCell(timestamp, emptyText) {
+    const span = document.createElement("span");
+    span.className = "rns-announce-age";
+    span.dataset.timestamp = timestamp === null || timestamp === undefined ? "" : String(timestamp);
+    span.dataset.empty = emptyText;
+    span.textContent = formatAge(timestamp, emptyText);
+    return span;
+  }
+
+  function renderCountdownCell(timestamp, interval) {
+    const span = document.createElement("span");
+    span.className = "rns-announce-countdown";
+    span.dataset.timestamp = timestamp === null || timestamp === undefined ? "" : String(timestamp);
+    span.dataset.interval = interval === null || interval === undefined ? "" : String(interval);
+    span.textContent = formatCountdown(timestamp, interval);
+    return span;
+  }
+
+  function formatAge(timestamp, emptyText) {
+    const value = Number(timestamp);
+
+    if (!Number.isFinite(value) || value <= 0) {
+      return emptyText;
+    }
+
+    return `${formatDuration(Date.now() / 1000 - value)} ago`;
+  }
+
+  function formatCountdown(timestamp, interval) {
+    const timeValue = Number(timestamp);
+    const intervalValue = Number(interval);
+
+    if (!Number.isFinite(intervalValue) || intervalValue <= 0) {
+      return "-";
+    }
+
+    if (!Number.isFinite(timeValue) || timeValue <= 0) {
+      return "ready";
+    }
+
+    const remaining = Math.max(intervalValue - (Date.now() / 1000 - timeValue), 0);
+    return remaining <= 0 ? "ready" : formatDuration(remaining);
+  }
+
+  function formatDuration(seconds) {
+    const total = Math.max(Math.floor(Number(seconds) || 0), 0);
+
+    if (total < 60) {
+      return `${total}s`;
+    }
+
+    const minutes = Math.floor(total / 60);
+    const rest = total % 60;
+
+    if (minutes < 60) {
+      return `${minutes}m ${rest}s`;
+    }
+
+    const hours = Math.floor(minutes / 60);
+    return `${hours}h ${minutes % 60}m`;
+  }
+
+  async function makeReticulumAnnounce(target) {
+    const button = document.querySelector(".rns-announce-actions button");
+
+    if (button !== null) {
+      button.disabled = true;
+      button.textContent = "Announcing...";
+    }
+
+    try {
+      const response = await fetch("/api/reticulum/announce", {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ target }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Announce request failed: HTTP ${response.status}`);
+      }
+
+      if (typeof window.FriendlyNodeRefreshStatus === "function") {
+        await window.FriendlyNodeRefreshStatus();
+      } else {
+        rerenderActiveRnsEditor();
+      }
+    } catch (error) {
+      loadError = error instanceof Error ? error.message : String(error);
+      rerenderActiveRnsEditor();
+    } finally {
+      const newButton = document.querySelector(".rns-announce-actions button");
+
+      if (newButton !== null) {
+        newButton.disabled = false;
+        newButton.textContent = "Make Annonce";
+      }
+    }
+  }
+
+  function refreshAnnounceTimers() {
+    for (const item of document.querySelectorAll(".rns-announce-age")) {
+      item.textContent = formatAge(item.dataset.timestamp, item.dataset.empty || "never");
+    }
+
+    for (const item of document.querySelectorAll(".rns-announce-countdown")) {
+      item.textContent = formatCountdown(item.dataset.timestamp, item.dataset.interval);
+    }
   }
 
   function addInterface() {
@@ -559,5 +770,6 @@
 
   window.FriendlyNodeRnsConfigEditor = {
     render,
+    refreshAnnounceTimers,
   };
 })();
