@@ -128,10 +128,19 @@ class ControllerApp:
 
         return self.config.to_dict()
 
-    def get_access_status(self) -> dict[str, object]:
+    def get_access_status(
+        self,
+        *,
+        request_is_https: bool = False,
+        forwarded_proto: str = "",
+    ) -> dict[str, object]:
         return {
             "network": build_network_interfaces_status(),
-            "security": build_channel_security_status(self.config.controller_host),
+            "security": build_channel_security_status(
+                self.config.controller_host,
+                request_is_https=request_is_https,
+                forwarded_proto=forwarded_proto,
+            ),
             "ssh": build_ssh_access_status(),
         }
 

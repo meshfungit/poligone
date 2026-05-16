@@ -281,7 +281,10 @@ class ControllerHttpServer:
                         "active": active_runtime_name,
                         "available": [runtime.to_dict() for runtime in runtimes],
                     },
-                    "access": app.get_access_status(),
+                    "access": app.get_access_status(
+                        request_is_https=self._request_is_https(),
+                        forwarded_proto=self._trusted_forwarded_proto(),
+                    ),
                     "config": app.config.to_dict(),
                     "clients": app.list_clients(),
                     "announces": app.state.snapshot_announces(),
@@ -293,9 +296,52 @@ class ControllerHttpServer:
 
             def _build_security_response(self) -> dict[str, object]:
                 return app.get_channel_security_status(
-                    request_is_https=False,
-                    forwarded_proto="",
+                    request_is_https=self._request_is_https(),
+                    forwarded_proto=self._trusted_forwarded_proto(),
                 )
+
+            def _request_is_https(self) -> bool:
+                cipher = getattr(self.request, "cipher", None)
+
+                if not callable(cipher):
+                    return False
+
+                try:
+                    return cipher() is not None
+                except OSError:
+                    return False
+
+            def _trusted_forwarded_proto(self) -> str:
+                if not self._request_from_loopback():
+                    return ""
+
+                for header_name in (
+                    "X-Forwarded-Proto",
+                    "X-Forwarded-Scheme",
+                    "X-Url-Scheme",
+                ):
+                    value = self.headers.get(header_name, "")
+
+                    if value != "":
+                        return value.split(",", 1)[0].strip().lower()
+
+                forwarded = self.headers.get("Forwarded", "")
+
+                for forwarded_item in forwarded.split(","):
+                    for pair in forwarded_item.split(";"):
+                        key, separator, value = pair.strip().partition("=")
+
+                        if separator != "" and key.strip().lower() == "proto":
+                            return value.strip().strip('"').lower()
+
+                return ""
+
+            def _request_from_loopback(self) -> bool:
+                try:
+                    host = self.client_address[0]
+                    return host == "localhost" or host.startswith("127.") or host == "::1"
+                except (IndexError, TypeError):
+                    return False
 
             def _build_runtimes_response(self) -> dict[str, object]:
                 runtimes = app.runtime_manager.list_runtimes()

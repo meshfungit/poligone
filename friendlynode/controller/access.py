@@ -100,6 +100,15 @@ def build_channel_security_status(
             matching_interface,
         )
 
+    if _is_tailscale_address(host):
+        return _build_security_result(
+            True,
+            "tailscale",
+            "UI is bound to a Tailscale address.",
+            configured_host,
+            matching_interface,
+        )
+
     if matching_interface is not None:
         kind = str(matching_interface.get("kind") or "")
 

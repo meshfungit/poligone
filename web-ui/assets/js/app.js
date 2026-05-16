@@ -4776,7 +4776,18 @@ function isBrowserChannelSecure() {
     || window.location.hostname === "localhost"
     || window.location.hostname === "127.0.0.1"
     || window.location.hostname === "::1"
-    || window.location.hostname === "[::1]";
+    || window.location.hostname === "[::1]"
+    || isBrowserTailscaleHost(window.location.hostname);
+}
+
+function isBrowserTailscaleHost(hostname) {
+  const parts = String(hostname || "").split(".").map((part) => Number(part));
+
+  return parts.length === 4
+    && parts.every((part) => Number.isInteger(part) && part >= 0 && part <= 255)
+    && parts[0] === 100
+    && parts[1] >= 64
+    && parts[1] <= 127;
 }
 
 function setText(selector, value) {
