@@ -55,6 +55,96 @@ const announceFilters = {
   hops: 0,
 };
 
+const ANNOUNCE_TYPE_DEFINITIONS = Object.freeze([
+  {
+    value: "identity",
+    label: "Identity",
+    aspects: ["lxmf.delivery", "lxmf.propagation"],
+  },
+  {
+    value: "call.audio",
+    label: "call.audio",
+    aspects: ["call.audio"],
+  },
+  {
+    value: "nomadnet",
+    label: "NomadNet",
+    aspects: ["nomadnetwork.node"],
+  },
+  {
+    value: "transport",
+    label: "Transport",
+    aspects: ["rnstransport.*", "transport.*"],
+  },
+  {
+    value: "peer",
+    label: "Peer",
+    aspects: [],
+  },
+]);
+
+function getAnnounceAspect(announce) {
+  return String(announce?.aspect || "").trim();
+}
+
+function announceAspectMatchesPattern(aspect, pattern) {
+  if (pattern.endsWith(".*")) {
+    return aspect.startsWith(pattern.slice(0, -1));
+  }
+
+  return aspect === pattern;
+}
+
+function getAnnounceTypeDefinitionByAspect(aspect) {
+  if (aspect === "") {
+    return null;
+  }
+
+  return (
+    ANNOUNCE_TYPE_DEFINITIONS.find((definition) =>
+      definition.aspects.some((pattern) => announceAspectMatchesPattern(aspect, pattern))
+    ) || null
+  );
+}
+
+function getAnnounceTypeDefinitionByValue(type) {
+  return ANNOUNCE_TYPE_DEFINITIONS.find((definition) => definition.value === type) || null;
+}
+
+function getAnnounceType(announce) {
+  const aspectDefinition = getAnnounceTypeDefinitionByAspect(getAnnounceAspect(announce));
+
+  if (aspectDefinition !== null) {
+    return aspectDefinition.value;
+  }
+
+  const rawType = String(announce?.type || "").trim();
+
+  return rawType === "" ? "unknown" : rawType;
+}
+
+function getAnnounceTypeCssName(announce) {
+  return getAnnounceType(announce).replaceAll(".", "-");
+}
+
+function getAnnounceTypeLabel(announceOrType) {
+  const type =
+    typeof announceOrType === "string"
+      ? announceOrType
+      : getAnnounceType(announceOrType);
+
+  const definition = getAnnounceTypeDefinitionByValue(type);
+
+  return definition === null ? "Unknown" : definition.label;
+}
+
+function getAnnounceTypeFilterOptions() {
+  return [
+    ["all", "All"],
+    ...ANNOUNCE_TYPE_DEFINITIONS.map((definition) => [definition.value, definition.label]),
+  ];
+}
+
 const rows = {
   Client: [
     ["Name", "Identity", "LXMF destination", "Runtime", "Enabled"],
@@ -1137,13 +1227,7 @@ function renderAnnounceTypeFilter(onChange) {
 
   const select = document.createElement("select");
 
-  for (const [value, text] of [
-    ["all", "All"],
-    ["identity", "Identity"],
-    ["peer", "Peer"],
-    ["nomadnet", "NomadNet"],
-    ["transport", "Transport"],
-  ]) {
+  for (const [value, text] of getAnnounceTypeFilterOptions()) {
     const option = document.createElement("option");
     option.value = value;
     option.textContent = text;
@@ -1154,7 +1238,9 @@ function renderAnnounceTypeFilter(onChange) {
   select.onchange = () => {
     announceFilters.type = select.value;
   };
+
   field.appendChild(select);
+
   return field;
 }
 
@@ -1393,8 +1479,8 @@ function renderAnnounceRow(announce) {
   };
 
   const type = document.createElement("span");
-  type.className = `announce-row-type announce-type-${announce.type || "unknown"}`;
-  type.textContent = getAnnounceTypeLabel(announce.type);
+  type.className = `announce-row-type announce-type-${getAnnounceTypeCssName(announce)}`;
+  type.textContent = getAnnounceTypeLabel(announce);
   row.appendChild(type);
 
   const name = document.createElement("span");
@@ -1428,9 +1514,10 @@ function renderAnnounceDetailCard(announce) {
   header.appendChild(title);
 
   const badge = document.createElement("div");
-  badge.className = `announce-type announce-type-${announce.type || "unknown"}`;
-  badge.textContent = getAnnounceTypeLabel(announce.type);
+  badge.className = `announce-type announce-type-${getAnnounceTypeCssName(announce)}`;
+  badge.textContent = getAnnounceTypeLabel(announce);
   header.appendChild(badge);
+
   card.appendChild(header);
 
   const meta = document.createElement("div");
@@ -1455,10 +1542,12 @@ function renderAnnounceDetailCard(announce) {
     const rowValue = document.createElement("strong");
     rowValue.textContent = value === undefined || value === null || value === "" ? "-" : String(value);
     row.appendChild(rowValue);
+
     meta.appendChild(row);
   }
 
   card.appendChild(meta);
+
   return card;
 }
 
@@ -1528,26 +1617,6 @@ function renderAnnounceModal() {
   return overlay;
 }
 
-function getAnnounceTypeLabel(type) {
-  if (type === "identity") {
-    return "Identity";
-  }
-
-  if (type === "peer") {
-    return "Peer";
-  }
-
-  if (type === "nomadnet") {
-    return "NomadNet";
-  }
-
-  if (type === "transport") {
-    return "Transport";
-  }
-
-  return "Unknown";
-}
-
 function announceCanOpenChat(announce) {
   return String(announce.lxmf || announce.destination_hash || "") !== "";
 }
@@ -1556,7 +1625,7 @@ function announceToContact(announce) {
   const destination = String(announce.lxmf || announce.destination_hash || "");
   return {
     id: `announce-${destination.slice(0, 12) || announce.id || "contact"}`,
-    name: announce.name || getAnnounceTypeLabel(announce.type),
+    name: announce.name || getAnnounceTypeLabel(announce),
     destination_hash: announce.destination_hash || destination,
     identity_hash: announce.identity_hash || "",
     lxmf_address: announce.lxmf ? `lxmf://${announce.lxmf}` : "",
@@ -1606,7 +1675,7 @@ async function addAnnounceContact(announce) {
 }
 
 function bookmarkAnnounceNode(announce) {
-  if (announce.type !== "nomadnet") {
+  if (getAnnounceType(announce) !== "nomadnet") {
     return;
   }
 
@@ -1638,7 +1707,7 @@ function openAnnounceChat(announce) {
 }
 
 function openAnnounceNomadnetPage(announce) {
-  if (announce.type !== "nomadnet") {
+  if (getAnnounceType(announce) !== "nomadnet") {
     return;
   }
 
