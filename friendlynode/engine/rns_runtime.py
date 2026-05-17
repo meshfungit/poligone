@@ -98,7 +98,8 @@ class RnsRuntime:
         self._announce_stop = threading.Event()
         self._announce_thread: threading.Thread | None = None
         self._interface_signatures: dict[str, tuple[object, ...]] = {}
-        self._interface_auto_last: dict[str, float] = {}
+        self._interface_announce_last: dict[str, float] = {}
+        self._interface_announce_reason: dict[str, str] = {}
         self._last_announce_reason = ""
         self._last_announce_at: float | None = None
 
@@ -106,7 +107,8 @@ class RnsRuntime:
         self.config_dir.mkdir(parents=True, exist_ok=True)
         self._announce_stop = threading.Event()
         self._interface_signatures = {}
-        self._interface_auto_last = {}
+        self._interface_announce_last = {}
+        self._interface_announce_reason = {}
 
         self.RNS, self.LXMF, self.using_stubs = self._load_modules()
 
@@ -170,14 +172,18 @@ class RnsRuntime:
 
         destinations = self._transport_announce_destinations()
         interfaces = self._select_announce_interfaces(interface_name)
+        now = time.time()
         sent = 0
         errors = []
 
         for interface in interfaces:
+            interface_sent = 0
+
             for destination in destinations:
                 try:
                     destination.announce(attached_interface=interface)
                     sent += 1
+                    interface_sent += 1
                 except Exception as exc:
                     errors.append(
                         {
@@ -187,7 +193,8 @@ class RnsRuntime:
                         }
                     )
 
-        now = time.time()
+            if interface_sent > 0:
+                self._record_interface_announce(interface, now, "manual")
 
         if sent > 0:
             self._last_announce_at = now
@@ -277,7 +284,7 @@ class RnsRuntime:
         return result
 
     def _start_announce_monitor(self) -> None:
-        if self.using_stubs:
+        if self.RNS is None or getattr(self.RNS, "__version__", None) == STUB_RNS_VERSION:
             return
 
         self._announce_thread = threading.Thread(
@@ -330,7 +337,7 @@ class RnsRuntime:
                 continue
 
             interval = self._announce_interval_for_interface(interface)
-            last_announce = self._interface_auto_last.get(key, 0)
+            last_announce = self._interface_announce_last.get(key, 0)
 
             if now - last_announce < interval:
                 continue
@@ -342,15 +349,16 @@ class RnsRuntime:
                 sent += 1
 
             if sent > 0:
-                self._interface_auto_last[key] = now
+                reason = "connection_changed" if previous is not None else "start"
+                self._record_interface_announce(interface, now, reason)
                 self._last_announce_at = now
-                self._last_announce_reason = "connection_changed" if previous is not None else "start"
+                self._last_announce_reason = reason
                 self.bus.publish(
                     EngineEvent(
                         "announce.auto",
                         {
                             "interface": self._interface_display_name(interface),
-                            "reason": self._last_announce_reason,
+                            "reason": reason,
                             "destination_count": sent,
                         },
                     )
@@ -424,9 +432,14 @@ class RnsRuntime:
                 if self._interface_can_send_announce(interface)
             ]
             online = any(bool(getattr(interface, "online", False)) for interface in matching)
-            last_announce = self._max_last_announce_at(matching)
+            last_announce = self._max_recorded_announce_at(leafs)
             interval = self._normalise_announce_interval(item.get("announce_interval"))
             age = None if last_announce is None else max(now - last_announce, 0)
+            next_announce = self._next_announce_in(
+                age=age,
+                interval=interval,
+                target_count=len(leafs),
+            )
 
             result.append(
                 {
@@ -438,7 +451,8 @@ class RnsRuntime:
                     "announce_interval": interval,
                     "last_announce_at": last_announce,
                     "last_announce_age": age,
-                    "next_announce_in": interval if age is None else max(interval - age, 0),
+                    "next_announce_in": next_announce,
+                    "last_announce_reason": self._latest_recorded_announce_reason(leafs),
                     "announce_targets": len(leafs),
                     "clients": sum(self._interface_client_count(interface) for interface in matching),
                 }
@@ -479,6 +493,21 @@ class RnsRuntime:
             interval = DEFAULT_ANNOUNCE_MIN_INTERVAL_SECONDS
 
         return max(interval, MIN_ANNOUNCE_MIN_INTERVAL_SECONDS)
+
+    def _next_announce_in(
+        self,
+        *,
+        age: float | None,
+        interval: int,
+        target_count: int,
+    ) -> float | None:
+        if target_count <= 0:
+            return None
+
+        if age is None:
+            return 0
+
+        return max(interval - age, 0)
 
     def _interface_connection_signature(self, interface: Any) -> tuple[object, ...]:
         socket_info = self._socket_info(interface)
@@ -572,6 +601,45 @@ class RnsRuntime:
             return None
 
         return max(timestamps)
+
+    def _record_interface_announce(self, interface: Any, timestamp: float, reason: str) -> None:
+        key = self._interface_key(interface)
+        self._interface_announce_last[key] = timestamp
+        self._interface_announce_reason[key] = reason
+
+    def _recorded_interface_announce_at(self, interface: Any) -> float | None:
+        return self._interface_announce_last.get(self._interface_key(interface))
+
+    def _max_recorded_announce_at(self, interfaces: list[Any]) -> float | None:
+        timestamps = [
+            timestamp
+            for timestamp in (self._recorded_interface_announce_at(interface) for interface in interfaces)
+            if timestamp is not None
+        ]
+
+        if len(timestamps) == 0:
+            return None
+
+        return max(timestamps)
+
+    def _latest_recorded_announce_reason(self, interfaces: list[Any]) -> str:
+        latest_interface = None
+        latest_timestamp = None
+
+        for interface in interfaces:
+            timestamp = self._recorded_interface_announce_at(interface)
+
+            if timestamp is None:
+                continue
+
+            if latest_timestamp is None or timestamp > latest_timestamp:
+                latest_interface = interface
+                latest_timestamp = timestamp
+
+        if latest_interface is None:
+            return ""
+
+        return self._interface_announce_reason.get(self._interface_key(latest_interface), "")
 
     @contextmanager
     def _reticulum_signal_context(self):

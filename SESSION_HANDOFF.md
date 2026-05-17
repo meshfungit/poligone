@@ -1,221 +1,401 @@
-# SESSION_HANDOFF.md
+# SESSION_HANDOFF for poligone
 
-## Repository State
+Current date: 2026-05-17
 
-- Repository: `E:\proj\git_world\poligone`
-- Branch: `main`
-- Status before this handoff file: clean
-- Latest useful commit: `0dd9268 A security warning has been added if an insecure connection is configured`
-- Recent commits:
-  - `0dd9268 A security warning has been added if an insecure connection is configured`
-  - `02821ad Cool Edirot in basic MVC state`
-  - `0305c47 Palette heigth issue has been resolved`
-  - `9bcdc8e Editor for Micron - big fixes well done!`
-  - `81d9964 Nomad Net - starting development`
+Repository:
 
-## What This App Is
+`E:\proj\git_world\poligone`
 
-FriendlyNode is a local/server web UI for Reticulum-oriented node operation and lightweight client/chat work. The current implementation is still mostly stub/runtime scaffolding, but the UI already covers transport status, RNS config editing, client accounts, conversations, announces, NomadNet browser/editor placeholders, runtime selection, access settings, and channel security warnings.
+Remote runtime/test target:
 
-## Current Project Structure
+`mailedge:/home/adminus/projects/poligone-test`
 
-- `friendlynode/`: backend/controller/runtime/client/storage code.
-- `friendlynode/controller/`: HTTP server, controller app, runtime manager, engine supervisor, network access/security helpers.
-- `friendlynode/config/`: app config and RNS config schema/parser/writer.
-- `friendlynode/engine/`: in-process stub engine and future RNS/LXMF/NomadNet service modules.
-- `friendlynode/storage/`: SQLite repository scaffolding.
-- `friendlynode/reticulum_compat/stubs/`: RNS/LXMF stubs used before real runtime wiring.
-- `web-ui/`: static browser UI.
-- `web-ui/assets/js/`: main app, RNS config editor, Micron renderer/palette/icon pack.
-- `web-ui/assets/css/app.css`: responsive UI styling.
-- `runtimes/`: runtime manifests; currently only built-in stub manifest exists.
-- `scripts/`: local launch/access helper scripts.
-- `data/`: local generated config/state, ignored by git.
+Remote host currently used:
 
-## How To Run On Windows
+`adminus@192.168.88.195`
 
-From repository root:
+SSH key:
 
-```powershell
-python -m friendlynode.controller.main
-```
+`C:\Users\adminus\.ssh\orange_adminus_ed25519`
 
-Alternative wrapper:
+## 1. What We Are Building
 
-```powershell
-python scripts\run_controller.py
-```
+FriendlyNode is intended to become a user-friendly cross-platform desktop/server kit with a web UI for deploying and managing a Reticulum node as a client, a transport/server, or both.
 
-Default URL:
+Current practical state:
+
+- Reticulum transport node integration is now working with managed RNS runtime `1.2.5`.
+- Web UI exists for client stubs, announces, NomadNet browser/editor stubs, Reticulum config editor, runtime selection, interface status, logs, and access/security controls.
+- The project still has no full real LXMF/FriendlyNode chat client implementation. Client accounts and conversations are mostly storage/UI scaffolding.
+- NomadNet page fetch is still stubbed. Micron rendering/editor/palette work exists.
+- Reticulum is integrated without patching upstream RNS source.
+
+## 2. Current Architecture
+
+Main layers:
+
+- `friendlynode.controller.main` starts the controller app and HTTP server.
+- `friendlynode.controller.http_server.ControllerHttpServer` serves static `web-ui/` and JSON API endpoints.
+- `friendlynode.controller.app.ControllerApp` owns config, runtime manager, client account store, state cache and engine supervisor.
+- `friendlynode.controller.engine_supervisor.EngineSupervisor` starts/stops/restarts `EngineMain` in-process.
+- `friendlynode.engine.engine_main.EngineMain` owns `IpcBus` and `RnsRuntime`.
+- `friendlynode.engine.rns_runtime.RnsRuntime` loads real RNS/LXMF modules from managed runtime source path when installed, otherwise falls back to stubs.
+- `friendlynode.controller.runtime_manager.RuntimeManager` manages selectable runtimes under `runtimes/`.
+- `friendlynode.config.rns_config_editor` parses/renders the Reticulum `config` file for the visual UI editor.
+- `web-ui/assets/js/app.js` is the main UI.
+- `web-ui/assets/js/rns_config_editor.js` is the Reticulum config editor UI.
+
+Runtime design:
+
+- RNS can be installed as a managed runtime from PyPI source distribution into `runtimes/rns-<version>/src`.
+- Active runtime is selected in `data/config/friendlynode.json` via `engine_name`.
+- RNS and LXMF module caches are unloaded before switching managed runtimes.
+- Real RNS can run while LXMF still falls back to stub LXMF.
+- `RNS.Reticulum(configdir=...)` is passed a string path for Windows compatibility.
+- RNS signal handlers are suppressed when Reticulum is started from a non-main HTTP worker thread.
+
+Transport design:
+
+- Current Windows Reticulum config uses TCP interfaces, not BackboneInterface.
+- BackboneInterface is Linux-only in upstream RNS and fails on Windows.
+- Current Windows config in `data/config/reticulum/config` is a transport node with one TCP server gateway bound to Tailscale and five outgoing TCP clients:
+  - `rns.uanode.top:42020`
+  - `159.69.7.55:9034`
+  - `43.229.63.120:4242`
+  - `193.26.158.230:4965`
+  - `rns.michmesh.net:7822`
+- Remote `mailedge` config is similar but uses LAN TCP gateway `0.0.0.0:4242` and controller `127.0.0.1:8787`.
+
+Announce design:
+
+- RNS announce belongs to a `Destination`, not to an interface.
+- FriendlyNode does not patch Reticulum for announces.
+- Auto/manual transport announce currently reannounces RNS transport management destinations, for example `rnstransport.probe`.
+- Announces are sent through live outgoing leaf interfaces.
+- `TCPServerInterface` itself does not transmit outbound data; announces to gateway users must be sent through spawned `TCPInterface[Client on ...]` interfaces when clients are connected.
+- Client announce endpoint exists but returns unsupported until FriendlyNode owns a real local LXMF destination/identity.
+
+## 3. Important Files
+
+Rules and handoff:
+
+- `AGENTS.md`
+- `SESSION_HANDOFF.md`
+
+Controller:
+
+- `friendlynode/controller/main.py`
+- `friendlynode/controller/http_server.py`
+- `friendlynode/controller/app.py`
+- `friendlynode/controller/engine_supervisor.py`
+- `friendlynode/controller/runtime_manager.py`
+- `friendlynode/controller/access.py`
+- `friendlynode/controller/state_cache.py`
+
+Engine:
+
+- `friendlynode/engine/engine_main.py`
+- `friendlynode/engine/rns_runtime.py`
+- `friendlynode/engine/announce_handlers.py`
+- `friendlynode/engine/events.py`
+- `friendlynode/engine/ipc.py`
+
+Config:
+
+- `friendlynode/config/app_config.py`
+- `friendlynode/config/defaults.py`
+- `friendlynode/config/rns_config_editor.py`
+- `data/config/friendlynode.json`
+- `data/config/reticulum/config`
+
+Client/account storage:
+
+- `friendlynode/client_accounts.py`
+- `data/clients/`
+
+UI:
+
+- `web-ui/index.html`
+- `web-ui/assets/js/app.js`
+- `web-ui/assets/js/rns_config_editor.js`
+- `web-ui/assets/js/micron_renderer.js`
+- `web-ui/assets/js/micron_palette.js`
+- `web-ui/assets/js/micron_iconpack.js`
+- `web-ui/assets/css/app.css`
+
+Runtimes:
+
+- `runtimes/rns-1.2.5/runtime.json`
+- `runtimes/rns-1.2.5/src/RNS/...`
+- `runtimes/stub/`
+
+Remote:
+
+- `/home/adminus/projects/poligone-test`
+- `/home/adminus/projects/poligone-test/data/config/friendlynode.json`
+- `/home/adminus/projects/poligone-test/data/config/reticulum/config`
+- `/home/adminus/projects/poligone-test/data/logs/controller.pid`
+- `/home/adminus/projects/poligone-test/data/logs/controller.out`
+- `/home/adminus/projects/poligone-test/data/logs/controller.err`
+
+## 4. Files Already Changed In This Workstream
+
+Current handoff was created after user said they already committed/pushed some work. At the time this file was recreated, `git status --short` showed:
 
 ```text
-http://127.0.0.1:8787/
+D AGENTS_continue.md
+D SESSION_HANDOFF.md
 ```
 
-Local venv convention: `.venv\` in the repo root, with activation via `.venv\Scripts\Activate.ps1`. At the time of inspection, `.venv` was not present. Do not create or modify it unless the task explicitly requires it.
+`SESSION_HANDOFF.md` was missing and is now recreated by this handoff step. Do not assume the `AGENTS_continue.md` deletion was made by the current assistant.
 
-## URLs And API Endpoints To Test
+Important implemented changes from the recent workstream include:
 
-Static UI/assets:
+- `friendlynode/controller/app.py`
+  - Runtime install/select/feature flow.
+  - Security/access status improvements.
+  - `make_announce()` API bridge.
+- `friendlynode/controller/http_server.py`
+  - Runtime endpoints.
+  - `/api/reticulum/announce`.
+  - Forwarded proto/HTTPS security assessment.
+- `friendlynode/controller/runtime_manager.py`
+  - Managed Reticulum release install.
+  - RNS `1.2.5` recommended and `1.2.6` PyPI-only/unverified catalog.
+  - Runtime feature handling for `rngit`.
+  - Physical removal/restoration of optional `rngit` files from managed runtime source.
+- `friendlynode/controller/engine_supervisor.py`
+  - `make_announce()` delegation.
+- `friendlynode/engine/engine_main.py`
+  - `make_announce()` delegation.
+- `friendlynode/engine/rns_runtime.py`
+  - Real RNS + stub LXMF split loading.
+  - Runtime module unload before switch.
+  - Windows path fix for `configdir`.
+  - Non-main-thread signal suppression.
+  - Live interface status.
+  - Auto/manual transport announce tracking.
+- `friendlynode/engine/announce_handlers.py`
+  - Fixed RNS 1.2.5 announce handler signature by accepting `announce_packet_hash` and `is_path_response`.
+- `web-ui/assets/js/app.js`
+  - Runtime selector and install UI.
+  - Runtime feature UI.
+  - Interface status integration.
+  - Client menu `Make Annonce` placeholder.
+- `web-ui/assets/js/rns_config_editor.js`
+  - Interface live announce table.
+  - `Make Annonce` button.
+  - Interface field order adjusted.
+- `web-ui/assets/css/app.css`
+  - UI styles for announce panel/table.
+- `data/config/reticulum/config`
+  - Windows test transport config with TCP gateway and outgoing peers.
 
-- `GET /`
-- `GET /assets/js/app.js`
-- `GET /assets/js/rns_config_editor.js`
-- `GET /assets/js/micron_renderer.js`
-- `GET /assets/js/micron_palette.js`
-- `GET /assets/js/micron_iconpack.js`
-- `GET /assets/css/app.css`
+## 5. Decisions Already Made
 
-Current API routes from `friendlynode/controller/http_server.py`:
+- Do not patch upstream Reticulum unless explicitly required. Current integration works through public RNS APIs and managed source installation.
+- Use Reticulum `1.2.5` as recommended stable baseline. `1.2.6` exists on PyPI but was treated as unverified/PyPI-only because the user saw GitHub latest as `1.2.5`.
+- Runtime installation should be user-friendly: pick release in UI, confirm, files are replaced automatically.
+- Managed runtime install removes other managed Reticulum runtimes after installing the selected release.
+- Optional `rngit` should be disabled by default and physically removable/restorable. Most users do not need it.
+- BackboneInterface is not usable on Windows. Use `TCPServerInterface` as gateway on Windows/Tailscale or LAN.
+- For transport reannounce, send local transport management destinations through online outgoing leaf interfaces.
+- For a TCP gateway, do not announce to the parent `TCPServerInterface`; announce to spawned connected client interfaces.
+- FriendlyNode cannot announce a foreign MeshChat/LXMF client destination. Only the owner of a destination identity can sign a valid announce.
+- Client announce will remain unsupported until FriendlyNode creates/loads a real local LXMF destination.
+- Keep changes small and reviewable. Avoid broad refactors.
 
-- `GET /api/status`
-- `GET /api/config`
-- `POST /api/config`
-- `POST /api/controller/restart`
-- `GET /api/access/ssh/status`
-- `GET /api/access/security`
-- `GET /api/rns-config`
-- `POST /api/rns-config`
-- `POST /api/reticulum/restart`
-- `POST /api/runtime/select`
-- `GET /api/announces`
-- `GET /api/nomadnet/nodes`
-- `GET /api/nomadnet/pages`
-- `GET /api/nomadnet/local-page?path=page.mu`
-- `POST /api/nomadnet/local-page`
-- `GET /api/nomadnet/page?destination_hash=...&path=...`
-- `GET /api/clients`
-- `POST /api/clients/draft`
-- `POST /api/clients`
-- `DELETE /api/clients/{client_id}`
-- `POST /api/clients/{client_id}/contacts`
-- `GET /api/clients/{client_id}/contacts/{contact_id}/export`
-- `GET /api/clients/{client_id}/conversations`
-- `GET /api/clients/{client_id}/conversations/{contact_id}/messages`
-- `POST /api/clients/{client_id}/conversations/{contact_id}/messages`
-- `DELETE /api/clients/{client_id}/conversations/{contact_id}/messages`
+## 6. What Not To Change
 
-## Exact Smoke-Test Commands
+Do not:
 
-Syntax checks:
+- Commit automatically.
+- Push automatically.
+- Use `sudo`.
+- Use `systemctl`, `service`, reboot, shutdown.
+- Edit `/etc/reticulum`, `/etc/reticulum-rttr`, `/etc/systemd/system`, `/etc/nginx`, sudoers, or OS configs.
+- Edit files outside `/home/adminus/projects/poligone-test` on `mailedge`.
+- Replace the current controller/engine/runtime architecture without explicit instruction.
+- Patch upstream RNS source just to work around FriendlyNode integration bugs.
+- Re-enable `rngit` by default.
+- Assume BackboneInterface works on Windows.
+- Treat current client accounts as real LXMF clients; they are still storage/UI scaffolding.
+- Hide limitations by making UI buttons appear successful when the underlying destination does not exist.
+
+## 7. Nearest Next Task
+
+Recommended next engineering task:
+
+Implement real FriendlyNode client identity and LXMF destination lifecycle.
+
+Concrete first slice:
+
+- Load or create persistent RNS identity per enabled client account.
+- Create local LXMF delivery destination/router for that client.
+- Wire client `Make Annonce` to announce its real LXMF destination.
+- Store actual identity/destination hashes from RNS/LXMF, not random placeholder hashes.
+- Add receive callback path into `ClientAccountStore` conversations/messages.
+- Only after that, wire real outbound LXMF message sending.
+
+Why this is next:
+
+- Transport now works and can see the world.
+- Auto/manual transport reannounce exists.
+- The remaining gap for user-visible chat reliability is that FriendlyNode does not yet own and announce real client destinations.
+
+## 8. How To Run On Windows
+
+Working directory:
 
 ```powershell
-python -m py_compile friendlynode\controller\app.py friendlynode\controller\http_server.py friendlynode\controller\access.py friendlynode\controller\runtime_manager.py friendlynode\config\rns_config_editor.py
-node --check web-ui\assets\js\app.js
-node --check web-ui\assets\js\rns_config_editor.js
-node --check web-ui\assets\js\micron_renderer.js
-node --check web-ui\assets\js\micron_palette.js
-node --check web-ui\assets\js\micron_iconpack.js
+cd E:\proj\git_world\poligone
 ```
 
-Manual runtime smoke in one terminal:
+Start controller normally:
 
 ```powershell
 python -m friendlynode.controller.main
 ```
 
-Then in another terminal:
+If using PyCharm, run module:
 
-```powershell
-curl.exe -s http://127.0.0.1:8787/
-curl.exe -s http://127.0.0.1:8787/api/status
-curl.exe -s http://127.0.0.1:8787/api/config
-curl.exe -s http://127.0.0.1:8787/api/access/security
-curl.exe -s http://127.0.0.1:8787/api/rns-config
-curl.exe -s http://127.0.0.1:8787/api/clients
-curl.exe -s http://127.0.0.1:8787/api/clients/default/conversations
-curl.exe -s http://127.0.0.1:8787/api/clients/default/conversations/test-contact-9f3a/messages
-curl.exe -s http://127.0.0.1:8787/api/nomadnet/pages
+```text
+friendlynode.controller.main
 ```
 
-Message POST smoke:
+Expected URL depends on `data/config/friendlynode.json`. Recent Windows runs used:
 
-```powershell
-$body = '{"content":"Smoke message"}'
-curl.exe -s -X POST http://127.0.0.1:8787/api/clients/default/conversations/test-contact-9f3a/messages -H "Content-Type: application/json" --data-binary $body
+```text
+http://100.83.143.90:8787/
 ```
 
-## Local State Not To Commit
+or localhost, depending on controller bind config.
 
-These are intentionally ignored and should remain local/generated:
+Quick syntax checks:
 
-- `.venv/`, `.venv-*/`, `venv/`
-- `data/config/friendlynode.json`
-- `data/config/reticulum/`
-- `data/db/`
-- `data/logs/`
-- `data/identities/`
-- `data/clients/`
-- `data/attachments/`
-- `data/nomadnet-pages/`
-- `runtimes/*/venv/`
-- `runtimes/*/src/`
-- `runtimes/*/__pycache__/`
+```powershell
+python -m py_compile friendlynode\engine\rns_runtime.py friendlynode\engine\engine_main.py friendlynode\controller\engine_supervisor.py friendlynode\controller\app.py friendlynode\controller\http_server.py
+node --check web-ui\assets\js\rns_config_editor.js
+node --check web-ui\assets\js\app.js
+```
 
-## Frontend Architecture
+Quick local API smoke with real RNS may need unrestricted network permissions because outbound TCP peers are contacted:
 
-The UI is static vanilla JS served from `web-ui/`. `index.html` loads `rns_config_editor.js`, `micron_palette.js`, `micron_iconpack.js`, `micron_renderer.js`, then `app.js`.
+```powershell
+python -c "from friendlynode.controller.app import ControllerApp; app=ControllerApp(); app.start(); print(app.engine_supervisor.status()['rns']['announce']); print(app.make_announce({'target':'transport'})); app.stop()"
+```
 
-`app.js` owns the main state/render loop and tab UI: `Client`, `Announces`, `Peers`, `NomadNet`, `Interfaces`, `Transport`, `Logs`, `Settings`. Client and NomadNet editor both use the Micron renderer/palette stack. The chat composer and NomadNet editor can edit with `show unprintable` on or off; palette operations are expected to work in both modes.
+## 9. How To Run And Check On Orange Pi `mailedge`
 
-`micron_renderer.js` renders current Micron markup and icon modes. `micron_palette.js` defines palette items. `micron_iconpack.js` defines the FriendlyNode color icon pack. `app.css` contains responsive layout, collapsible panels, chat/editor/palette sizing, and insecure-channel warning styling.
+SSH:
 
-## Backend Architecture
+```powershell
+ssh -i C:\Users\adminus\.ssh\orange_adminus_ed25519 adminus@192.168.88.195
+```
 
-The entry point is `friendlynode.controller.main:main`, also exposed through `python -m friendlynode.controller.main`, `friendlynode/__main__.py`, and `scripts/run_controller.py`.
+Remote working directory:
 
-`ControllerHttpServer` serves the static UI and JSON API. `ControllerApp` owns configuration, runtime selection, state cache, client account storage, engine supervisor, RNS config editor, access/security status, and NomadNet local page operations.
+```bash
+cd /home/adminus/projects/poligone-test
+```
 
-The engine is currently supervised in-process through `EngineSupervisor` and `EngineMain`. `EngineMain` starts an IPC bus and `RnsRuntime`. Real RNS/LXMF/NomadNet service files exist under `friendlynode/engine/`, but the active runtime is still the built-in stub unless a real runtime manifest is added and selected.
+Start controller manually:
 
-Client account storage is JSON-file based under `data/clients/`. A default stub client/contact is created lazily, including `test-contact-9f3a` with two messages: `Test` and `Accept Test`.
+```bash
+cd /home/adminus/projects/poligone-test
+mkdir -p data/logs
+nohup python3 -m friendlynode.controller.main > data/logs/controller.out 2> data/logs/controller.err < /dev/null &
+echo $! > data/logs/controller.pid
+```
 
-## RNS Config Editor Behavior
+Stop previous manually started controller:
 
-Backend schema lives in `friendlynode/config/rns_config_editor.py`. Interface defaults and presets are backend-owned and returned through `GET /api/rns-config`, so frontend controls should not hardcode Reticulum interface presets. Saving goes through `POST /api/rns-config` and writer helpers in `friendlynode/config/rns_config_writer.py`.
+```bash
+cd /home/adminus/projects/poligone-test
+kill "$(cat data/logs/controller.pid)"
+```
 
-Settings currently include controller host/port, SSH tunnel helper fields, runtime selection, local paths, and RNS config editing. Interface config is conceptually moving toward a dedicated `Interfaces` UI while preserving one backend source of truth.
+Check remote HTTP status:
 
-## Runtime System Behavior
+```bash
+curl http://127.0.0.1:8787/api/status
+```
 
-Runtime manifests are read from `runtimes/*/runtime.json`. Current manifest:
+Check Reticulum manual transport announce:
 
-- `runtimes/stub/runtime.json`
-- name: `stub`
-- kind: `stub`
-- label: `Built-in Stub Runtime`
-- enabled: `true`
+```bash
+curl -s -X POST http://127.0.0.1:8787/api/reticulum/announce \
+  -H 'Content-Type: application/json' \
+  --data-binary '{"target":"transport"}'
+```
 
-`RuntimeManager` also guarantees a stub runtime fallback if no manifests are found. Selecting a runtime updates app config and restarts the in-process engine. External runtime payloads under `runtimes/*/venv/` or `runtimes/*/src/` are local/generated and ignored.
+Check logs:
 
-## Access And Security Behavior
+```bash
+wc -c data/logs/controller.err
+tail -80 data/logs/controller.err
+tail -80 data/logs/controller.out
+```
 
-The controller always keeps `127.0.0.1` available when binding to a specific non-loopback host. `0.0.0.0` remains wildcard. Security assessment is backend-driven in `friendlynode/controller/access.py`: localhost, HTTPS, Tailscale, WireGuard, and VPN-like adapters are treated as secure; ordinary LAN/public HTTP and wildcard binds are warned as insecure. The frontend displays a red warning and outlines sensitive areas when `/api/status` or `/api/access/security` reports an insecure configured channel.
+Windows SSH tunnel to browse remote UI:
 
-## What Currently Works
+```powershell
+ssh -i C:\Users\adminus\.ssh\orange_adminus_ed25519 -N -L 18787:127.0.0.1:8787 adminus@192.168.88.195
+```
 
-- Static UI loads locally on `127.0.0.1:8787`.
-- Settings can show/save app config and scan network interfaces.
-- Optional non-loopback bind is supported while preserving localhost access.
-- SSH/access helper status API exists; `scripts/access_starter.py` handles local SSH helper checks/install flow outside the web UI.
-- Transport status panel is compact and collapsible.
-- Client contacts/conversations/messages exist with stub storage.
-- Chat supports Micron editing, palette, send button, clear/export actions, and autoscroll-to-bottom behavior.
-- NomadNet section has Browser/Bookmarks/Publisher/Editor structure; browser fetch is stubbed, editor can create/open/save local `.mu` pages.
-- Micron editor/palette supports show/hide unprintable mode and FriendlyNode/system/text icon rendering modes.
-- Announces page exists with filters and compact list/modal concept.
+Then open:
 
-## Next Recommended Small Task
+```text
+http://127.0.0.1:18787/
+```
 
-Implement the backend/frontend plumbing for the security assessment to be tied more explicitly to the user-selected configured access interface in Settings. The backend already classifies adapters; the next small step is making the Settings UI show the security classification directly next to each selectable bind address before save, so the user sees whether a choice is local, VPN/tunnel, wildcard, private LAN, or public HTTP.
+Recent remote state before handoff:
 
-## Constraints And Things Not To Change
+- Files were synced to `/home/adminus/projects/poligone-test`.
+- Controller was restarted manually.
+- PID was `3901` at that time.
+- `/api/status` returned `200`.
+- `/api/reticulum/announce` returned `status: ok`, `sent: 5`.
+- `data/logs/controller.err` was `0` bytes.
 
-- Do not commit or push automatically.
-- Do not create a new branch unless requested.
-- Do not run `sudo`, `systemctl`, `service`, reboot/shutdown commands, or destructive deletes.
-- Do not edit OS config paths or files outside the repository.
-- Do not run remote commands on `mailedge` without separate confirmation.
-- Do not touch `.venv` or generated `data/` state unless explicitly asked.
-- Do not hardcode RNS interface presets in frontend JS; keep them backend-schema driven.
-- Keep changes small and reviewable; avoid broad refactors while the UI/runtime concepts are still evolving.
+If power was lost, assume the manually started process is gone and repeat the start command.
+
+## 10. Known Errors, Limits And Open Questions
+
+Known limitations:
+
+- FriendlyNode client accounts are not real LXMF clients yet.
+- `Make Annonce` for client returns unsupported until real local LXMF destination exists.
+- Outbound/inbound LXMF message send/receive is not wired into real LXMF.
+- NomadNet remote page fetch is still stubbed.
+- Local NomadNet publisher is not wired.
+- RNS known destinations once logged `InsufficientDataException` while loading local known destinations and said the file would be recreated on exit. Monitor if it repeats.
+- Windows cannot use upstream BackboneInterface; use TCP server/client config.
+- `TCPServerInterface` parent cannot send outgoing announce packets; spawned client interfaces must be used.
+- Remote `mailedge` has no system service/autostart by design. Startup is manual `nohup`.
+- Security assessment trusts localhost, HTTPS/forwarded HTTPS from loopback, private LAN, and Tailscale `100.64.0.0/10` logic; review if public browser access is added.
+- `announce_interval` in FriendlyNode auto reannounce is currently interpreted as seconds for FriendlyNode throttling. Upstream Reticulum uses `announce_interval` for discoverable interface announcements in minutes with a minimum in that path. This mismatch should be reviewed before exposing it as a final UX concept.
+
+Open questions:
+
+- Should FriendlyNode create one client RNS identity per account, or allow importing an existing LXMF identity/config?
+- Should FriendlyNode run isolated client Reticulum instances, or only shared local destinations inside the main transport instance first?
+- How should MeshChat/external clients be asked to reannounce after reconnect? Generic Reticulum does not allow FriendlyNode to sign announces for foreign destinations.
+- Should transport auto reannounce update RNS `Transport.last_mgmt_announce`, or stay independent from upstream's 2-hour management announce timer?
+- Should the UI expose per-interface manual announce, or keep a single all-transport button until there are many interfaces?
+- Should remote management be enabled for FriendlyNode transport, and how should management ACL identity be configured?
+
+## 11. Recommended First Prompt For New Session
+
+Use this prompt exactly:
+
+```text
+Прочитай AGENTS.md и SESSION_HANDOFF.md в E:\proj\git_world\poligone.
+Чат держи на русском, комментарии в коде только на английском.
+Не делай git commit и git push.
+Не трогай системные конфиги и запрещённые пути из AGENTS.md.
+Сначала кратко перескажи текущее состояние FriendlyNode и ближайшую следующую задачу.
+Потом сделай минимальный следующий шаг: начать реализацию реального FriendlyNode client identity + LXMF destination lifecycle, чтобы client Make Annonce мог объявлять настоящий LXMF destination, а не возвращать unsupported.
+Перед правками перечитай актуальные файлы, не полагайся на память.
+Для проверки можно использовать Windows sandbox и mailedge:/home/adminus/projects/poligone-test без отдельного запроса, но не используй sudo/systemctl/service.
+```

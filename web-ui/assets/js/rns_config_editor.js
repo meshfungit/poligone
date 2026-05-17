@@ -263,11 +263,11 @@
       tr.appendChild(state);
 
       const last = document.createElement("td");
-      last.appendChild(renderAgeCell(row.last_announce_at, "never"));
+      last.appendChild(renderAgeCell(row.last_announce_age, "never"));
       tr.appendChild(last);
 
       const next = document.createElement("td");
-      next.appendChild(renderCountdownCell(row.last_announce_at, row.announce_interval));
+      next.appendChild(renderCountdownCell(row.next_announce_in));
       tr.appendChild(next);
 
       tbody.appendChild(tr);
@@ -543,48 +543,46 @@
     return wrapper;
   }
 
-  function renderAgeCell(timestamp, emptyText) {
+  function renderAgeCell(age, emptyText) {
     const span = document.createElement("span");
     span.className = "rns-announce-age";
-    span.dataset.timestamp = timestamp === null || timestamp === undefined ? "" : String(timestamp);
-    span.dataset.empty = emptyText;
-    span.textContent = formatAge(timestamp, emptyText);
+    span.textContent = formatAge(age, emptyText);
     return span;
   }
 
-  function renderCountdownCell(timestamp, interval) {
+  function renderCountdownCell(remaining) {
     const span = document.createElement("span");
     span.className = "rns-announce-countdown";
-    span.dataset.timestamp = timestamp === null || timestamp === undefined ? "" : String(timestamp);
-    span.dataset.interval = interval === null || interval === undefined ? "" : String(interval);
-    span.textContent = formatCountdown(timestamp, interval);
+    span.textContent = formatCountdown(remaining);
     return span;
   }
 
-  function formatAge(timestamp, emptyText) {
-    const value = Number(timestamp);
-
-    if (!Number.isFinite(value) || value <= 0) {
+  function formatAge(age, emptyText) {
+    if (age === null || age === undefined || age === "") {
       return emptyText;
     }
 
-    return `${formatDuration(Date.now() / 1000 - value)} ago`;
+    const value = Number(age);
+
+    if (!Number.isFinite(value) || value < 0) {
+      return emptyText;
+    }
+
+    return `${formatDuration(value)} ago`;
   }
 
-  function formatCountdown(timestamp, interval) {
-    const timeValue = Number(timestamp);
-    const intervalValue = Number(interval);
-
-    if (!Number.isFinite(intervalValue) || intervalValue <= 0) {
+  function formatCountdown(remaining) {
+    if (remaining === null || remaining === undefined || remaining === "") {
       return "-";
     }
 
-    if (!Number.isFinite(timeValue) || timeValue <= 0) {
-      return "ready";
+    const value = Number(remaining);
+
+    if (!Number.isFinite(value) || value < 0) {
+      return "-";
     }
 
-    const remaining = Math.max(intervalValue - (Date.now() / 1000 - timeValue), 0);
-    return remaining <= 0 ? "ready" : formatDuration(remaining);
+    return value <= 0 ? "ready" : formatDuration(value);
   }
 
   function formatDuration(seconds) {
@@ -646,12 +644,8 @@
   }
 
   function refreshAnnounceTimers() {
-    for (const item of document.querySelectorAll(".rns-announce-age")) {
-      item.textContent = formatAge(item.dataset.timestamp, item.dataset.empty || "never");
-    }
-
-    for (const item of document.querySelectorAll(".rns-announce-countdown")) {
-      item.textContent = formatCountdown(item.dataset.timestamp, item.dataset.interval);
+    if (typeof window.FriendlyNodeRefreshStatus === "function") {
+      window.FriendlyNodeRefreshStatus();
     }
   }
 

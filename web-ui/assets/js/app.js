@@ -43,6 +43,7 @@ let symbolPaletteOpen = false;
 let symbolPaletteSpacerHeight = 0;
 let messageEditorSelection = null;
 let showMessageUnprintable = false;
+let interfaceStatusRefreshInFlight = false;
 const announceFilters = {
   type: "all",
   name: "",
@@ -5062,16 +5063,23 @@ async function fetchStatus() {
 window.FriendlyNodeRefreshStatus = fetchStatus;
 
 window.setInterval(() => {
-  if (typeof window.FriendlyNodeRnsConfigEditor?.refreshAnnounceTimers !== "function") {
+  if (getActiveTab() !== "Interfaces" || interfaceStatusRefreshInFlight) {
     return;
   }
 
-  if (getActiveTab() !== "Interfaces") {
+  if (typeof window.FriendlyNodeRefreshStatus !== "function") {
     return;
   }
 
-  window.FriendlyNodeRnsConfigEditor.refreshAnnounceTimers();
-}, 1000);
+  interfaceStatusRefreshInFlight = true;
+  window.FriendlyNodeRefreshStatus()
+    .catch((error) => {
+      appendUiError(error);
+    })
+    .finally(() => {
+      interfaceStatusRefreshInFlight = false;
+    });
+}, 5000);
 
 async function restartReticulum() {
   const button = document.querySelector("#restart-reticulum");
