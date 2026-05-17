@@ -23,6 +23,7 @@ KNOWN_ANNOUNCE_ASPECTS = (
     "anonmesh.beacon.v1",
     "anonmesh.relay",
     "anonmesh.node",
+    "lxst.telephony",
 )
 
 DEFAULT_ANNOUNCE_ASPECTS = KNOWN_ANNOUNCE_ASPECTS

@@ -25,17 +25,7 @@ ANNOUNCE_TYPE_BY_ASPECT = {
     "lxmf.propagation": "lxmf.propagation",
     "nomadnetwork.node": "nomadnet",
     "call.audio": "call.audio",
-    "rnstransport.discovery.interface": "interface",
-    "rnstransport.probe": "rnstransport.probe",
-    "rncp.receive": "rncp.receive",
-    "rnx.execute": "rnx.execute",
-}
-
-ANNOUNCE_TYPE_BY_ASPECT = {
-    "lxmf.delivery": "identity",
-    "lxmf.propagation": "lxmf.propagation",
-    "nomadnetwork.node": "nomadnet",
-    "call.audio": "call.audio",
+    "lxst.telephony": "phonex",
     "rnstransport.discovery.interface": "interface",
     "rnstransport.probe": "rnstransport.probe",
     "rncp.receive": "rncp.receive",
@@ -51,6 +41,7 @@ ANNOUNCE_DEFAULT_NAME_PREFIX = {
     "nomadnet": "NomadNet node",
     "interface": "Interface",
     "call.audio": "call.audio",
+    "phonex": "PhoneX",
     "rnstransport.probe": "Probe",
     "rncp.receive": "File transfer",
     "rnx.execute": "Remote exec",

@@ -72,6 +72,11 @@ const ANNOUNCE_TYPE_DEFINITIONS = Object.freeze([
     aspects: ["call.audio"],
   },
   {
+    value: "phonex",
+    label: "PhoneX",
+    aspects: ["lxst.telephony"],
+  },
+  {
     value: "nomadnet",
     label: "NomadNet",
     aspects: ["nomadnetwork.node"],
