@@ -159,6 +159,10 @@ class StateCache:
         if name != "" and name not in str(announce.get("name") or "").lower():
             return False
 
+        destination = str(filters.get("destination") or "").strip().lower()
+        if destination != "" and destination not in str(announce.get("destination_hash") or "").lower():
+            return False
+
         identity = str(filters.get("identity") or "").strip().lower()
         if identity != "" and identity not in str(announce.get("identity_hash") or "").lower():
             return False

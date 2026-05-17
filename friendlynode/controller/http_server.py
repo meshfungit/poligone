@@ -559,6 +559,7 @@ class ControllerHttpServer:
                 return {
                     "type": self._query_text(params, "type"),
                     "name": self._query_text(params, "name"),
+                    "destination": self._query_text(params, "destination"),
                     "identity": self._query_text(params, "identity"),
                     "lxmf": self._query_text(params, "lxmf"),
                     "text": self._query_text(params, "text"),

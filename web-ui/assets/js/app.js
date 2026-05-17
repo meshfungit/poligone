@@ -50,6 +50,7 @@ let announceFetchInFlight = false;
 const announceFilters = {
   type: "all",
   name: "",
+  destination: "",
   identity: "",
   lxmf: "",
   hops: 0,
@@ -561,6 +562,7 @@ function renderAnnounces() {
   filters.className = "announce-filters";
   filters.appendChild(renderAnnounceTypeFilter(refresh));
   filters.appendChild(renderAnnounceTextFilter("Name", "name", refresh));
+  filters.appendChild(renderAnnounceTextFilter("Destination", "destination", refresh));
   filters.appendChild(renderAnnounceTextFilter("Identity", "identity", refresh));
   filters.appendChild(renderAnnounceTextFilter("LXMF", "lxmf", refresh));
   filters.appendChild(renderAnnounceHopsFilter(refresh));
@@ -1626,7 +1628,7 @@ function buildAnnounceQueryParams() {
   const params = new URLSearchParams();
   params.set("limit", "500");
 
-  for (const key of ["type", "name", "identity", "lxmf"]) {
+  for (const key of ["type", "name", "destination", "identity", "lxmf"]) {
     const value = String(announceFilters[key] || "").trim();
 
     if (key === "type" && (value === "all" || value === UNKNOWN_ASPECT_FILTER_VALUE)) {
