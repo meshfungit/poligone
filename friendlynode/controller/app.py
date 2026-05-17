@@ -476,6 +476,9 @@ class ControllerApp:
         if aspect == "nomadnetwork.node":
             return "nomadnet"
 
+        if aspect == "call.audio":
+            return "call.audio"
+
         if aspect.startswith("lxmf."):
             return "identity"
 
@@ -494,6 +497,7 @@ class ControllerApp:
             "identity": "Identity",
             "nomadnet": "NomadNet node",
             "transport": "Transport",
+            "call.audio": "call.audio",
             "peer": "Peer",
         }.get(announce_type, "Announce")
         suffix = destination_hash[:12] if destination_hash != "" else aspect

@@ -56,6 +56,7 @@ DEFAULT_ANNOUNCE_ASPECTS = (
     "lxmf.delivery",
     "lxmf.propagation",
     "nomadnetwork.node",
+    "call.audio",
 )
 
 
