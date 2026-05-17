@@ -237,6 +237,55 @@ function getAnnounceTypeFilterOptions() {
   return options;
 }
 
+function renderCopyButton(label, textGetter) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.textContent = label;
+
+  button.onclick = async (event) => {
+    event.stopPropagation();
+
+    const originalText = button.textContent;
+    button.disabled = true;
+
+    try {
+      await copyTextToClipboard(textGetter());
+      button.textContent = "Copied";
+    } catch (error) {
+      button.textContent = "Copy failed";
+    }
+
+    window.setTimeout(() => {
+      button.textContent = originalText;
+      button.disabled = false;
+    }, 1200);
+  };
+
+  return button;
+}
+
+
+function formatAnnounceCardForClipboard(announce) {
+  const fields = [
+    ["Name", announce?.name],
+    ["Type", getAnnounceTypeLabel(announce)],
+    ["Aspect", announce?.aspect],
+    ["Identity", announce?.identity_hash],
+    ["LXMF", announce?.lxmf],
+    ["Destination", announce?.destination_hash],
+    ["Interface", announce?.interface],
+    ["Hops", announce?.hops],
+    ["Time", announce?.time],
+  ];
+
+  return fields
+    .map(([label, value]) => {
+      const text = value === undefined || value === null || value === "" ? "-" : String(value);
+      return `${label}: ${text}`;
+    })
+    .join("\n");
+}
+
 const rows = {
   Client: [
     ["Name", "Identity", "LXMF destination", "Runtime", "Enabled"],
@@ -1646,66 +1695,36 @@ function renderAnnounceDetailCard(announce) {
 function renderAnnounceModal() {
   const overlay = document.createElement("div");
   overlay.className = "client-editor-overlay";
+  overlay.onclick = () => {
+    announceModalState = null;
+    render("Announces");
+  };
 
   const dialog = document.createElement("section");
   dialog.className = "client-editor announce-modal";
+  dialog.onclick = (event) => event.stopPropagation();
 
-  const title = document.createElement("h2");
-  title.textContent = announceModalState.name || announceModalState.destination_hash || "Announce";
-  dialog.appendChild(title);
   dialog.appendChild(renderAnnounceDetailCard(announceModalState));
 
   const actions = document.createElement("div");
-  actions.className = "client-editor-actions announce-modal-actions";
+  actions.className = "settings-row";
 
-  const addContactButton = document.createElement("button");
-  addContactButton.type = "button";
-  addContactButton.textContent = "Add contact";
-  addContactButton.onclick = () => addAnnounceContact(announceModalState);
-  actions.appendChild(addContactButton);
+  const copy = renderCopyButton("Copy", () => formatAnnounceCardForClipboard(announceModalState));
+  copy.title = "Copy announce card";
+  actions.appendChild(copy);
 
-  const bookmarkButton = document.createElement("button");
-  bookmarkButton.type = "button";
-  bookmarkButton.textContent = nomadnetBookmarks.has(getAnnounceBookmarkId(announceModalState))
-    ? "Bookmarked"
-    : "Bookmark";
-  bookmarkButton.disabled = announceModalState.type !== "nomadnet";
-  bookmarkButton.onclick = () => bookmarkAnnounceNode(announceModalState);
-  actions.appendChild(bookmarkButton);
-
-  const chatButton = document.createElement("button");
-  chatButton.type = "button";
-  chatButton.textContent = "Open chat";
-  chatButton.disabled = !announceCanOpenChat(announceModalState);
-  chatButton.onclick = () => openAnnounceChat(announceModalState);
-  actions.appendChild(chatButton);
-
-  const pageButton = document.createElement("button");
-  pageButton.type = "button";
-  pageButton.textContent = "Open page";
-  pageButton.disabled = announceModalState.type !== "nomadnet";
-  pageButton.onclick = () => openAnnounceNomadnetPage(announceModalState);
-  actions.appendChild(pageButton);
-
-  const closeButton = document.createElement("button");
-  closeButton.type = "button";
-  closeButton.textContent = "Close";
-  closeButton.onclick = () => {
+  const close = document.createElement("button");
+  close.type = "button";
+  close.textContent = "Close";
+  close.onclick = () => {
     announceModalState = null;
     render("Announces");
   };
-  actions.appendChild(closeButton);
+  actions.appendChild(close);
 
   dialog.appendChild(actions);
   overlay.appendChild(dialog);
-  overlay.onclick = (event) => {
-    if (event.target !== overlay) {
-      return;
-    }
 
-    announceModalState = null;
-    render("Announces");
-  };
   return overlay;
 }
 
