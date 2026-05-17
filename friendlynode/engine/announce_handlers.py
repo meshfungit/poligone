@@ -16,6 +16,13 @@ KNOWN_ANNOUNCE_ASPECTS = (
     "rnstransport.probe",
     "rncp.receive",
     "rnx.execute",
+    "rserver.web",
+    "retibbs.bbs",
+    "styrene.tui.operator",
+    "anonmesh.beacon",
+    "anonmesh.beacon.v1",
+    "anonmesh.relay",
+    "anonmesh.node",
 )
 
 DEFAULT_ANNOUNCE_ASPECTS = KNOWN_ANNOUNCE_ASPECTS

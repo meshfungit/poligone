@@ -1,6 +1,7 @@
 """Controller application object."""
 
 from __future__ import annotations
+import json
 from typing import Any
 from friendlynode.client_accounts import ClientAccountStore
 from friendlynode.config.app_config import AppConfig
@@ -30,6 +31,20 @@ ANNOUNCE_TYPE_BY_ASPECT = {
     "rnx.execute": "rnx.execute",
 }
 
+ANNOUNCE_TYPE_BY_ASPECT = {
+    "lxmf.delivery": "identity",
+    "lxmf.propagation": "lxmf.propagation",
+    "nomadnetwork.node": "nomadnet",
+    "call.audio": "call.audio",
+    "rnstransport.discovery.interface": "interface",
+    "rnstransport.probe": "rnstransport.probe",
+    "rncp.receive": "rncp.receive",
+    "rnx.execute": "rnx.execute",
+    "rserver.web": "rserver",
+    "retibbs.bbs": "bbs",
+    "styrene.tui.operator": "styrene",
+}
+
 ANNOUNCE_DEFAULT_NAME_PREFIX = {
     "identity": "Identity",
     "lxmf.propagation": "Propagation",
@@ -39,9 +54,47 @@ ANNOUNCE_DEFAULT_NAME_PREFIX = {
     "rnstransport.probe": "Probe",
     "rncp.receive": "File transfer",
     "rnx.execute": "Remote exec",
+    "rserver": "RServer",
+    "bbs": "BBS",
+    "styrene": "Styrene",
+    "service-hub": "Service hub",
+    "endpoint": "Endpoint",
+    "mission": "Mission",
+    "beacon": "Beacon",
+    "telemetry": "Telemetry",
     "transport": "Transport",
     "peer": "Peer",
 }
+
+ANNOUNCE_JSON_NAME_KEYS = (
+    "server_name",
+    "name",
+    "display_name",
+    "nickname",
+    "node_name",
+    "missionName",
+    "callsign",
+    "ep",
+)
+
+ANNOUNCE_JSON_TYPE_RULES = (
+    (("server_name",), "bbs"),
+    (("services", "name"), "service-hub"),
+    (("ep",), "endpoint"),
+    (("missionName",), "mission"),
+    (("callsign", "role"), "mission"),
+)
+
+ANNOUNCE_TEXT_TYPE_PREFIXES = (
+    ("styrene:", "styrene"),
+    ("anonmesh::beacon", "beacon"),
+    ("RServer ", "rserver"),
+)
+
+ANNOUNCE_TEXT_TYPE_SUBSTRINGS = (
+    ("Telemetry", "telemetry"),
+    ("EMergencyMessages", "telemetry"),
+)
 
 class ControllerApp:
     def __init__(self, config: AppConfig | None = None) -> None:
@@ -472,8 +525,8 @@ class ControllerApp:
         destination_hash = str(payload.get("destination_hash") or "")
         identity_hash = str(payload.get("identity_hash") or "")
         app_data_preview = str(payload.get("app_data_preview") or "")
-        announce_type = self._announce_type_from_aspect(aspect)
-        display_name = app_data_preview.strip() or self._default_announce_name(
+        announce_type = self._announce_type_from_announce(aspect, app_data_preview)
+        display_name = self._announce_name_from_app_data(app_data_preview) or self._default_announce_name(
             announce_type,
             aspect,
             destination_hash,
@@ -506,6 +559,68 @@ class ControllerApp:
             return mapped_type
 
         return clean_aspect
+
+    def _announce_type_from_announce(self, aspect: str, app_data_preview: str) -> str:
+        aspect_type = self._announce_type_from_aspect(aspect)
+
+        if aspect_type != "peer":
+            return aspect_type
+
+        return self._announce_type_from_app_data(app_data_preview)
+
+    def _announce_type_from_app_data(self, app_data_preview: str) -> str:
+        text = app_data_preview.strip()
+
+        if text == "":
+            return "peer"
+
+        parsed = self._parse_json_app_data(text)
+
+        if isinstance(parsed, dict):
+            for required_keys, announce_type in ANNOUNCE_JSON_TYPE_RULES:
+                if all(key in parsed for key in required_keys):
+                    return announce_type
+
+        for prefix, announce_type in ANNOUNCE_TEXT_TYPE_PREFIXES:
+            if text.startswith(prefix):
+                return announce_type
+
+        for marker, announce_type in ANNOUNCE_TEXT_TYPE_SUBSTRINGS:
+            if marker in text:
+                return announce_type
+
+        return "peer"
+
+    def _announce_name_from_app_data(self, app_data_preview: str) -> str:
+        text = app_data_preview.strip()
+
+        if text == "":
+            return ""
+
+        parsed = self._parse_json_app_data(text)
+
+        if isinstance(parsed, dict):
+            for key in ANNOUNCE_JSON_NAME_KEYS:
+                value = parsed.get(key)
+                if value is None:
+                    continue
+
+                clean_value = str(value).strip()
+                if clean_value != "":
+                    return clean_value
+
+        return text
+
+    def _parse_json_app_data(self, app_data_preview: str) -> object:
+        text = app_data_preview.strip()
+
+        if not text.startswith("{"):
+            return None
+
+        try:
+            return json.loads(text)
+        except (TypeError, ValueError):
+            return None
 
     def _default_announce_name(
             self,

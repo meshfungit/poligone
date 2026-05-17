@@ -97,6 +97,46 @@ const ANNOUNCE_TYPE_DEFINITIONS = Object.freeze([
     aspects: ["rnx.execute"],
   },
   {
+    value: "rserver",
+    label: "RServer",
+    aspects: ["rserver.web"],
+  },
+  {
+    value: "bbs",
+    label: "BBS",
+    aspects: ["retibbs.bbs"],
+  },
+  {
+    value: "styrene",
+    label: "Styrene",
+    aspects: ["styrene.tui.operator"],
+  },
+  {
+    value: "service-hub",
+    label: "Service hub",
+    aspects: [],
+  },
+  {
+    value: "endpoint",
+    label: "Endpoint",
+    aspects: [],
+  },
+  {
+    value: "mission",
+    label: "Mission",
+    aspects: [],
+  },
+  {
+    value: "beacon",
+    label: "Beacon",
+    aspects: [],
+  },
+  {
+    value: "telemetry",
+    label: "Telemetry",
+    aspects: [],
+  },  
+  {
     value: "transport",
     label: "Transport",
     aspects: ["transport.*"],
