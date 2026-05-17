@@ -12,6 +12,10 @@ KNOWN_ANNOUNCE_ASPECTS = (
     "lxmf.propagation",
     "nomadnetwork.node",
     "call.audio",
+    "rnstransport.discovery.interface",
+    "rnstransport.probe",
+    "rncp.receive",
+    "rnx.execute",
 )
 
 DEFAULT_ANNOUNCE_ASPECTS = KNOWN_ANNOUNCE_ASPECTS

@@ -19,6 +19,29 @@ from friendlynode.engine.events import EngineEvent
 DEFAULT_ANNOUNCE_LIMIT = 500
 MAX_ANNOUNCE_LIMIT = 2000
 
+ANNOUNCE_TYPE_BY_ASPECT = {
+    "lxmf.delivery": "identity",
+    "lxmf.propagation": "lxmf.propagation",
+    "nomadnetwork.node": "nomadnet",
+    "call.audio": "call.audio",
+    "rnstransport.discovery.interface": "interface",
+    "rnstransport.probe": "rnstransport.probe",
+    "rncp.receive": "rncp.receive",
+    "rnx.execute": "rnx.execute",
+}
+
+ANNOUNCE_DEFAULT_NAME_PREFIX = {
+    "identity": "Identity",
+    "lxmf.propagation": "Propagation",
+    "nomadnet": "NomadNet node",
+    "interface": "Interface",
+    "call.audio": "call.audio",
+    "rnstransport.probe": "Probe",
+    "rncp.receive": "File transfer",
+    "rnx.execute": "Remote exec",
+    "transport": "Transport",
+    "peer": "Peer",
+}
 
 class ControllerApp:
     def __init__(self, config: AppConfig | None = None) -> None:
@@ -473,33 +496,28 @@ class ControllerApp:
         }
 
     def _announce_type_from_aspect(self, aspect: str) -> str:
-        if aspect == "nomadnetwork.node":
-            return "nomadnet"
+        clean_aspect = aspect.strip()
 
-        if aspect == "call.audio":
-            return "call.audio"
+        if clean_aspect == "":
+            return "peer"
 
-        if aspect.startswith("lxmf."):
-            return "identity"
+        mapped_type = ANNOUNCE_TYPE_BY_ASPECT.get(clean_aspect)
+        if mapped_type is not None:
+            return mapped_type
 
-        if aspect.startswith("rnstransport.") or aspect.startswith("transport."):
-            return "transport"
-
-        return "peer"
+        return clean_aspect
 
     def _default_announce_name(
-        self,
-        announce_type: str,
-        aspect: str,
-        destination_hash: str,
+            self,
+            announce_type: str,
+            aspect: str,
+            destination_hash: str,
     ) -> str:
-        prefix = {
-            "identity": "Identity",
-            "nomadnet": "NomadNet node",
-            "transport": "Transport",
-            "call.audio": "call.audio",
-            "peer": "Peer",
-        }.get(announce_type, "Announce")
+        prefix = ANNOUNCE_DEFAULT_NAME_PREFIX.get(announce_type)
+
+        if prefix is None:
+            prefix = aspect.strip() or announce_type.strip() or "Announce"
+
         suffix = destination_hash[:12] if destination_hash != "" else aspect
         return f"{prefix} {suffix}".strip()
 

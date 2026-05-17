@@ -59,7 +59,12 @@ const ANNOUNCE_TYPE_DEFINITIONS = Object.freeze([
   {
     value: "identity",
     label: "Identity",
-    aspects: ["lxmf.delivery", "lxmf.propagation"],
+    aspects: ["lxmf.delivery"],
+  },
+  {
+    value: "lxmf.propagation",
+    label: "Propagation",
+    aspects: ["lxmf.propagation"],
   },
   {
     value: "call.audio",
@@ -72,9 +77,29 @@ const ANNOUNCE_TYPE_DEFINITIONS = Object.freeze([
     aspects: ["nomadnetwork.node"],
   },
   {
+    value: "interface",
+    label: "Interface",
+    aspects: ["rnstransport.discovery.interface"],
+  },
+  {
+    value: "rnstransport.probe",
+    label: "Probe",
+    aspects: ["rnstransport.probe"],
+  },
+  {
+    value: "rncp.receive",
+    label: "File transfer",
+    aspects: ["rncp.receive"],
+  },
+  {
+    value: "rnx.execute",
+    label: "Remote exec",
+    aspects: ["rnx.execute"],
+  },
+  {
     value: "transport",
     label: "Transport",
-    aspects: ["rnstransport.*", "transport.*"],
+    aspects: ["transport.*"],
   },
   {
     value: "peer",
@@ -112,15 +137,20 @@ function getAnnounceTypeDefinitionByValue(type) {
 }
 
 function getAnnounceType(announce) {
-  const aspectDefinition = getAnnounceTypeDefinitionByAspect(getAnnounceAspect(announce));
+  const aspect = getAnnounceAspect(announce);
+  const aspectDefinition = getAnnounceTypeDefinitionByAspect(aspect);
 
   if (aspectDefinition !== null) {
     return aspectDefinition.value;
   }
 
+  if (aspect !== "") {
+    return aspect;
+  }
+
   const rawType = String(announce?.type || "").trim();
 
-  return rawType === "" ? "unknown" : rawType;
+  return rawType === "" ? "peer" : rawType;
 }
 
 function getAnnounceTypeCssName(announce) {
@@ -128,6 +158,9 @@ function getAnnounceTypeCssName(announce) {
 }
 
 function getAnnounceTypeLabel(announceOrType) {
+  const aspect =
+    typeof announceOrType === "string" ? "" : getAnnounceAspect(announceOrType);
+
   const type =
     typeof announceOrType === "string"
       ? announceOrType
@@ -135,14 +168,33 @@ function getAnnounceTypeLabel(announceOrType) {
 
   const definition = getAnnounceTypeDefinitionByValue(type);
 
-  return definition === null ? "Unknown" : definition.label;
+  if (definition !== null) {
+    return definition.label;
+  }
+
+  return aspect || type || "Peer";
 }
 
 function getAnnounceTypeFilterOptions() {
-  return [
+  const options = [
     ["all", "All"],
     ...ANNOUNCE_TYPE_DEFINITIONS.map((definition) => [definition.value, definition.label]),
   ];
+
+  const existingValues = new Set(options.map(([value]) => value));
+  const announces = Array.isArray(currentStatus?.announces) ? currentStatus.announces : [];
+
+  for (const announce of announces) {
+    const type = getAnnounceType(announce);
+    if (type === "" || existingValues.has(type)) {
+      continue;
+    }
+
+    options.push([type, getAnnounceTypeLabel(announce)]);
+    existingValues.add(type);
+  }
+
+  return options;
 }
 
 const rows = {
