@@ -1,10 +1,20 @@
-"""Announce handler stubs."""
+"""Reticulum announce handlers."""
 
 from dataclasses import dataclass
 from typing import Any
 
 from friendlynode.engine.events import EngineEvent
 from friendlynode.engine.ipc import IpcBus
+
+
+KNOWN_ANNOUNCE_ASPECTS = (
+    "lxmf.delivery",
+    "lxmf.propagation",
+    "nomadnetwork.node",
+    "call.audio",
+)
+
+DEFAULT_ANNOUNCE_ASPECTS = KNOWN_ANNOUNCE_ASPECTS
 
 
 @dataclass(slots=True)
@@ -29,12 +39,15 @@ class GenericAnnounceHandler:
         announce_packet_hash: bytes | None = None,
         is_path_response: bool = False,
     ) -> None:
+        aspect = self.aspect_filter or _infer_known_aspect(destination_hash, announced_identity)
         path_info = _path_info(destination_hash)
+
         self.bus.publish(
             EngineEvent(
                 "announce.received",
                 {
-                    "aspect": self.aspect_filter or "",
+                    "aspect": aspect,
+                    "handler_aspect": self.aspect_filter or "",
                     "destination_hash": destination_hash.hex(),
                     "identity_hash": (
                         announced_identity.hash.hex()
@@ -43,7 +56,11 @@ class GenericAnnounceHandler:
                     ),
                     "app_data_hex": app_data.hex() if isinstance(app_data, bytes) else "",
                     "app_data_preview": _app_data_preview(app_data),
-                    "announce_packet_hash": announce_packet_hash.hex() if isinstance(announce_packet_hash, bytes) else "",
+                    "announce_packet_hash": (
+                        announce_packet_hash.hex()
+                        if isinstance(announce_packet_hash, bytes)
+                        else ""
+                    ),
                     "is_path_response": is_path_response,
                     "hops": path_info["hops"],
                     "interface": path_info["interface"],
@@ -52,12 +69,43 @@ class GenericAnnounceHandler:
         )
 
 
-DEFAULT_ANNOUNCE_ASPECTS = (
-    "lxmf.delivery",
-    "lxmf.propagation",
-    "nomadnetwork.node",
-    "call.audio",
-)
+def _infer_known_aspect(destination_hash: bytes, announced_identity: Any) -> str:
+    if not isinstance(destination_hash, bytes):
+        return ""
+
+    for aspect in KNOWN_ANNOUNCE_ASPECTS:
+        if _destination_hash_matches_aspect(destination_hash, announced_identity, aspect):
+            return aspect
+
+    return ""
+
+
+def _destination_hash_matches_aspect(
+    destination_hash: bytes,
+    announced_identity: Any,
+    aspect: str,
+) -> bool:
+    parts = aspect.split(".")
+    if len(parts) < 2:
+        return False
+
+    app_name = parts[0]
+    aspects = parts[1:]
+
+    try:
+        import RNS
+
+        destination = RNS.Destination(
+            announced_identity,
+            RNS.Destination.OUT,
+            RNS.Destination.SINGLE,
+            app_name,
+            *aspects,
+        )
+    except Exception:
+        return False
+
+    return getattr(destination, "hash", None) == destination_hash
 
 
 def _app_data_preview(app_data: object) -> str:
@@ -65,7 +113,6 @@ def _app_data_preview(app_data: object) -> str:
         return ""
 
     unpacked = _unpack_app_data(app_data)
-
     if unpacked != "":
         return unpacked[:120]
 
@@ -93,7 +140,6 @@ def _path_info(destination_hash: bytes) -> dict[str, object]:
     def read_entry() -> object:
         if destination_hash not in path_table:
             return None
-
         return path_table[destination_hash]
 
     try:
@@ -134,28 +180,25 @@ def _extract_text(value: object) -> str:
             text = value.decode("utf-8")
         except UnicodeDecodeError:
             return ""
+
         return text.strip() if _is_printable_text(text) else ""
 
     if isinstance(value, dict):
         preferred_keys = ("name", "display_name", "nickname", "node_name")
-
         for key in preferred_keys:
             if key in value:
                 text = _extract_text(value[key])
-
                 if text != "":
                     return text
 
         for item in value.values():
             text = _extract_text(item)
-
             if text != "":
                 return text
 
     if isinstance(value, (list, tuple)):
         for item in value:
             text = _extract_text(item)
-
             if text != "":
                 return text
 
