@@ -1695,35 +1695,71 @@ function renderAnnounceDetailCard(announce) {
 function renderAnnounceModal() {
   const overlay = document.createElement("div");
   overlay.className = "client-editor-overlay";
-  overlay.onclick = () => {
-    announceModalState = null;
-    render("Announces");
-  };
 
   const dialog = document.createElement("section");
   dialog.className = "client-editor announce-modal";
-  dialog.onclick = (event) => event.stopPropagation();
 
+  const title = document.createElement("h2");
+  title.className = "announce-modal-title";
+  title.textContent = announceModalState.name || announceModalState.destination_hash || "Announce";
+  dialog.appendChild(title);
   dialog.appendChild(renderAnnounceDetailCard(announceModalState));
 
   const actions = document.createElement("div");
-  actions.className = "settings-row";
+  actions.className = "client-editor-actions announce-modal-actions";
 
-  const copy = renderCopyButton("Copy", () => formatAnnounceCardForClipboard(announceModalState));
-  copy.title = "Copy announce card";
-  actions.appendChild(copy);
+  const addContactButton = document.createElement("button");
+  addContactButton.type = "button";
+  addContactButton.textContent = "Add contact";
+  addContactButton.onclick = () => addAnnounceContact(announceModalState);
+  actions.appendChild(addContactButton);
 
-  const close = document.createElement("button");
-  close.type = "button";
-  close.textContent = "Close";
-  close.onclick = () => {
+  const bookmarkButton = document.createElement("button");
+  bookmarkButton.type = "button";
+  bookmarkButton.textContent = nomadnetBookmarks.has(getAnnounceBookmarkId(announceModalState))
+    ? "Bookmarked"
+    : "Bookmark";
+  bookmarkButton.disabled = getAnnounceType(announceModalState) !== "nomadnet";
+  bookmarkButton.onclick = () => bookmarkAnnounceNode(announceModalState);
+  actions.appendChild(bookmarkButton);
+
+  const chatButton = document.createElement("button");
+  chatButton.type = "button";
+  chatButton.textContent = "Open chat";
+  chatButton.disabled = !announceCanOpenChat(announceModalState);
+  chatButton.onclick = () => openAnnounceChat(announceModalState);
+  actions.appendChild(chatButton);
+
+  const pageButton = document.createElement("button");
+  pageButton.type = "button";
+  pageButton.textContent = "Open page";
+  pageButton.disabled = getAnnounceType(announceModalState) !== "nomadnet";
+  pageButton.onclick = () => openAnnounceNomadnetPage(announceModalState);
+  actions.appendChild(pageButton);
+
+  const copyButton = renderCopyButton("Copy", () => formatAnnounceCardForClipboard(announceModalState));
+  copyButton.title = "Copy announce card";
+  actions.appendChild(copyButton);
+
+  const closeButton = document.createElement("button");
+  closeButton.type = "button";
+  closeButton.textContent = "Close";
+  closeButton.onclick = () => {
     announceModalState = null;
     render("Announces");
   };
-  actions.appendChild(close);
+  actions.appendChild(closeButton);
 
   dialog.appendChild(actions);
   overlay.appendChild(dialog);
+  overlay.onclick = (event) => {
+    if (event.target !== overlay) {
+      return;
+    }
+
+    announceModalState = null;
+    render("Announces");
+  };
 
   return overlay;
 }
