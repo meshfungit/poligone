@@ -67,6 +67,11 @@ const ANNOUNCE_TYPE_DEFINITIONS = Object.freeze([
     aspects: ["lxmf.propagation"],
   },
   {
+    value: "lxmf.propagation.control",
+    label: "Propagation control",
+    aspects: ["lxmf.propagation.control"],
+  },
+  {
     value: "call.audio",
     label: "call.audio",
     aspects: ["call.audio"],

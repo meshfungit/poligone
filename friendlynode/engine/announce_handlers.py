@@ -10,6 +10,7 @@ from friendlynode.engine.ipc import IpcBus
 KNOWN_ANNOUNCE_ASPECTS = (
     "lxmf.delivery",
     "lxmf.propagation",
+    "lxmf.propagation.control",
     "nomadnetwork.node",
     "call.audio",
     "rnstransport.discovery.interface",
