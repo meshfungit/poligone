@@ -1081,6 +1081,19 @@ async function fetchNomadNetPage(destinationHash, path) {
   }
 }
 
+function renderAnnounceListHeader() {
+  const header = document.createElement("div");
+  header.className = "announce-list-header";
+
+  for (const label of ["Type", "Name", "Hash", "Distance"]) {
+    const cell = document.createElement("span");
+    cell.textContent = label;
+    header.appendChild(cell);
+  }
+
+  return header;
+}
+
 function renderAnnounceResults(announces, count, list) {
   const shouldStickToBottom = isAnnounceListAtBottom(list);
   count.textContent = `${announces.length} announces`;
@@ -1093,6 +1106,8 @@ function renderAnnounceResults(announces, count, list) {
     list.appendChild(empty);
     return;
   }
+
+  list.appendChild(renderAnnounceListHeader());
 
   for (const announce of announces) {
     list.appendChild(renderAnnounceRow(announce));
