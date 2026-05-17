@@ -3,19 +3,27 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Callable
 
 from friendlynode.config.app_config import AppConfig
 from friendlynode.engine.engine_main import EngineMain
+from friendlynode.engine.events import EngineEvent
+
+
+EngineEventSink = Callable[[EngineEvent], None]
 
 
 class EngineSupervisor:
-    def __init__(self, config: AppConfig) -> None:
+    def __init__(self, config: AppConfig, event_sink: EngineEventSink | None = None) -> None:
         self.config = config
+        self.event_sink = event_sink
         self.engine: EngineMain | None = None
 
     def start(self) -> None:
         if self.engine is None:
             self.engine = EngineMain(self.config)
+            if self.event_sink is not None:
+                self.engine.bus.subscribe(self.event_sink)
 
         self.engine.start()
 

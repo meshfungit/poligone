@@ -44,6 +44,9 @@ let symbolPaletteSpacerHeight = 0;
 let messageEditorSelection = null;
 let showMessageUnprintable = false;
 let interfaceStatusRefreshInFlight = false;
+let announceStream = null;
+let announceQueryKey = "";
+let announceFetchInFlight = false;
 const announceFilters = {
   type: "all",
   name: "",
@@ -293,6 +296,7 @@ function renderAnnounces() {
   filters.appendChild(renderAnnounceTextFilter("Identity", "identity", refresh));
   filters.appendChild(renderAnnounceTextFilter("LXMF", "lxmf", refresh));
   filters.appendChild(renderAnnounceHopsFilter(refresh));
+  filters.appendChild(renderAnnounceApplyButton(refresh));
   section.appendChild(filters);
   section.appendChild(count);
   refresh();
@@ -302,6 +306,10 @@ function renderAnnounces() {
   if (announceModalState !== null) {
     wrapper.appendChild(renderAnnounceModal());
   }
+
+  window.setTimeout(() => {
+    startAnnounceUpdates(false);
+  }, 0);
 
   return wrapper;
 }
@@ -1074,25 +1082,27 @@ async function fetchNomadNetPage(destinationHash, path) {
 }
 
 function renderAnnounceResults(announces, count, list) {
-  const filtered = filterAnnounces(announces);
-  count.textContent = `${filtered.length} of ${announces.length} announces`;
+  const shouldStickToBottom = isAnnounceListAtBottom(list);
+  count.textContent = `${announces.length} announces`;
   list.replaceChildren();
 
-  if (filtered.length === 0) {
+  if (announces.length === 0) {
     const empty = document.createElement("div");
     empty.className = "settings-hint";
-    empty.textContent = "No announces match current filters.";
+    empty.textContent = "No announces received for current filters.";
     list.appendChild(empty);
     return;
   }
 
-  for (const announce of filtered) {
+  for (const announce of announces) {
     list.appendChild(renderAnnounceRow(announce));
   }
 
-  window.setTimeout(() => {
-    list.scrollTop = list.scrollHeight;
-  }, 0);
+  if (shouldStickToBottom) {
+    window.setTimeout(() => {
+      list.scrollTop = list.scrollHeight;
+    }, 0);
+  }
 }
 
 function renderAnnounceTypeFilter(onChange) {
@@ -1108,6 +1118,7 @@ function renderAnnounceTypeFilter(onChange) {
   for (const [value, text] of [
     ["all", "All"],
     ["identity", "Identity"],
+    ["peer", "Peer"],
     ["nomadnet", "NomadNet"],
     ["transport", "Transport"],
   ]) {
@@ -1120,7 +1131,6 @@ function renderAnnounceTypeFilter(onChange) {
 
   select.onchange = () => {
     announceFilters.type = select.value;
-    onChange();
   };
   field.appendChild(select);
   return field;
@@ -1139,7 +1149,11 @@ function renderAnnounceTextFilter(labelText, key, onChange) {
   input.value = announceFilters[key] || "";
   input.oninput = () => {
     announceFilters[key] = input.value;
-    onChange();
+  };
+  input.onkeydown = (event) => {
+    if (event.key === "Enter") {
+      requestAnnounceRefresh(onChange);
+    }
   };
   field.appendChild(input);
   return field;
@@ -1160,42 +1174,191 @@ function renderAnnounceHopsFilter(onChange) {
   input.value = String(announceFilters.hops || 0);
   input.oninput = () => {
     announceFilters.hops = Math.max(0, Number(input.value) || 0);
-    onChange();
   };
   field.appendChild(input);
   return field;
 }
 
-function filterAnnounces(announces) {
-  const type = announceFilters.type;
-  const name = announceFilters.name.trim().toLowerCase();
-  const identity = announceFilters.identity.trim().toLowerCase();
-  const lxmf = announceFilters.lxmf.trim().toLowerCase();
+function renderAnnounceApplyButton(onChange) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "announce-filter-apply";
+  button.textContent = "Apply";
+  button.onclick = () => requestAnnounceRefresh(onChange);
+  return button;
+}
+
+function requestAnnounceRefresh(onChange) {
+  if (typeof onChange === "function") {
+    onChange();
+  }
+
+  startAnnounceUpdates(true);
+}
+
+function startAnnounceUpdates(force) {
+  const params = buildAnnounceQueryParams();
+  const key = params.toString();
+
+  if (!force && announceQueryKey === key && announceStream !== null) {
+    return;
+  }
+
+  announceQueryKey = key;
+  fetchAnnouncesSnapshot(params);
+  openAnnounceStream(params);
+}
+
+async function fetchAnnouncesSnapshot(params) {
+  if (announceFetchInFlight) {
+    return;
+  }
+
+  announceFetchInFlight = true;
+
+  try {
+    const response = await fetch(`/api/announces?${params.toString()}`, {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Announces request failed: HTTP ${response.status}`);
+    }
+
+    const payload = await response.json();
+
+    if (currentStatus === null) {
+      currentStatus = {};
+    }
+
+    currentStatus.announces = Array.isArray(payload.announces) ? payload.announces : [];
+
+    if (getActiveTab() === "Announces") {
+      render("Announces");
+    }
+  } catch (error) {
+    appendUiError(error);
+    render("Logs");
+  } finally {
+    announceFetchInFlight = false;
+  }
+}
+
+function openAnnounceStream(params) {
+  if (announceStream !== null) {
+    announceStream.close();
+    announceStream = null;
+  }
+
+  if (typeof EventSource !== "function") {
+    return;
+  }
+
+  const streamParams = new URLSearchParams(params);
+  const lastId = lastAnnounceId();
+
+  if (lastId > 0) {
+    streamParams.set("after_id", String(lastId));
+  }
+
+  announceStream = new EventSource(`/api/announces/stream?${streamParams.toString()}`);
+  announceStream.addEventListener("announce", (event) => {
+    try {
+      appendAnnounceFromStream(JSON.parse(event.data));
+    } catch (error) {
+      appendUiError(error);
+    }
+  });
+  announceStream.onerror = () => {
+    if (getActiveTab() !== "Announces") {
+      return;
+    }
+  };
+}
+
+function appendAnnounceFromStream(announce) {
+  if (currentStatus === null) {
+    currentStatus = {};
+  }
+
+  const current = Array.isArray(currentStatus.announces) ? currentStatus.announces : [];
+  const announceId = Number(announce.id) || 0;
+  const existingIndex = current.findIndex((item) => Number(item.id) === announceId && announceId > 0);
+
+  if (existingIndex >= 0) {
+    current[existingIndex] = announce;
+  } else {
+    current.push(announce);
+  }
+
+  currentStatus.announces = current.slice(-500);
+
+  if (getActiveTab() === "Announces") {
+    renderAnnouncesAfterStreamUpdate();
+  }
+}
+
+function renderAnnouncesAfterStreamUpdate() {
+  if (document.activeElement instanceof HTMLElement && document.activeElement.closest(".announce-filters") !== null) {
+    return;
+  }
+
+  const list = document.querySelector(".announce-list");
+  const shouldStickToBottom = list === null || isAnnounceListAtBottom(list);
+  const previousScrollTop = list === null ? 0 : list.scrollTop;
+
+  render("Announces");
+
+  window.setTimeout(() => {
+    const newList = document.querySelector(".announce-list");
+
+    if (newList === null) {
+      return;
+    }
+
+    if (shouldStickToBottom) {
+      newList.scrollTop = newList.scrollHeight;
+    } else {
+      newList.scrollTop = previousScrollTop;
+    }
+  }, 0);
+}
+
+function isAnnounceListAtBottom(list) {
+  if (list === null || list.scrollHeight <= list.clientHeight) {
+    return true;
+  }
+
+  return list.scrollHeight - list.scrollTop - list.clientHeight < 12;
+}
+
+function lastAnnounceId() {
+  const announces = Array.isArray(currentStatus?.announces) ? currentStatus.announces : [];
+  return announces.reduce((maxId, announce) => Math.max(maxId, Number(announce.id) || 0), 0);
+}
+
+function buildAnnounceQueryParams() {
+  const params = new URLSearchParams();
+  params.set("limit", "500");
+
+  for (const key of ["type", "name", "identity", "lxmf"]) {
+    const value = String(announceFilters[key] || "").trim();
+
+    if (value !== "" && !(key === "type" && value === "all")) {
+      params.set(key, value);
+    }
+  }
+
   const hops = Number(announceFilters.hops) || 0;
 
-  return announces.filter((announce) => {
-    if (type !== "all" && announce.type !== type) {
-      return false;
-    }
+  if (hops > 0) {
+    params.set("hops", String(hops));
+  }
 
-    if (name !== "" && !String(announce.name || "").toLowerCase().includes(name)) {
-      return false;
-    }
-
-    if (identity !== "" && !String(announce.identity_hash || "").toLowerCase().includes(identity)) {
-      return false;
-    }
-
-    if (lxmf !== "" && !String(announce.lxmf || "").toLowerCase().includes(lxmf)) {
-      return false;
-    }
-
-    if (hops > 0 && Number(announce.hops) > hops) {
-      return false;
-    }
-
-    return true;
-  });
+  return params;
 }
 
 function renderAnnounceRow(announce) {
@@ -1224,7 +1387,7 @@ function renderAnnounceRow(announce) {
 
   const hops = document.createElement("span");
   hops.className = "announce-row-hops";
-  hops.textContent = `${announce.hops ?? "-"}h`;
+  hops.textContent = announce.hops === null || announce.hops === undefined ? "-" : `${announce.hops}h`;
   row.appendChild(hops);
 
   return row;
@@ -1346,6 +1509,10 @@ function renderAnnounceModal() {
 function getAnnounceTypeLabel(type) {
   if (type === "identity") {
     return "Identity";
+  }
+
+  if (type === "peer") {
+    return "Peer";
   }
 
   if (type === "nomadnet") {

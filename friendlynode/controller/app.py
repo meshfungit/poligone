@@ -13,6 +13,11 @@ from friendlynode.controller.engine_supervisor import EngineSupervisor
 from friendlynode.controller.runtime_manager import RuntimeInfo, RuntimeManager
 from friendlynode.controller.state_cache import StateCache
 from friendlynode.config.rns_config_editor import load_rns_config, save_rns_config
+from friendlynode.engine.events import EngineEvent
+
+
+DEFAULT_ANNOUNCE_LIMIT = 500
+MAX_ANNOUNCE_LIMIT = 2000
 
 
 class ControllerApp:
@@ -21,7 +26,7 @@ class ControllerApp:
         self.state = StateCache()
         self.runtime_manager = RuntimeManager()
         self.client_store = ClientAccountStore(self.config.clients_dir)
-        self.engine_supervisor = EngineSupervisor(self.config)
+        self.engine_supervisor = EngineSupervisor(self.config, self._handle_engine_event)
 
     def start(self) -> None:
         self.config.ensure_dirs()
@@ -226,15 +231,25 @@ class ControllerApp:
     def list_clients(self) -> dict[str, object]:
         return self.client_store.to_dict()
 
-    def list_announces(self) -> dict[str, object]:
+    def list_announces(
+        self,
+        *,
+        limit: int = DEFAULT_ANNOUNCE_LIMIT,
+        filters: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        normalised_limit = self._normalise_announce_limit(limit)
         return {
-            "announces": self.state.snapshot_announces(),
+            "announces": self.state.snapshot_announces(
+                limit=normalised_limit,
+                filters=filters or {},
+            ),
+            "limit": normalised_limit,
         }
 
     def list_nomadnet_nodes(self) -> dict[str, object]:
         nodes = [
             announce
-            for announce in self.state.snapshot_announces()
+            for announce in self.state.snapshot_announces(limit=DEFAULT_ANNOUNCE_LIMIT)
             if announce.get("type") == "nomadnet"
             or announce.get("aspect") == "nomadnetwork.node"
         ]
@@ -402,6 +417,98 @@ class ControllerApp:
         self.config.runtime_source_path = runtime.source_path
 
         return runtime
+
+    def wait_for_announces(
+        self,
+        *,
+        after_id: int,
+        timeout: float,
+        limit: int = DEFAULT_ANNOUNCE_LIMIT,
+        filters: dict[str, object] | None = None,
+    ) -> list[dict[str, object]]:
+        return self.state.wait_for_announces(
+            after_id=after_id,
+            timeout=timeout,
+            limit=self._normalise_announce_limit(limit),
+            filters=filters or {},
+        )
+
+    def _handle_engine_event(self, event: EngineEvent) -> None:
+        if event.topic == "announce.received":
+            try:
+                self.state.append_announce(self._build_announce_record(event.payload))
+            except Exception as exc:
+                self.state.append_log(
+                    "error",
+                    "announce",
+                    f"Failed to record announce: {type(exc).__name__}: {exc}",
+                )
+
+    def _build_announce_record(self, payload: dict[str, Any]) -> dict[str, object]:
+        aspect = str(payload.get("aspect") or "")
+        destination_hash = str(payload.get("destination_hash") or "")
+        identity_hash = str(payload.get("identity_hash") or "")
+        app_data_preview = str(payload.get("app_data_preview") or "")
+        announce_type = self._announce_type_from_aspect(aspect)
+        display_name = app_data_preview.strip() or self._default_announce_name(
+            announce_type,
+            aspect,
+            destination_hash,
+        )
+
+        return {
+            "type": announce_type,
+            "name": display_name,
+            "identity_hash": identity_hash,
+            "lxmf": destination_hash if aspect.startswith("lxmf.") else "",
+            "aspect": aspect,
+            "destination_hash": destination_hash,
+            "hops": payload.get("hops"),
+            "interface": str(payload.get("interface") or ""),
+            "app_data_hex": str(payload.get("app_data_hex") or ""),
+            "app_data_preview": app_data_preview,
+            "announce_packet_hash": str(payload.get("announce_packet_hash") or ""),
+            "is_path_response": bool(payload.get("is_path_response")),
+            "source": "reticulum",
+        }
+
+    def _announce_type_from_aspect(self, aspect: str) -> str:
+        if aspect == "nomadnetwork.node":
+            return "nomadnet"
+
+        if aspect.startswith("lxmf."):
+            return "identity"
+
+        if aspect.startswith("rnstransport.") or aspect.startswith("transport."):
+            return "transport"
+
+        return "peer"
+
+    def _default_announce_name(
+        self,
+        announce_type: str,
+        aspect: str,
+        destination_hash: str,
+    ) -> str:
+        prefix = {
+            "identity": "Identity",
+            "nomadnet": "NomadNet node",
+            "transport": "Transport",
+            "peer": "Peer",
+        }.get(announce_type, "Announce")
+        suffix = destination_hash[:12] if destination_hash != "" else aspect
+        return f"{prefix} {suffix}".strip()
+
+    def _normalise_announce_limit(self, limit: int) -> int:
+        try:
+            value = int(limit)
+        except (TypeError, ValueError):
+            value = DEFAULT_ANNOUNCE_LIMIT
+
+        if value <= 0:
+            return DEFAULT_ANNOUNCE_LIMIT
+
+        return min(value, MAX_ANNOUNCE_LIMIT)
 
     def _build_runtime_interface_capabilities(
         self,

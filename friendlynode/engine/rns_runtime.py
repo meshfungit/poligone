@@ -119,6 +119,8 @@ class RnsRuntime:
             handler = GenericAnnounceHandler(aspect, self.bus)
             self.RNS.Transport.register_announce_handler(handler)
 
+        self.RNS.Transport.register_announce_handler(GenericAnnounceHandler(None, self.bus))
+
         self.bus.publish(
             EngineEvent(
                 "rns.started",
@@ -432,7 +434,7 @@ class RnsRuntime:
                 if self._interface_can_send_announce(interface)
             ]
             online = any(bool(getattr(interface, "online", False)) for interface in matching)
-            last_announce = self._max_recorded_announce_at(leafs)
+            last_announce = self._recorded_configured_announce_at(name, leafs)
             interval = self._normalise_announce_interval(item.get("announce_interval"))
             age = None if last_announce is None else max(now - last_announce, 0)
             next_announce = self._next_announce_in(
@@ -452,7 +454,7 @@ class RnsRuntime:
                     "last_announce_at": last_announce,
                     "last_announce_age": age,
                     "next_announce_in": next_announce,
-                    "last_announce_reason": self._latest_recorded_announce_reason(leafs),
+                    "last_announce_reason": self._recorded_configured_announce_reason(name, leafs),
                     "announce_targets": len(leafs),
                     "clients": sum(self._interface_client_count(interface) for interface in matching),
                 }
@@ -603,12 +605,20 @@ class RnsRuntime:
         return max(timestamps)
 
     def _record_interface_announce(self, interface: Any, timestamp: float, reason: str) -> None:
-        key = self._interface_key(interface)
-        self._interface_announce_last[key] = timestamp
-        self._interface_announce_reason[key] = reason
+        for key in self._interface_announce_keys(interface):
+            self._interface_announce_last[key] = timestamp
+            self._interface_announce_reason[key] = reason
 
     def _recorded_interface_announce_at(self, interface: Any) -> float | None:
-        return self._interface_announce_last.get(self._interface_key(interface))
+        return self._max_recorded_announce_for_keys(self._interface_announce_keys(interface))
+
+    def _interface_announce_keys(self, interface: Any) -> set[str]:
+        keys = {
+            self._interface_key(interface),
+            str(getattr(interface, "name", "")),
+            self._parent_interface_name(interface),
+        }
+        return {key for key in keys if key != ""}
 
     def _max_recorded_announce_at(self, interfaces: list[Any]) -> float | None:
         timestamps = [
@@ -640,6 +650,58 @@ class RnsRuntime:
             return ""
 
         return self._interface_announce_reason.get(self._interface_key(latest_interface), "")
+
+    def _recorded_configured_announce_at(
+        self,
+        configured_name: str,
+        interfaces: list[Any],
+    ) -> float | None:
+        keys = {configured_name} if configured_name != "" else set()
+
+        for interface in interfaces:
+            keys.update(self._interface_announce_keys(interface))
+
+        return self._max_recorded_announce_for_keys(keys)
+
+    def _recorded_configured_announce_reason(
+        self,
+        configured_name: str,
+        interfaces: list[Any],
+    ) -> str:
+        keys = {configured_name} if configured_name != "" else set()
+
+        for interface in interfaces:
+            keys.update(self._interface_announce_keys(interface))
+
+        latest_key = ""
+        latest_timestamp = None
+
+        for key in keys:
+            timestamp = self._interface_announce_last.get(key)
+
+            if timestamp is None:
+                continue
+
+            if latest_timestamp is None or timestamp > latest_timestamp:
+                latest_key = key
+                latest_timestamp = timestamp
+
+        if latest_key == "":
+            return ""
+
+        return self._interface_announce_reason.get(latest_key, "")
+
+    def _max_recorded_announce_for_keys(self, keys: set[str]) -> float | None:
+        timestamps = [
+            timestamp
+            for timestamp in (self._interface_announce_last.get(key) for key in keys)
+            if timestamp is not None
+        ]
+
+        if len(timestamps) == 0:
+            return None
+
+        return max(timestamps)
 
     @contextmanager
     def _reticulum_signal_context(self):

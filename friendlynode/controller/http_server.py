@@ -115,7 +115,21 @@ class ControllerHttpServer:
                     self._send_json(app.get_rns_config())
                     return
                 if parsed.path == "/api/announces":
-                    self._send_json(app.list_announces())
+                    params = parse_qs(parsed.query)
+                    self._send_json(
+                        app.list_announces(
+                            limit=self._query_int(params, "limit", 500),
+                            filters=self._announce_filters_from_query(params),
+                        )
+                    )
+                    return
+                if parsed.path == "/api/announces/stream":
+                    params = parse_qs(parsed.query)
+                    self._serve_announce_stream(
+                        limit=self._query_int(params, "limit", 500),
+                        filters=self._announce_filters_from_query(params),
+                        after_id=self._query_int(params, "after_id", 0),
+                    )
                     return
                 if parsed.path == "/api/nomadnet/nodes":
                     self._send_json(app.list_nomadnet_nodes())
@@ -328,7 +342,7 @@ class ControllerHttpServer:
                     ),
                     "config": app.config.to_dict(),
                     "clients": app.list_clients(),
-                    "announces": app.state.snapshot_announces(),
+                    "announces": app.state.snapshot_announces(limit=500),
                     "logs": app.state.snapshot_logs(),
                 }
 
@@ -459,6 +473,78 @@ class ControllerHttpServer:
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
                 self.wfile.write(data)
+
+            def _serve_announce_stream(
+                self,
+                *,
+                limit: int,
+                filters: dict[str, object],
+                after_id: int,
+            ) -> None:
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+                self.send_header("Cache-Control", "no-cache")
+                self.send_header("Connection", "keep-alive")
+                self.end_headers()
+
+                last_id = after_id
+
+                try:
+                    self._write_sse_event("ready", {"after_id": last_id})
+
+                    while not controller_server.restart_requested:
+                        records = app.wait_for_announces(
+                            after_id=last_id,
+                            timeout=15,
+                            limit=limit,
+                            filters=filters,
+                        )
+
+                        if len(records) == 0:
+                            self.wfile.write(b": keepalive\n\n")
+                            self.wfile.flush()
+                            continue
+
+                        for record in records:
+                            try:
+                                last_id = max(last_id, int(record.get("id") or 0))
+                            except (TypeError, ValueError):
+                                pass
+
+                            self._write_sse_event("announce", record)
+                except (BrokenPipeError, ConnectionResetError, OSError):
+                    return
+
+            def _write_sse_event(self, event_name: str, payload: dict[str, object]) -> None:
+                data = json.dumps(payload, sort_keys=True)
+                self.wfile.write(f"event: {event_name}\n".encode("utf-8"))
+                self.wfile.write(f"data: {data}\n\n".encode("utf-8"))
+                self.wfile.flush()
+
+            def _announce_filters_from_query(self, params: dict[str, list[str]]) -> dict[str, object]:
+                return {
+                    "type": self._query_text(params, "type"),
+                    "name": self._query_text(params, "name"),
+                    "identity": self._query_text(params, "identity"),
+                    "lxmf": self._query_text(params, "lxmf"),
+                    "text": self._query_text(params, "text"),
+                    "hops": self._query_int(params, "hops", 0),
+                }
+
+            def _query_text(self, params: dict[str, list[str]], key: str) -> str:
+                values = params.get(key, [""])
+                return str(values[0] if len(values) > 0 else "").strip()
+
+            def _query_int(
+                self,
+                params: dict[str, list[str]],
+                key: str,
+                default: int,
+            ) -> int:
+                try:
+                    return int(params.get(key, [default])[0])
+                except (TypeError, ValueError):
+                    return default
 
             def _parse_client_route(self, path: str) -> tuple[str, str, str | None] | None:
                 parts = [unquote(part) for part in path.strip("/").split("/")]
