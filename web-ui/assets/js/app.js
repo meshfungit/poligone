@@ -281,25 +281,34 @@ function renderAnnounces() {
   const wrapper = document.createElement("div");
   const section = renderCollapsibleSection("announces", "Announces");
   section.classList.add("announces-section");
+
   const announces = Array.isArray(currentStatus?.announces) ? currentStatus.announces : [];
+
   const count = document.createElement("div");
   count.className = "settings-hint";
+
+  const listHeader = renderAnnounceListHeader();
+
   const list = document.createElement("div");
   list.className = "announce-list";
+
   const refresh = () => renderAnnounceResults(announces, count, list);
 
   const filters = document.createElement("div");
   filters.className = "announce-filters";
-
   filters.appendChild(renderAnnounceTypeFilter(refresh));
   filters.appendChild(renderAnnounceTextFilter("Name", "name", refresh));
   filters.appendChild(renderAnnounceTextFilter("Identity", "identity", refresh));
   filters.appendChild(renderAnnounceTextFilter("LXMF", "lxmf", refresh));
   filters.appendChild(renderAnnounceHopsFilter(refresh));
   filters.appendChild(renderAnnounceApplyButton(refresh));
+
   section.appendChild(filters);
   section.appendChild(count);
+  section.appendChild(listHeader);
+
   refresh();
+
   section.appendChild(list);
   wrapper.appendChild(section);
 
@@ -1106,8 +1115,6 @@ function renderAnnounceResults(announces, count, list) {
     list.appendChild(empty);
     return;
   }
-
-  list.appendChild(renderAnnounceListHeader());
 
   for (const announce of announces) {
     list.appendChild(renderAnnounceRow(announce));
