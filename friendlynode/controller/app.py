@@ -541,23 +541,27 @@ class ControllerApp:
             "source": "reticulum",
         }
 
-    def _announce_type_from_aspect(self, aspect: str) -> str:
-        clean_aspect = aspect.strip()
-
-        if clean_aspect == "":
-            return "peer"
-
-        mapped_type = ANNOUNCE_TYPE_BY_ASPECT.get(clean_aspect)
-        if mapped_type is not None:
-            return mapped_type
-
-        return clean_aspect
+    # def _announce_type_from_aspect(self, aspect: str) -> str:
+    #     clean_aspect = aspect.strip()
+    #
+    #     if clean_aspect == "":
+    #         return "peer"
+    #
+    #     mapped_type = ANNOUNCE_TYPE_BY_ASPECT.get(clean_aspect)
+    #     if mapped_type is not None:
+    #         return mapped_type
+    #
+    #     return clean_aspect
 
     def _announce_type_from_announce(self, aspect: str, app_data_preview: str) -> str:
-        aspect_type = self._announce_type_from_aspect(aspect)
+        clean_aspect = aspect.strip()
 
-        if aspect_type != "peer":
-            return aspect_type
+        if clean_aspect != "":
+            mapped_type = ANNOUNCE_TYPE_BY_ASPECT.get(clean_aspect)
+            if mapped_type is not None:
+                return mapped_type
+
+            return clean_aspect
 
         return self._announce_type_from_app_data(app_data_preview)
 
