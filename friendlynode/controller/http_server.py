@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import json
 import mimetypes
 import threading
@@ -19,7 +20,31 @@ DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8787
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_WEB_ROOT = PROJECT_ROOT / "web-ui"
+CLIENT_DISCONNECT_WINERRORS = frozenset({10053, 10054})
 
+CLIENT_DISCONNECT_ERRNOS = frozenset(
+    value
+    for value in (
+        getattr(errno, "ECONNABORTED", None),
+        getattr(errno, "ECONNRESET", None),
+        getattr(errno, "EPIPE", None),
+    )
+    if value is not None
+)
+
+def is_client_disconnect_error(exc: BaseException) -> bool:
+    if isinstance(exc, (ConnectionAbortedError, ConnectionResetError, BrokenPipeError)):
+        return True
+
+    if not isinstance(exc, OSError):
+        return False
+
+    winerror = getattr(exc, "winerror", None)
+    if winerror in CLIENT_DISCONNECT_WINERRORS:
+        return True
+
+    error_number = getattr(exc, "errno", None)
+    return error_number in CLIENT_DISCONNECT_ERRNOS
 
 class ReusableThreadingHTTPServer(ThreadingHTTPServer):
     allow_reuse_address = True
@@ -91,6 +116,15 @@ class ControllerHttpServer:
 
         class FriendlyNodeRequestHandler(BaseHTTPRequestHandler):
             server_version = "FriendlyNodeHTTP/0.1"
+
+            def handle(self) -> None:
+                try:
+                    super().handle()
+                except OSError as exc:
+                    if is_client_disconnect_error(exc):
+                        self.close_connection = True
+                        return
+                    raise
 
             def do_GET(self) -> None:
                 parsed = urlparse(self.path)
