@@ -55,6 +55,8 @@ const announceFilters = {
   hops: 0,
 };
 
+const UNKNOWN_ASPECT_FILTER_VALUE = "__unknown_aspect__";
+
 const ANNOUNCE_TYPE_DEFINITIONS = Object.freeze([
   {
     value: "identity",
@@ -225,9 +227,29 @@ function getAnnounceTypeLabel(announceOrType) {
   return aspect || type || "Peer";
 }
 
+function announceHasUnknownRawAspect(announce) {
+  const aspect = getAnnounceAspect(announce);
+
+  if (aspect === "") {
+    return false;
+  }
+
+  return getAnnounceTypeDefinitionByAspect(aspect) === null;
+}
+
+
+function filterAnnouncesForDisplay(announces) {
+  if (announceFilters.type !== UNKNOWN_ASPECT_FILTER_VALUE) {
+    return announces;
+  }
+
+  return announces.filter(announceHasUnknownRawAspect);
+}
+
 function getAnnounceTypeFilterOptions() {
   const options = [
     ["all", "All"],
+    [UNKNOWN_ASPECT_FILTER_VALUE, "Unknown raw aspects"],
     ...ANNOUNCE_TYPE_DEFINITIONS.map((definition) => [definition.value, definition.label]),
   ];
 
@@ -1345,11 +1367,12 @@ function renderAnnounceListHeader() {
 }
 
 function renderAnnounceResults(announces, count, list) {
+  const visibleAnnounces = filterAnnouncesForDisplay(announces);
   const shouldStickToBottom = isAnnounceListAtBottom(list);
-  count.textContent = `${announces.length} announces`;
+  count.textContent = `${visibleAnnounces.length} announces`;
   list.replaceChildren();
 
-  if (announces.length === 0) {
+  if (visibleAnnounces.length === 0) {
     const empty = document.createElement("div");
     empty.className = "settings-hint";
     empty.textContent = "No announces received for current filters.";
@@ -1357,7 +1380,7 @@ function renderAnnounceResults(announces, count, list) {
     return;
   }
 
-  for (const announce of announces) {
+  for (const announce of visibleAnnounces) {
     list.appendChild(renderAnnounceRow(announce));
   }
 
@@ -1606,7 +1629,11 @@ function buildAnnounceQueryParams() {
   for (const key of ["type", "name", "identity", "lxmf"]) {
     const value = String(announceFilters[key] || "").trim();
 
-    if (value !== "" && !(key === "type" && value === "all")) {
+    if (key === "type" && (value === "all" || value === UNKNOWN_ASPECT_FILTER_VALUE)) {
+      continue;
+    }
+
+    if (value !== "") {
       params.set(key, value);
     }
   }
