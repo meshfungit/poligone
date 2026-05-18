@@ -101,6 +101,8 @@ class RnsRuntime:
         self.LXMF: ModuleType | type[StubLxmfModule] | None = None
         self.reticulum: Any | None = None
         self.using_stubs = True
+        self.rns_using_stub = True
+        self.lxmf_using_stub = True
         self._announce_stop = threading.Event()
         self._announce_thread: threading.Thread | None = None
         self._interface_signatures: dict[str, tuple[object, ...]] = {}
@@ -132,6 +134,8 @@ class RnsRuntime:
                 "rns.started",
                 {
                     "using_stubs": self.using_stubs,
+                    "rns_using_stub": self.rns_using_stub,
+                    "lxmf_using_stub": self.lxmf_using_stub,
                     "config_dir": str(self.config_dir),
                     "runtime_source_path": (
                         str(self.runtime_source_path)
@@ -232,12 +236,12 @@ class RnsRuntime:
                 "Reticulum runtime is not running",
             )
 
-        if self.using_stubs:
+        if self.rns_using_stub:
             return self._nomadnet_fetch_error(
                 destination,
                 page_path,
                 "stub_runtime",
-                "Reticulum runtime is running in stub mode",
+                "Reticulum RNS runtime is running in stub mode",
             )
 
         try:
@@ -423,7 +427,7 @@ class RnsRuntime:
             "destination_hash": destination_hash,
             "path": path,
             "source": "",
-            "runtime": "reticulum" if not self.using_stubs else "stub",
+            "runtime": "reticulum" if not self.rns_using_stub else "stub",
         }
 
     def announce_status(self) -> dict[str, object]:
@@ -460,6 +464,9 @@ class RnsRuntime:
         except ImportError:
             lxmf_module = StubLxmfModule
             lxmf_stub = True
+
+        self.rns_using_stub = rns_stub
+        self.lxmf_using_stub = lxmf_stub
 
         return rns_module, lxmf_module, rns_stub or lxmf_stub
 
