@@ -171,14 +171,98 @@ tr:last-child td { border-bottom: 0; }
 }
 
 .nomadnet-address-row {
+  min-width: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(140px, 220px);
+  grid-template-columns: minmax(30ch, 38ch) 36px minmax(180px, 1fr) max-content;
+  align-items: end;
   gap: 8px;
   margin-top: 10px;
 }
 
-.nomadnet-actions {
-  margin-top: 10px;
+.nomadnet-address-row .settings-field,
+.nomadnet-address-row .access-field {
+  min-width: 0;
+}
+
+.nomadnet-address-row input {
+  width: 100%;
+}
+
+.nomadnet-destination-field {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.nomadnet-bookmark-button {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.nomadnet-path-field {
+  grid-column: 3;
+  grid-row: 1;
+}
+
+.nomadnet-address-open-button {
+  grid-column: 4;
+  grid-row: 1;
+}
+
+.nomadnet-destination-field input {
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+}
+
+.nomadnet-address-open-button,
+.nomadnet-bookmark-button {
+  min-width: 0;
+  height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel2);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.nomadnet-address-open-button {
+  padding: 8px 12px;
+}
+
+.nomadnet-bookmark-button {
+  width: 36px;
+  padding: 0;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.nomadnet-address-open-button:hover,
+.nomadnet-bookmark-button:hover {
+  border-color: var(--accent);
+}
+
+@media (max-width: 820px) {
+  .nomadnet-address-row {
+    grid-template-columns: minmax(0, 1fr) max-content;
+  }
+
+  .nomadnet-destination-field {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .nomadnet-bookmark-button {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .nomadnet-path-field {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .nomadnet-address-open-button {
+    grid-column: 2;
+    grid-row: 2;
+  }
 }
 
 .nomadnet-page {
@@ -1938,7 +2022,6 @@ tr:last-child td { border-bottom: 0; }
   }
 
   .access-endpoint-grid,
-  .nomadnet-address-row,
   .nomadnet-editor-file-row,
   .nomadnet-tabs,
   .settings-compact-grid,

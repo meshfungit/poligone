@@ -639,6 +639,7 @@ function renderNomadNetBrowser() {
   block.appendChild(title);
 
   const current = getNomadNetBrowserState();
+
   const controls = document.createElement("div");
   controls.className = "nomadnet-address-row";
 
@@ -650,37 +651,66 @@ function renderNomadNetBrowser() {
       current.destination_hash = value;
     }
   );
+  destinationField.classList.add("nomadnet-destination-field");
   const destinationInput = destinationField.querySelector("input");
   controls.appendChild(destinationField);
 
-  const pathField = renderAccessTextInput("Path", current.path || "/page/index.mu", "/page/index.mu", (value) => {
-    current.path = value;
-  });
+  const pathField = renderAccessTextInput(
+    "Path",
+    current.path || "/page/index.mu",
+    "/page/index.mu",
+    (value) => {
+      current.path = value;
+    }
+  );
+  pathField.classList.add("nomadnet-path-field");
   const pathInput = pathField.querySelector("input");
   controls.appendChild(pathField);
-  block.appendChild(controls);
 
-  const actions = document.createElement("div");
-  actions.className = "settings-row nomadnet-actions";
+  const openFromFields = () => openNomadNetPageFromFields(destinationInput, pathInput, current);
+
+  const openOnEnter = (event) => {
+    if (event.key !== "Enter") {
+      return;
+    }
+    event.preventDefault();
+    openFromFields();
+  };
+
+  if (destinationInput !== null) {
+    destinationInput.addEventListener("keydown", openOnEnter);
+  }
+
+  if (pathInput !== null) {
+    pathInput.addEventListener("keydown", openOnEnter);
+  }
 
   const openButton = document.createElement("button");
   openButton.type = "button";
+  openButton.className = "nomadnet-address-open-button";
   openButton.textContent = "Open";
-  openButton.onclick = () => openNomadNetPageFromFields(destinationInput, pathInput, current);
-  actions.appendChild(openButton);
+  openButton.onclick = openFromFields;
+  controls.appendChild(openButton);
+
+  const bookmarkDestination = String(destinationInput?.value || current.destination_hash || "").trim();
 
   const bookmarkButton = document.createElement("button");
   bookmarkButton.type = "button";
-  bookmarkButton.textContent = "Bookmark";
+  bookmarkButton.className = "nomadnet-bookmark-button";
+  bookmarkButton.title = "Bookmark this page";
+  bookmarkButton.setAttribute("aria-label", "Bookmark this page");
+  bookmarkButton.textContent = bookmarkDestination !== "" && nomadnetBookmarks.has(bookmarkDestination) ? "★" : "☆";
   bookmarkButton.onclick = () => {
     const destination = String(destinationInput?.value || current.destination_hash || "").trim();
+
     if (destination !== "") {
       nomadnetBookmarks.add(destination);
       render("NomadNet");
     }
   };
-  actions.appendChild(bookmarkButton);
-  block.appendChild(actions);
+  controls.appendChild(bookmarkButton);
+
+  block.appendChild(controls);
   block.appendChild(renderNomadNetBrowserSettings());
 
   const details = document.createElement("div");
@@ -717,7 +747,7 @@ function renderNomadNetBrowser() {
   } else {
     const hint = document.createElement("div");
     hint.className = "settings-hint";
-    hint.textContent = "Select a NomadNet announce or enter a destination hash. Real page retrieval is still backed by a stub endpoint.";
+    hint.textContent = "Select a NomadNet announce or enter a destination hash.\nReal page retrieval is still backed by a stub endpoint.";
     block.appendChild(hint);
   }
 
