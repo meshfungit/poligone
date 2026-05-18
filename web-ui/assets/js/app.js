@@ -1333,12 +1333,31 @@ async function fetchNomadNetPage(destinationHash, path) {
     }
 
     const page = await response.json();
+
+    if (page.status === "error" || page.error) {
+      nomadnetBrowserState = {
+        ...(nomadnetBrowserState || {}),
+        destination_hash: page.destination_hash || destinationHash,
+        path: page.path || path,
+        source: "",
+        runtime: page.runtime || "reticulum",
+        loading: false,
+        error: page.message || page.error || "NomadNet page request failed",
+      };
+
+      if (getActiveTab() === "NomadNet") {
+        render("NomadNet");
+      }
+
+      return;
+    }
+
     nomadnetBrowserState = {
       ...(nomadnetBrowserState || {}),
       destination_hash: page.destination_hash || destinationHash,
       path: page.path || path,
       source: page.source || "",
-      runtime: page.runtime || "stub",
+      runtime: page.runtime || "reticulum",
       loading: false,
       error: "",
     };

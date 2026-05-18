@@ -33,6 +33,8 @@ class EngineMain:
             interface_name=interface_name,
         )
 
+    def fetch_nomadnet_page(self, destination_hash: str, path: str) -> dict[str, object]:
+        return self.rns_runtime.fetch_nomadnet_page(destination_hash, path)
 
 def main() -> None:
     engine = EngineMain()

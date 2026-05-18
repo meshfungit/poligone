@@ -22,7 +22,13 @@ STUB_LXMF_VERSION = "stub-lxmf"
 ANNOUNCE_MONITOR_INTERVAL_SECONDS = 2.0
 DEFAULT_ANNOUNCE_MIN_INTERVAL_SECONDS = 15
 MIN_ANNOUNCE_MIN_INTERVAL_SECONDS = 5
-
+NOMADNET_APP_NAME = "nomadnetwork"
+NOMADNET_NODE_ASPECT = "node"
+NOMADNET_DEFAULT_PATH = "/page/index.mu"
+NOMADNET_PATH_REQUEST_TIMEOUT_SEC = 30.0
+NOMADNET_LINK_TIMEOUT_SEC = 45.0
+NOMADNET_REQUEST_TIMEOUT_SEC = 60.0
+NOMADNET_WAIT_STEP_SEC = 0.1
 
 class StubIdentity:
     pass
@@ -211,6 +217,213 @@ class RnsRuntime:
             "sent": sent,
             "errors": errors,
             "announced_at": now if sent > 0 else None,
+        }
+
+    def fetch_nomadnet_page(self, destination_hash: str, path: str) -> dict[str, object]:
+        destination = self._normalise_nomadnet_destination_hash(destination_hash)
+        page_path = self._normalise_nomadnet_path(path)
+        started_at = time.time()
+
+        if self.RNS is None or self.reticulum is None:
+            return self._nomadnet_fetch_error(
+                destination,
+                page_path,
+                "not_running",
+                "Reticulum runtime is not running",
+            )
+
+        if self.using_stubs:
+            return self._nomadnet_fetch_error(
+                destination,
+                page_path,
+                "stub_runtime",
+                "Reticulum runtime is running in stub mode",
+            )
+
+        try:
+            destination_hash_bytes = bytes.fromhex(destination)
+            self._wait_for_nomadnet_path(destination_hash_bytes)
+
+            remote_identity = self.RNS.Identity.recall(destination_hash_bytes)
+            if remote_identity is None:
+                return self._nomadnet_fetch_error(
+                    destination,
+                    page_path,
+                    "identity_not_found",
+                    "Destination identity is not available after path lookup",
+                )
+
+            remote_destination = self.RNS.Destination(
+                remote_identity,
+                self.RNS.Destination.OUT,
+                self.RNS.Destination.SINGLE,
+                NOMADNET_APP_NAME,
+                NOMADNET_NODE_ASPECT,
+            )
+
+            if getattr(remote_destination, "hash", None) != destination_hash_bytes:
+                return self._nomadnet_fetch_error(
+                    destination,
+                    page_path,
+                    "destination_mismatch",
+                    "Reconstructed nomadnetwork.node destination hash does not match requested hash",
+                )
+
+            link = self._open_nomadnet_link(remote_destination)
+
+            try:
+                response = self._request_nomadnet_path(link, page_path)
+            finally:
+                try:
+                    link.teardown()
+                except Exception:
+                    pass
+
+            source = self._decode_nomadnet_response(response)
+
+            return {
+                "status": "ok",
+                "destination_hash": destination,
+                "path": page_path,
+                "source": source,
+                "runtime": "reticulum",
+                "elapsed_sec": round(time.time() - started_at, 3),
+            }
+
+        except Exception as exc:
+            return self._nomadnet_fetch_error(
+                destination,
+                page_path,
+                type(exc).__name__,
+                str(exc),
+            )
+
+    def _normalise_nomadnet_destination_hash(self, destination_hash: str) -> str:
+        destination = destination_hash.strip().lower()
+
+        if len(destination) != 32:
+            raise ValueError("NomadNet destination hash must be 32 hex characters")
+
+        if any(char not in "0123456789abcdef" for char in destination):
+            raise ValueError("NomadNet destination hash contains non-hex characters")
+
+        return destination
+
+    def _normalise_nomadnet_path(self, path: str) -> str:
+        clean_path = path.strip() or NOMADNET_DEFAULT_PATH
+
+        if not clean_path.startswith("/"):
+            clean_path = f"/{clean_path}"
+
+        return clean_path
+
+    def _wait_for_nomadnet_path(self, destination_hash: bytes) -> None:
+        transport = self.RNS.Transport
+
+        if transport.has_path(destination_hash):
+            return
+
+        transport.request_path(destination_hash)
+
+        deadline = time.time() + NOMADNET_PATH_REQUEST_TIMEOUT_SEC
+        while time.time() < deadline:
+            if transport.has_path(destination_hash):
+                return
+
+            time.sleep(NOMADNET_WAIT_STEP_SEC)
+
+        raise TimeoutError("Timed out waiting for Reticulum path to NomadNet node")
+
+    def _open_nomadnet_link(self, remote_destination: object) -> object:
+        established = threading.Event()
+        closed = threading.Event()
+        link_holder: dict[str, object] = {}
+
+        def link_established(link: object) -> None:
+            link_holder["link"] = link
+            established.set()
+
+        def link_closed(link: object) -> None:
+            closed.set()
+
+        link = self.RNS.Link(
+            remote_destination,
+            established_callback=link_established,
+            closed_callback=link_closed,
+        )
+
+        deadline = time.time() + NOMADNET_LINK_TIMEOUT_SEC
+        while time.time() < deadline:
+            if established.is_set():
+                return link_holder.get("link", link)
+
+            if closed.is_set():
+                break
+
+            time.sleep(NOMADNET_WAIT_STEP_SEC)
+
+        try:
+            link.teardown()
+        except Exception:
+            pass
+
+        raise TimeoutError("Timed out establishing link to NomadNet node")
+
+    def _request_nomadnet_path(self, link: object, page_path: str) -> object:
+        completed = threading.Event()
+        result: dict[str, object] = {}
+
+        def got_response(request_receipt: object) -> None:
+            result["response"] = getattr(request_receipt, "response", None)
+            completed.set()
+
+        def request_failed(request_receipt: object) -> None:
+            result["error"] = "NomadNet page request failed"
+            completed.set()
+
+        request_receipt = link.request(
+            page_path,
+            data=None,
+            response_callback=got_response,
+            failed_callback=request_failed,
+            timeout=NOMADNET_REQUEST_TIMEOUT_SEC,
+        )
+
+        if request_receipt is False:
+            raise RuntimeError("Could not send NomadNet page request")
+
+        if not completed.wait(NOMADNET_REQUEST_TIMEOUT_SEC + 5.0):
+            raise TimeoutError("Timed out waiting for NomadNet page response")
+
+        if "error" in result:
+            raise RuntimeError(str(result["error"]))
+
+        return result.get("response")
+
+    def _decode_nomadnet_response(self, response: object) -> str:
+        if response is None:
+            return ""
+
+        if isinstance(response, bytes):
+            return response.decode("utf-8", errors="replace")
+
+        return str(response)
+
+    def _nomadnet_fetch_error(
+            self,
+            destination_hash: str,
+            path: str,
+            error: str,
+            message: str,
+    ) -> dict[str, object]:
+        return {
+            "status": "error",
+            "error": error,
+            "message": message,
+            "destination_hash": destination_hash,
+            "path": path,
+            "source": "",
+            "runtime": "reticulum" if not self.using_stubs else "stub",
         }
 
     def announce_status(self) -> dict[str, object]:

@@ -19,6 +19,7 @@ from friendlynode.engine.events import EngineEvent
 
 DEFAULT_ANNOUNCE_LIMIT = 500
 MAX_ANNOUNCE_LIMIT = 2000
+NOMADNET_DEFAULT_PATH = "/page/index.mu"
 
 ANNOUNCE_TYPE_BY_ASPECT = {
     "lxmf.delivery": "identity",
@@ -327,27 +328,30 @@ class ControllerApp:
         }
 
     def fetch_nomadnet_page(self, destination_hash: str, path: str) -> dict[str, object]:
-        destination = destination_hash.strip()
-        page_path = path.strip() or "/page/index.mu"
+        destination = destination_hash.strip().lower()
+        page_path = path.strip() or NOMADNET_DEFAULT_PATH
 
         if not page_path.startswith("/"):
             page_path = f"/{page_path}"
 
-        source = (
-            "`cFriendlyNode NomadNet browser\n\n"
-            ">Stub page\n\n"
-            f"`!Destination`!: {destination or '-'}\n\n"
-            f"`!Path`!: {page_path}\n\n"
-            "Symbols: ✔ ⚠ ♻ ⚖ ☄\n\n"
-            "Real NomadNet page retrieval is not wired yet.\n"
-        )
         self.state.append_log("info", "nomadnet", f"Page requested: {destination or '-'}{page_path}")
-        return {
-            "destination_hash": destination,
-            "path": page_path,
-            "source": source,
-            "runtime": "stub",
-        }
+
+        result = self.engine_supervisor.fetch_nomadnet_page(destination, page_path)
+
+        if result.get("status") == "error":
+            self.state.append_log(
+                "error",
+                "nomadnet",
+                f"Page request failed: {destination or '-'}{page_path}: {result.get('error')}: {result.get('message')}",
+            )
+        else:
+            self.state.append_log(
+                "info",
+                "nomadnet",
+                f"Page received: {destination or '-'}{page_path}",
+            )
+
+        return result
 
     def list_nomadnet_pages(self) -> dict[str, object]:
         pages_dir = self.config.nomadnet_pages_dir
