@@ -11,6 +11,7 @@ let announceModalState = null;
 let clearMessagesState = null;
 let transientConversation = null;
 let nomadnetBrowserState = null;
+let nomadnetBrowserSettingsModalOpen = false;
 let micronSymbolStyle = "system";
 let activeNomadNetSection = "Browser";
 let nomadnetEditorDraft = "`cFriendlyNode local page\n\nWelcome to a local NomadNet page draft.\n\nSymbols: \u2714 \u26A0 \u267B \u2696 \u2604\n";
@@ -622,6 +623,7 @@ function renderNomadNetTabs() {
     button.textContent = tab;
     button.onclick = () => {
       activeNomadNetSection = tab;
+      nomadnetBrowserSettingsModalOpen = false;
       render("NomadNet");
     };
     tabs.appendChild(button);
@@ -639,9 +641,12 @@ function renderNomadNetBrowser() {
   const header = document.createElement("div");
   header.className = "nomadnet-browser-header";
 
+  const browserPanel = document.createElement("div");
+  browserPanel.className = "nomadnet-browser-panel";
+
   const title = document.createElement("h2");
   title.textContent = "Browser";
-  header.appendChild(title);
+  browserPanel.appendChild(title);
 
   const runtime = document.createElement("div");
   runtime.className = "nomadnet-browser-runtime";
@@ -654,7 +659,18 @@ function renderNomadNetBrowser() {
   runtimeValue.textContent = current.runtime || "stub";
   runtime.appendChild(runtimeValue);
 
-  header.appendChild(runtime);
+  browserPanel.appendChild(runtime);
+  header.appendChild(browserPanel);
+
+  const settingsButton = document.createElement("button");
+  settingsButton.type = "button";
+  settingsButton.className = "nomadnet-browser-settings-button";
+  settingsButton.textContent = "Settings";
+  settingsButton.onclick = () => {
+    nomadnetBrowserSettingsModalOpen = true;
+    render("NomadNet");
+  };
+  header.appendChild(settingsButton);
   block.appendChild(header);
 
   const controls = document.createElement("div");
@@ -670,6 +686,8 @@ function renderNomadNetBrowser() {
   );
   destinationField.classList.add("nomadnet-destination-field");
   const destinationInput = destinationField.querySelector("input");
+
+  const hopsField = renderNomadNetHopsField(current.hops);
 
   const pathField = renderAccessTextInput(
     "Path",
@@ -724,19 +742,17 @@ function renderNomadNetBrowser() {
   openButton.onclick = openFromFields;
 
   controls.appendChild(destinationField);
+  controls.appendChild(hopsField);
   controls.appendChild(bookmarkButton);
   controls.appendChild(pathField);
   controls.appendChild(openButton);
   block.appendChild(controls);
-
-  block.appendChild(renderNomadNetBrowserSettings());
 
   const details = document.createElement("div");
   details.className = "settings-compact-grid nomadnet-browser-details";
 
   for (const [label, value] of [
     ["Name", current.name || "-"],
-    ["Hops", current.hops ?? "-"],
     ["Identity", current.identity_hash || "-"],
   ]) {
     details.appendChild(renderCompactSetting(label, value));
@@ -766,12 +782,63 @@ function renderNomadNetBrowser() {
     block.appendChild(hint);
   }
 
+  if (nomadnetBrowserSettingsModalOpen) {
+    block.appendChild(renderNomadNetBrowserSettings());
+  }
+
   return block;
 }
 
+function renderNomadNetHopsField(hops) {
+  const field = document.createElement("label");
+  field.className = "access-field nomadnet-hops-field";
+
+  const label = document.createElement("span");
+  label.textContent = "Hops";
+  field.appendChild(label);
+
+  const value = document.createElement("code");
+  value.textContent = hops === null || hops === undefined || hops === "" ? "-" : String(hops);
+  field.appendChild(value);
+
+  return field;
+}
+
 function renderNomadNetBrowserSettings() {
-  const section = renderCollapsibleSection("nomadnetBrowserSettings", "Settings");
-  section.classList.add("nomadnet-browser-settings");
+  const overlay = document.createElement("div");
+  overlay.className = "nomadnet-browser-settings-overlay";
+  overlay.onclick = (event) => {
+    if (event.target !== overlay) {
+      return;
+    }
+
+    nomadnetBrowserSettingsModalOpen = false;
+    render("NomadNet");
+  };
+
+  const modal = document.createElement("section");
+  modal.className = "nomadnet-browser-settings-modal";
+  modal.onclick = (event) => event.stopPropagation();
+
+  const header = document.createElement("div");
+  header.className = "nomadnet-browser-settings-modal-header";
+
+  const title = document.createElement("h2");
+  title.textContent = "Settings";
+  header.appendChild(title);
+
+  const closeButton = document.createElement("button");
+  closeButton.type = "button";
+  closeButton.className = "nomadnet-browser-settings-close";
+  closeButton.title = "Close";
+  closeButton.setAttribute("aria-label", "Close settings");
+  closeButton.textContent = "×";
+  closeButton.onclick = () => {
+    nomadnetBrowserSettingsModalOpen = false;
+    render("NomadNet");
+  };
+  header.appendChild(closeButton);
+  modal.appendChild(header);
 
   const grid = document.createElement("div");
   grid.className = "settings-compact-grid";
@@ -801,9 +868,10 @@ function renderNomadNetBrowserSettings() {
 
   field.appendChild(select);
   grid.appendChild(field);
-  section.appendChild(grid);
+  modal.appendChild(grid);
+  overlay.appendChild(modal);
 
-  return section;
+  return overlay;
 }
 
 function renderNomadNetBookmarks() {
@@ -5334,6 +5402,10 @@ function render(tab = "Client") {
     announceModalState = null;
   }
 
+  if (tab !== "NomadNet") {
+    nomadnetBrowserSettingsModalOpen = false;
+  }
+
   document.querySelector("h1").textContent = tab;
   renderChannelSecurityWarning();
   renderNav(tab);
@@ -6353,6 +6425,11 @@ document.addEventListener("keydown", (event) => {
   if (announceModalState !== null) {
     announceModalState = null;
     render("Announces");
+  }
+
+  if (nomadnetBrowserSettingsModalOpen) {
+    nomadnetBrowserSettingsModalOpen = false;
+    render("NomadNet");
   }
 
   if (symbolPaletteOpen) {
