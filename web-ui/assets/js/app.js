@@ -634,11 +634,28 @@ function renderNomadNetBrowser() {
   const block = document.createElement("section");
   block.className = "settings-block nomadnet-browser";
 
+  const current = getNomadNetBrowserState();
+
+  const header = document.createElement("div");
+  header.className = "nomadnet-browser-header";
+
   const title = document.createElement("h2");
   title.textContent = "Browser";
-  block.appendChild(title);
+  header.appendChild(title);
 
-  const current = getNomadNetBrowserState();
+  const runtime = document.createElement("div");
+  runtime.className = "nomadnet-browser-runtime";
+
+  const runtimeLabel = document.createElement("span");
+  runtimeLabel.textContent = "Runtime:";
+  runtime.appendChild(runtimeLabel);
+
+  const runtimeValue = document.createElement("code");
+  runtimeValue.textContent = current.runtime || "stub";
+  runtime.appendChild(runtimeValue);
+
+  header.appendChild(runtime);
+  block.appendChild(header);
 
   const controls = document.createElement("div");
   controls.className = "nomadnet-address-row";
@@ -653,7 +670,6 @@ function renderNomadNetBrowser() {
   );
   destinationField.classList.add("nomadnet-destination-field");
   const destinationInput = destinationField.querySelector("input");
-  controls.appendChild(destinationField);
 
   const pathField = renderAccessTextInput(
     "Path",
@@ -665,7 +681,6 @@ function renderNomadNetBrowser() {
   );
   pathField.classList.add("nomadnet-path-field");
   const pathInput = pathField.querySelector("input");
-  controls.appendChild(pathField);
 
   const openFromFields = () => openNomadNetPageFromFields(destinationInput, pathInput, current);
 
@@ -685,13 +700,6 @@ function renderNomadNetBrowser() {
     pathInput.addEventListener("keydown", openOnEnter);
   }
 
-  const openButton = document.createElement("button");
-  openButton.type = "button";
-  openButton.className = "nomadnet-address-open-button";
-  openButton.textContent = "Open";
-  openButton.onclick = openFromFields;
-  controls.appendChild(openButton);
-
   const bookmarkDestination = String(destinationInput?.value || current.destination_hash || "").trim();
 
   const bookmarkButton = document.createElement("button");
@@ -708,21 +716,28 @@ function renderNomadNetBrowser() {
       render("NomadNet");
     }
   };
-  controls.appendChild(bookmarkButton);
 
+  const openButton = document.createElement("button");
+  openButton.type = "button";
+  openButton.className = "nomadnet-address-open-button";
+  openButton.textContent = "Open";
+  openButton.onclick = openFromFields;
+
+  controls.appendChild(destinationField);
+  controls.appendChild(bookmarkButton);
+  controls.appendChild(pathField);
+  controls.appendChild(openButton);
   block.appendChild(controls);
+
   block.appendChild(renderNomadNetBrowserSettings());
 
   const details = document.createElement("div");
-  details.className = "settings-compact-grid";
+  details.className = "settings-compact-grid nomadnet-browser-details";
 
   for (const [label, value] of [
     ["Name", current.name || "-"],
-    ["Destination", current.destination_hash || "-"],
-    ["Identity", current.identity_hash || "-"],
     ["Hops", current.hops ?? "-"],
-    ["Runtime", current.runtime || "stub"],
-    ["Path", current.path || "/page/index.mu"],
+    ["Identity", current.identity_hash || "-"],
   ]) {
     details.appendChild(renderCompactSetting(label, value));
   }
