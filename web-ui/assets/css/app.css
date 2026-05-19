@@ -2395,3 +2395,111 @@ tr:last-child td { border-bottom: 0; }
   justify-self: end;
   text-align: right;
 }
+
+.nomadnet-bookmarks-panel {
+  position: relative;
+}
+
+.nomadnet-bookmark-tree {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  margin-top: 10px;
+  user-select: none;
+}
+
+.nomadnet-bookmark-group {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.nomadnet-bookmark-group-header,
+.nomadnet-bookmark-item {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #0f1722;
+  color: var(--text);
+  padding: 5px 8px;
+  text-align: left;
+}
+
+.nomadnet-bookmark-tree-editable .nomadnet-bookmark-group-header {
+  cursor: context-menu;
+}
+
+.nomadnet-bookmark-group-name,
+.nomadnet-bookmark-item-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.nomadnet-bookmark-group-marker,
+.nomadnet-bookmark-group-count {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.nomadnet-bookmark-group-count {
+  justify-self: end;
+}
+
+.nomadnet-bookmark-group-items {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.nomadnet-bookmark-item {
+  width: 100%;
+  grid-template-columns: minmax(0, 1fr) minmax(120px, 0.45fr);
+  cursor: pointer;
+}
+
+.nomadnet-bookmark-item:hover,
+.nomadnet-bookmark-group-header:hover,
+.nomadnet-bookmark-drop-target {
+  border-color: var(--accent);
+}
+
+.nomadnet-bookmark-item-path {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  justify-self: end;
+}
+
+.nomadnet-bookmark-touch-dragging {
+  opacity: 0.65;
+  border-color: var(--accent);
+}
+
+.nomadnet-bookmark-modal {
+  width: min(720px, 100%);
+}
+
+.nomadnet-bookmark-add-group-modal {
+  width: min(420px, 100%);
+}
+
+@media (max-width: 720px) {
+  .nomadnet-bookmark-item {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .nomadnet-bookmark-item-path {
+    justify-self: start;
+  }
+}

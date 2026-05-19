@@ -15,6 +15,7 @@ from friendlynode.controller.runtime_manager import RuntimeInfo, RuntimeManager
 from friendlynode.controller.state_cache import StateCache
 from friendlynode.config.rns_config_editor import load_rns_config, save_rns_config
 from friendlynode.engine.events import EngineEvent
+from friendlynode.nomadnet_browser_store import NOMADNET_BROWSER_STATE_FILENAME, NomadNetBrowserStore
 
 
 DEFAULT_ANNOUNCE_LIMIT = 500
@@ -96,6 +97,8 @@ class ControllerApp:
         self.state = StateCache()
         self.runtime_manager = RuntimeManager()
         self.client_store = ClientAccountStore(self.config.clients_dir)
+        self.nomadnet_browser_store = NomadNetBrowserStore(
+            self.config.database_path.parent / NOMADNET_BROWSER_STATE_FILENAME)
         self.engine_supervisor = EngineSupervisor(self.config, self._handle_engine_event)
 
     def start(self) -> None:
@@ -417,6 +420,14 @@ class ControllerApp:
             raise ValueError("NomadNet page path must end with .mu")
 
         return candidate
+
+    def get_nomadnet_browser_state(self) -> dict[str, object]:
+        return self.nomadnet_browser_store.load()
+
+    def save_nomadnet_browser_state(self, payload: dict[str, object]) -> dict[str, object]:
+        result = self.nomadnet_browser_store.save(payload)
+        self.state.append_log("info", "nomadnet", "Browser bookmarks/history saved")
+        return result
 
     def build_client_draft(self) -> dict[str, object]:
         return self.client_store.build_draft().to_dict()
