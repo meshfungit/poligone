@@ -2430,8 +2430,12 @@ tr:last-child td { border-bottom: 0; }
   text-align: left;
 }
 
+.nomadnet-bookmark-group-header {
+  cursor: pointer;
+}
+
 .nomadnet-bookmark-tree-editable .nomadnet-bookmark-group-header {
-  cursor: context-menu;
+  cursor: pointer;
 }
 
 .nomadnet-bookmark-group-name,
@@ -2450,7 +2454,17 @@ tr:last-child td { border-bottom: 0; }
 }
 
 .nomadnet-bookmark-group-count {
+  min-width: 24px;
   justify-self: end;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 1px 7px;
+  text-align: center;
+  background: var(--panel2);
+}
+
+.nomadnet-bookmark-group-collapsed .nomadnet-bookmark-group-header {
+  background: color-mix(in srgb, var(--panel2) 74%, #000 26%);
 }
 
 .nomadnet-bookmark-group-items {

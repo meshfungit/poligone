@@ -21,7 +21,9 @@ let nomadnetBrowserStorageSaveTimer = null;
 let nomadnetBookmarkStore = createDefaultNomadNetBookmarkStore();
 let nomadnetBookmarkTreeModalState = null;
 let nomadnetBookmarkAddGroupState = null;
+let nomadnetBookmarkPageModalState = null;
 let nomadnetBookmarkDragState = null;
+let nomadnetBookmarkCollapsedGroups = new Set();
 let nomadnetLongPressTimer = null;
 let micronSymbolStyle = "system";
 let activeNomadNetSection = "Browser";
@@ -637,6 +639,7 @@ function renderNomadNetTabs() {
       nomadnetBrowserSettingsModalOpen = false;
       nomadnetBookmarkTreeModalState = null;
       nomadnetBookmarkAddGroupState = null;
+      nomadnetBookmarkPageModalState = null;
       clearNomadNetBookmarkDragState();
       render("NomadNet");
     };
@@ -953,6 +956,10 @@ function renderNomadNetBookmarks() {
     block.appendChild(renderNomadNetBookmarkAddGroupModal());
   }
 
+  if (nomadnetBookmarkPageModalState !== null) {
+    block.appendChild(renderNomadNetBookmarkPageModal());
+  }
+
   return block;
 }
 
@@ -984,6 +991,7 @@ function renderNomadNetBookmarkTreeModal() {
   closeButton.onclick = () => {
     nomadnetBookmarkTreeModalState = null;
     nomadnetBookmarkAddGroupState = null;
+    nomadnetBookmarkPageModalState = null;
     clearNomadNetBookmarkDragState();
     render("NomadNet");
   };
@@ -994,6 +1002,7 @@ function renderNomadNetBookmarkTreeModal() {
   overlay.onclick = () => {
     nomadnetBookmarkTreeModalState = null;
     nomadnetBookmarkAddGroupState = null;
+    nomadnetBookmarkPageModalState = null;
     clearNomadNetBookmarkDragState();
     render("NomadNet");
   };
@@ -1008,12 +1017,14 @@ function renderNomadNetBookmarkAddGroupModal() {
   dialog.className = "client-editor nomadnet-bookmark-add-group-modal";
   dialog.onclick = (event) => event.stopPropagation();
 
-  const parentGroup = getNomadNetBookmarkGroup(nomadnetBookmarkAddGroupState.parent_id);
+  const targetGroupId = String(nomadnetBookmarkAddGroupState?.parent_id || NOMADNET_BOOKMARK_ROOT_ID);
+  const parentGroup = getNomadNetBookmarkGroup(targetGroupId);
+  const isRoot = targetGroupId === NOMADNET_BOOKMARK_ROOT_ID;
   const title = document.createElement("h2");
-  title.textContent = `Add group to ${parentGroup?.name || "Bookmarks"}`;
+  title.textContent = `Group: ${parentGroup?.name || "Bookmarks"}`;
   dialog.appendChild(title);
 
-  const field = renderAccessTextInput("Name", "", "Group name", () => {});
+  const field = renderAccessTextInput("Name", "", "New group name", () => {});
   const input = field.querySelector("input");
   dialog.appendChild(field);
 
@@ -1024,7 +1035,8 @@ function renderNomadNetBookmarkAddGroupModal() {
       return;
     }
 
-    addNomadNetBookmarkGroup(nomadnetBookmarkAddGroupState.parent_id, name);
+    addNomadNetBookmarkGroup(targetGroupId, name);
+    setNomadNetBookmarkGroupCollapsed(targetGroupId, false);
     nomadnetBookmarkAddGroupState = null;
     render("NomadNet");
   };
@@ -1050,6 +1062,23 @@ function renderNomadNetBookmarkAddGroupModal() {
   addButton.onclick = createGroup;
   actions.appendChild(addButton);
 
+  const deleteButton = document.createElement("button");
+  deleteButton.type = "button";
+  deleteButton.className = "nomadnet-danger-button";
+  deleteButton.textContent = "Delete group";
+  deleteButton.disabled = isRoot;
+  deleteButton.title = isRoot ? "Root group cannot be deleted" : "Delete this group and everything inside it";
+  deleteButton.onclick = () => {
+    if (isRoot || parentGroup === null) {
+      return;
+    }
+
+    deleteNomadNetBookmarkGroup(targetGroupId);
+    nomadnetBookmarkAddGroupState = null;
+    render("NomadNet");
+  };
+  actions.appendChild(deleteButton);
+
   const cancelButton = document.createElement("button");
   cancelButton.type = "button";
   cancelButton.textContent = "Cancel";
@@ -1063,6 +1092,71 @@ function renderNomadNetBookmarkAddGroupModal() {
   overlay.appendChild(dialog);
   overlay.onclick = () => {
     nomadnetBookmarkAddGroupState = null;
+    render("NomadNet");
+  };
+  return overlay;
+}
+
+function renderNomadNetBookmarkPageModal() {
+  const item = getNomadNetBookmarkItem(nomadnetBookmarkPageModalState?.item_id || "");
+
+  if (item === null) {
+    nomadnetBookmarkPageModalState = null;
+    return document.createDocumentFragment();
+  }
+
+  const overlay = document.createElement("div");
+  overlay.className = "client-editor-overlay nomadnet-bookmark-page-overlay";
+
+  const dialog = document.createElement("section");
+  dialog.className = "client-editor nomadnet-bookmark-page-modal";
+  dialog.onclick = (event) => event.stopPropagation();
+
+  const title = document.createElement("h2");
+  title.textContent = item.name || "Bookmark";
+  dialog.appendChild(title);
+
+  const details = document.createElement("div");
+  details.className = "settings-compact-grid";
+  details.appendChild(renderCompactSetting("Destination", item.destination_hash || "-"));
+  details.appendChild(renderCompactSetting("Path", item.path || "/page/index.mu"));
+  details.appendChild(renderCompactSetting("Identity", item.identity_hash || "-"));
+  details.appendChild(renderCompactSetting("Hops", item.hops ?? "-"));
+  dialog.appendChild(details);
+
+  const actions = document.createElement("div");
+  actions.className = "settings-row client-editor-actions";
+
+  const openButton = document.createElement("button");
+  openButton.type = "button";
+  openButton.textContent = "Open";
+  openButton.onclick = () => openNomadNetBookmarkItem(item);
+  actions.appendChild(openButton);
+
+  const deleteButton = document.createElement("button");
+  deleteButton.type = "button";
+  deleteButton.className = "nomadnet-danger-button";
+  deleteButton.textContent = "Delete page";
+  deleteButton.onclick = () => {
+    deleteNomadNetBookmarkItem(item.id);
+    nomadnetBookmarkPageModalState = null;
+    render("NomadNet");
+  };
+  actions.appendChild(deleteButton);
+
+  const closeButton = document.createElement("button");
+  closeButton.type = "button";
+  closeButton.textContent = "Close";
+  closeButton.onclick = () => {
+    nomadnetBookmarkPageModalState = null;
+    render("NomadNet");
+  };
+  actions.appendChild(closeButton);
+  dialog.appendChild(actions);
+
+  overlay.appendChild(dialog);
+  overlay.onclick = () => {
+    nomadnetBookmarkPageModalState = null;
     render("NomadNet");
   };
   return overlay;
@@ -1095,14 +1189,21 @@ function renderNomadNetBookmarkGroup(group, options, depth) {
   groupBlock.className = "nomadnet-bookmark-group";
   groupBlock.dataset.nomadnetBookmarkGroupId = group.id;
 
+  const collapsed = isNomadNetBookmarkGroupCollapsed(group.id);
+  const totalCount = getNomadNetBookmarkItemCountForGroup(group.id);
+  groupBlock.classList.toggle("nomadnet-bookmark-group-collapsed", collapsed);
+
   const header = document.createElement("div");
   header.className = "nomadnet-bookmark-group-header";
   header.style.paddingLeft = `${Math.min(depth, 6) * 14}px`;
   header.dataset.nomadnetBookmarkGroupId = group.id;
+  header.title = collapsed
+    ? `${totalCount} bookmark${totalCount === 1 ? "" : "s"}`
+    : "Click to collapse";
 
   const marker = document.createElement("span");
   marker.className = "nomadnet-bookmark-group-marker";
-  marker.textContent = group.id === NOMADNET_BOOKMARK_ROOT_ID ? "▾" : "▸";
+  marker.textContent = collapsed ? "▸" : "▾";
   header.appendChild(marker);
 
   const name = document.createElement("span");
@@ -1112,7 +1213,7 @@ function renderNomadNetBookmarkGroup(group, options, depth) {
 
   const itemCount = document.createElement("span");
   itemCount.className = "nomadnet-bookmark-group-count";
-  itemCount.textContent = String(getNomadNetBookmarkItemsForGroup(group.id).length);
+  itemCount.textContent = String(totalCount);
   header.appendChild(itemCount);
 
   const openAddGroup = (event) => {
@@ -1122,6 +1223,12 @@ function renderNomadNetBookmarkGroup(group, options, depth) {
     render("NomadNet");
   };
 
+  header.onclick = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    toggleNomadNetBookmarkGroupCollapsed(group.id);
+    render("NomadNet");
+  };
   header.oncontextmenu = openAddGroup;
   bindNomadNetLongPress(header, openAddGroup);
 
@@ -1142,12 +1249,18 @@ function renderNomadNetBookmarkGroup(group, options, depth) {
     }
 
     event.preventDefault();
+    event.stopPropagation();
     header.classList.remove("nomadnet-bookmark-drop-target");
     moveNomadNetBookmarkItem(itemId, group.id);
+    setNomadNetBookmarkGroupCollapsed(group.id, false);
     render("NomadNet");
   };
 
   groupBlock.appendChild(header);
+
+  if (collapsed) {
+    return groupBlock;
+  }
 
   const items = document.createElement("div");
   items.className = "nomadnet-bookmark-group-items";
@@ -1190,21 +1303,45 @@ function renderNomadNetBookmarkItem(item, depth) {
   path.textContent = item.path || "/page/index.mu";
   button.appendChild(path);
 
+  const openPageModal = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    nomadnetBookmarkPageModalState = { item_id: item.id };
+    render("NomadNet");
+  };
+
   button.onclick = () => openNomadNetBookmarkItem(item);
+  button.oncontextmenu = openPageModal;
   button.ondragstart = (event) => {
     event.dataTransfer.setData("text/plain", item.id);
     event.dataTransfer.effectAllowed = "move";
   };
 
   button.ontouchstart = (event) => {
+    const touch = event.touches[0];
     clearNomadNetLongPressTimer();
     nomadnetLongPressTimer = window.setTimeout(() => {
-      nomadnetBookmarkDragState = { item_id: item.id, touch: true };
+      nomadnetBookmarkDragState = {
+        item_id: item.id,
+        touch: true,
+        moved: false,
+        start_x: touch?.clientX || 0,
+        start_y: touch?.clientY || 0,
+      };
       button.classList.add("nomadnet-bookmark-touch-dragging");
     }, 520);
   };
   button.ontouchmove = (event) => handleNomadNetBookmarkTouchMove(event);
-  button.ontouchend = (event) => handleNomadNetBookmarkTouchEnd(event);
+  button.ontouchend = (event) => {
+    if (nomadnetBookmarkDragState !== null && !nomadnetBookmarkDragState.moved) {
+      event.preventDefault();
+      clearNomadNetBookmarkDragState();
+      openPageModal(event);
+      return;
+    }
+
+    handleNomadNetBookmarkTouchEnd(event);
+  };
   button.ontouchcancel = clearNomadNetBookmarkDragState;
 
   return button;
@@ -1685,6 +1822,7 @@ function createDefaultNomadNetBookmarkStore() {
       },
     ],
     items: [],
+    collapsed_group_ids: [],
   };
 }
 
@@ -1800,11 +1938,25 @@ function normaliseNomadNetBookmarkStore(rawBookmarks) {
     store.items.push(item);
   }
 
+  const collapsedGroupIds = Array.isArray(rawBookmarks.collapsed_group_ids)
+    ? rawBookmarks.collapsed_group_ids
+      .map((value) => String(value || "").trim())
+      .filter((groupId) => groupIds.has(groupId))
+    : [];
+  store.collapsed_group_ids = Array.from(new Set(collapsedGroupIds));
+
   return store;
 }
 
 function normaliseNomadNetBookmarkStoreInPlace() {
+  syncNomadNetBookmarkStoreCollapsedGroups();
   nomadnetBookmarkStore = normaliseNomadNetBookmarkStore(nomadnetBookmarkStore);
+  const validGroupIds = new Set(nomadnetBookmarkStore.groups.map((group) => group.id));
+  nomadnetBookmarkCollapsedGroups = new Set(
+    Array.from(nomadnetBookmarkCollapsedGroups)
+      .filter((groupId) => validGroupIds.has(groupId))
+  );
+  syncNomadNetBookmarkStoreCollapsedGroups();
   rebuildNomadNetBookmarkSet();
 }
 
@@ -1847,7 +1999,7 @@ function getNomadNetBrowserStoragePayload() {
       .filter(isNomadNetHistoryEntryUsable)
       .slice(-NOMADNET_BROWSER_HISTORY_LIMIT),
     history_index: nomadnetBrowserHistoryIndex,
-    bookmarks: normaliseNomadNetBookmarkStore(nomadnetBookmarkStore),
+    bookmarks: serialiseNomadNetBookmarkStore(),
   };
 }
 
@@ -1868,6 +2020,7 @@ async function loadNomadNetBrowserStorage() {
     nomadnetBrowserHistory = payload.history;
     nomadnetBrowserHistoryIndex = payload.history_index;
     nomadnetBookmarkStore = payload.bookmarks;
+    nomadnetBookmarkCollapsedGroups = new Set(Array.isArray(payload.bookmarks.collapsed_group_ids) ? payload.bookmarks.collapsed_group_ids : []);
     rebuildNomadNetBookmarkSet();
 
     if (nomadnetBrowserHistoryIndex >= 0 && nomadnetBrowserState === null) {
@@ -1956,6 +2109,87 @@ function getNomadNetBookmarkItemsForGroup(groupId) {
     .sort((left, right) => left.name.localeCompare(right.name));
 }
 
+function syncNomadNetBookmarkStoreCollapsedGroups() {
+  nomadnetBookmarkStore.collapsed_group_ids = Array.from(nomadnetBookmarkCollapsedGroups);
+}
+
+function serialiseNomadNetBookmarkStore() {
+  syncNomadNetBookmarkStoreCollapsedGroups();
+  return normaliseNomadNetBookmarkStore(nomadnetBookmarkStore);
+}
+
+function isNomadNetBookmarkGroupCollapsed(groupId) {
+  return nomadnetBookmarkCollapsedGroups.has(groupId);
+}
+
+function setNomadNetBookmarkGroupCollapsed(groupId, collapsed) {
+  if (collapsed) {
+    nomadnetBookmarkCollapsedGroups.add(groupId);
+  } else {
+    nomadnetBookmarkCollapsedGroups.delete(groupId);
+  }
+
+  syncNomadNetBookmarkStoreCollapsedGroups();
+  scheduleNomadNetBrowserStorageSave();
+}
+
+function toggleNomadNetBookmarkGroupCollapsed(groupId) {
+  setNomadNetBookmarkGroupCollapsed(groupId, !isNomadNetBookmarkGroupCollapsed(groupId));
+}
+
+function getNomadNetBookmarkItem(groupId) {
+  return nomadnetBookmarkStore.items.find((item) => item.id === groupId) || null;
+}
+
+function getNomadNetBookmarkGroupDescendantIds(groupId) {
+  const ids = new Set([groupId]);
+  let changed = true;
+
+  while (changed) {
+    changed = false;
+
+    for (const group of nomadnetBookmarkStore.groups) {
+      if (ids.has(group.id) || !ids.has(group.parent_id)) {
+        continue;
+      }
+
+      ids.add(group.id);
+      changed = true;
+    }
+  }
+
+  return ids;
+}
+
+function getNomadNetBookmarkItemCountForGroup(groupId) {
+  const groupIds = getNomadNetBookmarkGroupDescendantIds(groupId);
+  return nomadnetBookmarkStore.items.filter((item) => groupIds.has(item.group_id)).length;
+}
+
+function deleteNomadNetBookmarkGroup(groupId) {
+  if (groupId === NOMADNET_BOOKMARK_ROOT_ID) {
+    return;
+  }
+
+  const groupIds = getNomadNetBookmarkGroupDescendantIds(groupId);
+  nomadnetBookmarkStore.groups = nomadnetBookmarkStore.groups.filter((group) => !groupIds.has(group.id));
+  nomadnetBookmarkStore.items = nomadnetBookmarkStore.items.filter((item) => !groupIds.has(item.group_id));
+
+  for (const id of groupIds) {
+    nomadnetBookmarkCollapsedGroups.delete(id);
+  }
+
+  syncNomadNetBookmarkStoreCollapsedGroups();
+  rebuildNomadNetBookmarkSet();
+  scheduleNomadNetBrowserStorageSave();
+}
+
+function deleteNomadNetBookmarkItem(itemId) {
+  nomadnetBookmarkStore.items = nomadnetBookmarkStore.items.filter((item) => item.id !== itemId);
+  rebuildNomadNetBookmarkSet();
+  scheduleNomadNetBrowserStorageSave();
+}
+
 function addNomadNetBookmarkFromState(state, groupId = NOMADNET_BOOKMARK_ROOT_ID) {
   normaliseNomadNetBookmarkStoreInPlace();
   const item = createNomadNetBookmarkItemFromState(state, groupId);
@@ -1981,11 +2215,13 @@ function addNomadNetBookmarkFromState(state, groupId = NOMADNET_BOOKMARK_ROOT_ID
 function addNomadNetBookmarkGroup(parentId, name) {
   normaliseNomadNetBookmarkStoreInPlace();
   const parent = getNomadNetBookmarkGroup(parentId) || getNomadNetBookmarkGroup(NOMADNET_BOOKMARK_ROOT_ID);
+  const parentGroupId = parent?.id || NOMADNET_BOOKMARK_ROOT_ID;
   nomadnetBookmarkStore.groups.push({
     id: createNomadNetId("group"),
-    parent_id: parent?.id || NOMADNET_BOOKMARK_ROOT_ID,
+    parent_id: parentGroupId,
     name: String(name || "Group").trim() || "Group",
   });
+  setNomadNetBookmarkGroupCollapsed(parentGroupId, false);
   scheduleNomadNetBrowserStorageSave();
 }
 
@@ -2077,6 +2313,7 @@ function handleNomadNetBookmarkTouchMove(event) {
   }
 
   event.preventDefault();
+  nomadnetBookmarkDragState.moved = true;
 
   for (const element of document.querySelectorAll(".nomadnet-bookmark-drop-target")) {
     element.classList.remove("nomadnet-bookmark-drop-target");
@@ -6296,6 +6533,7 @@ function render(tab = "Client") {
     nomadnetBrowserSettingsModalOpen = false;
     nomadnetBookmarkTreeModalState = null;
     nomadnetBookmarkAddGroupState = null;
+    nomadnetBookmarkPageModalState = null;
     clearNomadNetBookmarkDragState();
   }
 
@@ -7331,6 +7569,11 @@ document.addEventListener("keydown", (event) => {
 
   if (nomadnetBookmarkAddGroupState !== null) {
     nomadnetBookmarkAddGroupState = null;
+    render("NomadNet");
+  }
+
+  if (nomadnetBookmarkPageModalState !== null) {
+    nomadnetBookmarkPageModalState = null;
     render("NomadNet");
   }
 
