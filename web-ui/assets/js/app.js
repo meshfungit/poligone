@@ -741,13 +741,6 @@ function renderNomadNetBrowser() {
   openButton.textContent = "Open";
   openButton.onclick = openFromFields;
 
-  controls.appendChild(destinationField);
-  controls.appendChild(hopsField);
-  controls.appendChild(bookmarkButton);
-  controls.appendChild(pathField);
-  controls.appendChild(openButton);
-  block.appendChild(controls);
-
   const details = document.createElement("div");
   details.className = "settings-compact-grid nomadnet-browser-details";
 
@@ -759,6 +752,13 @@ function renderNomadNetBrowser() {
   }
 
   block.appendChild(details);
+
+  controls.appendChild(destinationField);
+  controls.appendChild(hopsField);
+  controls.appendChild(bookmarkButton);
+  controls.appendChild(pathField);
+  controls.appendChild(openButton);
+  block.appendChild(controls);
 
   if (current.loading) {
     const loading = document.createElement("div");

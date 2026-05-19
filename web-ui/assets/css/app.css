@@ -150,7 +150,7 @@ tr:last-child td { border-bottom: 0; }
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 
 .nomadnet-tabs button,
@@ -170,32 +170,38 @@ tr:last-child td { border-bottom: 0; }
   border-color: var(--accent);
 }
 
+.nomadnet-tabs button {
+  padding-top: 7px;
+  padding-bottom: 7px;
+  line-height: 1.1;
+}
+
 .nomadnet-browser-header {
   min-width: 0;
   display: grid;
   grid-template-columns: minmax(30ch, 38ch) max-content minmax(0, 1fr);
   align-items: stretch;
   gap: 8px;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
 }
 
 .nomadnet-browser-panel {
   min-width: 0;
-  min-height: 36px;
+  min-height: 30px;
   display: inline-flex;
   align-items: baseline;
-  gap: 12px;
+  gap: 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--panel2);
-  padding: 8px 10px;
+  padding: 5px 10px;
 }
 
 .nomadnet-browser-panel h2 {
   margin: 0;
   flex: 0 0 auto;
   font-size: 14px;
-  line-height: 1.2;
+  line-height: 1.1;
 }
 
 .nomadnet-browser-runtime {
@@ -211,18 +217,19 @@ tr:last-child td { border-bottom: 0; }
 .nomadnet-browser-runtime code {
   min-width: 0;
   color: var(--text);
-  font: 12px/1.2 ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font: 12px/1.1 ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
   overflow-wrap: anywhere;
 }
 
 .nomadnet-browser-settings-button {
   min-width: 0;
-  min-height: 36px;
+  min-height: 30px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--panel2);
   color: var(--text);
-  padding: 8px 12px;
+  padding: 5px 12px;
+  line-height: 1.1;
   cursor: pointer;
 }
 
@@ -234,22 +241,42 @@ tr:last-child td { border-bottom: 0; }
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
 }
 
+.settings-compact-grid.nomadnet-browser-details .settings-compact-item {
+  gap: 2px;
+  padding: 6px 10px;
+}
+
+.settings-compact-grid.nomadnet-browser-details .settings-compact-item span,
+.settings-compact-grid.nomadnet-browser-details .settings-compact-item code {
+  line-height: 1.2;
+}
+
 .nomadnet-address-row {
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(30ch, 38ch) minmax(44px, 64px) 36px minmax(180px, 1fr) max-content;
+  grid-template-columns: minmax(30ch, 38ch) minmax(44px, 64px) 30px minmax(180px, 1fr) max-content;
   align-items: end;
   gap: 8px;
-  margin-top: 10px;
+  margin-top: 8px;
 }
 
 .nomadnet-address-row .settings-field,
 .nomadnet-address-row .access-field {
   min-width: 0;
+  gap: 3px;
+  font-size: 10px;
+  line-height: 1.1;
+}
+
+.nomadnet-address-row .access-field span {
+  line-height: 1.1;
 }
 
 .nomadnet-address-row input {
   width: 100%;
+  height: 30px;
+  padding: 5px 10px;
+  line-height: 1.15;
 }
 
 .nomadnet-destination-field {
@@ -283,7 +310,7 @@ tr:last-child td { border-bottom: 0; }
 
 .nomadnet-hops-field code {
   min-width: 0;
-  height: 36px;
+  height: 30px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -291,8 +318,8 @@ tr:last-child td { border-bottom: 0; }
   border-radius: 8px;
   background: var(--bg);
   color: var(--text);
-  padding: 8px 10px;
-  font: 12px/1.2 ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  padding: 5px 10px;
+  font: 12px/1.1 ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -301,7 +328,7 @@ tr:last-child td { border-bottom: 0; }
 .nomadnet-address-open-button,
 .nomadnet-bookmark-button {
   min-width: 0;
-  height: 36px;
+  height: 30px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--panel2);
@@ -310,13 +337,14 @@ tr:last-child td { border-bottom: 0; }
 }
 
 .nomadnet-address-open-button {
-  padding: 8px 12px;
+  padding: 5px 12px;
+  line-height: 1.1;
 }
 
 .nomadnet-bookmark-button {
-  width: 36px;
+  width: 30px;
   padding: 0;
-  font-size: 18px;
+  font-size: 17px;
   line-height: 1;
 }
 
