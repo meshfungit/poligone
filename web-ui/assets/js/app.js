@@ -12,6 +12,8 @@ let clearMessagesState = null;
 let transientConversation = null;
 let nomadnetBrowserState = null;
 let nomadnetBrowserSettingsModalOpen = false;
+let nomadnetBrowserHistory = [];
+let nomadnetBrowserHistoryIndex = -1;
 let micronSymbolStyle = "system";
 let activeNomadNetSection = "Browser";
 let nomadnetEditorDraft = "`cFriendlyNode local page\n\nWelcome to a local NomadNet page draft.\n\nSymbols: \u2714 \u26A0 \u267B \u2696 \u2604\n";
@@ -637,6 +639,7 @@ function renderNomadNetBrowser() {
   block.className = "settings-block nomadnet-browser";
 
   const current = getNomadNetBrowserState();
+  ensureNomadNetBrowserHistory(current);
 
   const header = document.createElement("div");
   header.className = "nomadnet-browser-header";
@@ -675,6 +678,8 @@ function renderNomadNetBrowser() {
 
   const controls = document.createElement("div");
   controls.className = "nomadnet-address-row";
+
+  const historyButtons = renderNomadNetHistoryButtons();
 
   const destinationField = renderAccessTextInput(
     "Destination hash",
@@ -753,6 +758,7 @@ function renderNomadNetBrowser() {
 
   block.appendChild(details);
 
+  controls.appendChild(historyButtons);
   controls.appendChild(destinationField);
   controls.appendChild(hopsField);
   controls.appendChild(bookmarkButton);
@@ -907,6 +913,7 @@ function renderNomadNetBookmarks() {
         path: "/page/index.mu",
         loading: true,
       };
+      pushNomadNetBrowserHistory(nomadnetBrowserState);
       render("NomadNet");
       fetchNomadNetPage(destination, "/page/index.mu");
     };
@@ -1413,6 +1420,142 @@ function getNomadNetBrowserState() {
   };
 }
 
+
+function createNomadNetHistoryEntry(state) {
+  return {
+    name: state?.name || "",
+    destination_hash: state?.destination_hash || "",
+    identity_hash: state?.identity_hash || "",
+    hops: state?.hops ?? "",
+    path: state?.path || "/page/index.mu",
+    source: state?.source || "",
+    runtime: state?.runtime || "stub",
+    error: state?.error || "",
+    loading: false,
+  };
+}
+
+function isNomadNetHistoryEntryUsable(entry) {
+  return String(entry?.destination_hash || "").trim() !== "";
+}
+
+function getNomadNetHistoryKey(entry) {
+  return `${String(entry?.destination_hash || "").trim()}\n${String(entry?.path || "/page/index.mu").trim()}`;
+}
+
+function isSameNomadNetHistoryEntry(left, right) {
+  return getNomadNetHistoryKey(left) === getNomadNetHistoryKey(right);
+}
+
+function ensureNomadNetBrowserHistory(current) {
+  if (nomadnetBrowserHistoryIndex >= 0) {
+    return;
+  }
+
+  const entry = createNomadNetHistoryEntry(current);
+
+  if (!isNomadNetHistoryEntryUsable(entry)) {
+    return;
+  }
+
+  nomadnetBrowserHistory = [entry];
+  nomadnetBrowserHistoryIndex = 0;
+}
+
+function pushNomadNetBrowserHistory(state) {
+  const entry = createNomadNetHistoryEntry(state);
+
+  if (!isNomadNetHistoryEntryUsable(entry)) {
+    return;
+  }
+
+  const current = nomadnetBrowserHistory[nomadnetBrowserHistoryIndex] || null;
+
+  if (current !== null && isSameNomadNetHistoryEntry(current, entry)) {
+    nomadnetBrowserHistory[nomadnetBrowserHistoryIndex] = {
+      ...current,
+      ...entry,
+    };
+    return;
+  }
+
+  nomadnetBrowserHistory = nomadnetBrowserHistory.slice(0, nomadnetBrowserHistoryIndex + 1);
+  nomadnetBrowserHistory.push(entry);
+
+  if (nomadnetBrowserHistory.length > 50) {
+    nomadnetBrowserHistory.shift();
+  }
+
+  nomadnetBrowserHistoryIndex = nomadnetBrowserHistory.length - 1;
+}
+
+function replaceNomadNetBrowserHistory(state) {
+  const entry = createNomadNetHistoryEntry(state);
+
+  if (!isNomadNetHistoryEntryUsable(entry)) {
+    return;
+  }
+
+  if (nomadnetBrowserHistoryIndex < 0) {
+    pushNomadNetBrowserHistory(entry);
+    return;
+  }
+
+  const current = nomadnetBrowserHistory[nomadnetBrowserHistoryIndex] || null;
+
+  if (current !== null && isSameNomadNetHistoryEntry(current, entry)) {
+    nomadnetBrowserHistory[nomadnetBrowserHistoryIndex] = {
+      ...current,
+      ...entry,
+    };
+    return;
+  }
+
+  pushNomadNetBrowserHistory(entry);
+}
+
+function goNomadNetBrowserHistory(delta) {
+  const nextIndex = nomadnetBrowserHistoryIndex + delta;
+
+  if (nextIndex < 0 || nextIndex >= nomadnetBrowserHistory.length) {
+    return;
+  }
+
+  nomadnetBrowserHistoryIndex = nextIndex;
+  const entry = nomadnetBrowserHistory[nomadnetBrowserHistoryIndex];
+  const shouldFetch = entry.source === "" && entry.error === "";
+  nomadnetBrowserState = {
+    ...entry,
+    loading: shouldFetch,
+  };
+  render("NomadNet");
+
+  if (shouldFetch) {
+    fetchNomadNetPage(nomadnetBrowserState.destination_hash, nomadnetBrowserState.path);
+  }
+}
+
+function renderNomadNetHistoryButtons() {
+  const wrapper = document.createElement("div");
+  wrapper.className = "nomadnet-browser-nav-buttons";
+
+  for (const [label, title, delta, disabled] of [
+    ["←", "Back", -1, nomadnetBrowserHistoryIndex <= 0],
+    ["→", "Forward", 1, nomadnetBrowserHistoryIndex < 0 || nomadnetBrowserHistoryIndex >= nomadnetBrowserHistory.length - 1],
+  ]) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = label;
+    button.title = title;
+    button.setAttribute("aria-label", title);
+    button.disabled = disabled;
+    button.onclick = () => goNomadNetBrowserHistory(delta);
+    wrapper.appendChild(button);
+  }
+
+  return wrapper;
+}
+
 function openNomadNetPageFromFields(destinationInput, pathInput, current) {
   const destination = String(destinationInput?.value || current.destination_hash || "").trim();
   const path = String(pathInput?.value || current.path || "/page/index.mu").trim() || "/page/index.mu";
@@ -1424,6 +1567,7 @@ function openNomadNetPageFromFields(destinationInput, pathInput, current) {
     loading: true,
     error: "",
   };
+  pushNomadNetBrowserHistory(nomadnetBrowserState);
   render("NomadNet");
   fetchNomadNetPage(destination, path);
 }
@@ -1458,6 +1602,8 @@ async function fetchNomadNetPage(destinationHash, path) {
         error: page.message || page.error || "NomadNet page request failed",
       };
 
+      replaceNomadNetBrowserHistory(nomadnetBrowserState);
+
       if (getActiveTab() === "NomadNet") {
         render("NomadNet");
       }
@@ -1474,12 +1620,14 @@ async function fetchNomadNetPage(destinationHash, path) {
       loading: false,
       error: "",
     };
+    replaceNomadNetBrowserHistory(nomadnetBrowserState);
   } catch (error) {
     nomadnetBrowserState = {
       ...(nomadnetBrowserState || {}),
       loading: false,
       error: error instanceof Error ? error.message : String(error),
     };
+    replaceNomadNetBrowserHistory(nomadnetBrowserState);
   }
 
   if (getActiveTab() === "NomadNet") {
@@ -2039,6 +2187,7 @@ function openAnnounceNomadnetPage(announce) {
   };
   activeNomadNetSection = "Browser";
   announceModalState = null;
+  pushNomadNetBrowserHistory(nomadnetBrowserState);
   render("NomadNet");
   fetchNomadNetPage(nomadnetBrowserState.destination_hash, nomadnetBrowserState.path);
 }
