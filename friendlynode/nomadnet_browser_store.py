@@ -7,7 +7,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
-NOMADNET_BROWSER_STATE_VERSION = 1
+NOMADNET_BROWSER_STATE_VERSION = 2
 NOMADNET_BOOKMARK_ROOT_ID = "root"
 NOMADNET_DEFAULT_PATH = "/page/index.mu"
 NOMADNET_HISTORY_LIMIT = 50
@@ -28,6 +28,7 @@ def _default_store() -> dict[str, object]:
                 }
             ],
             "items": [],
+            "collapsed_group_ids": [],
         },
     }
 
@@ -137,6 +138,10 @@ class NomadNetBrowserStore:
         return {
             "groups": groups,
             "items": items,
+            "collapsed_group_ids": self._normalise_collapsed_group_ids(
+                raw.get("collapsed_group_ids"),
+                group_ids,
+            ),
         }
 
     def _normalise_legacy_bookmark_list(self, raw: list[object]) -> dict[str, object]:
@@ -149,7 +154,7 @@ class NomadNetBrowserStore:
         seen = set()
 
         for value in raw:
-            destination = str(value or "").strip().lower()
+            destination = self._normalise_destination_hash(value)
 
             if destination == "" or destination in seen:
                 continue
@@ -164,7 +169,14 @@ class NomadNetBrowserStore:
                     "identity_hash": "",
                     "hops": "",
                     "path": NOMADNET_DEFAULT_PATH,
+                    "announced_path": NOMADNET_DEFAULT_PATH,
                     "runtime": "stub",
+                    "last_interface": "",
+                    "last_transport": {},
+                    "last_announce_at": "",
+                    "last_success_at": "",
+                    "last_opened_at": "",
+                    "announce_seen_count": 0,
                     "created_at": "",
                     "updated_at": "",
                 }
@@ -187,7 +199,7 @@ class NomadNetBrowserStore:
             if not isinstance(raw_group, dict):
                 continue
 
-            group_id = str(raw_group.get("id") or "").strip()
+            group_id = self._normalise_string(raw_group.get("id"))
 
             if group_id == "" or group_id in group_ids:
                 continue
@@ -196,8 +208,10 @@ class NomadNetBrowserStore:
             groups.append(
                 {
                     "id": group_id,
-                    "parent_id": str(raw_group.get("parent_id") or NOMADNET_BOOKMARK_ROOT_ID).strip(),
-                    "name": str(raw_group.get("name") or "Group").strip() or "Group",
+                    "parent_id": self._normalise_string(
+                        raw_group.get("parent_id") or NOMADNET_BOOKMARK_ROOT_ID,
+                    ),
+                    "name": self._normalise_string(raw_group.get("name") or "Group") or "Group",
                 }
             )
 
@@ -215,6 +229,25 @@ class NomadNetBrowserStore:
 
         return groups
 
+    def _normalise_collapsed_group_ids(
+        self,
+        raw: object,
+        group_ids: set[str],
+    ) -> list[str]:
+        collapsed_group_ids = []
+        seen = set()
+
+        for value in self._as_list(raw):
+            group_id = self._normalise_string(value)
+
+            if group_id == "" or group_id not in group_ids or group_id in seen:
+                continue
+
+            seen.add(group_id)
+            collapsed_group_ids.append(group_id)
+
+        return collapsed_group_ids
+
     def _normalise_bookmark_item(
         self,
         raw: object,
@@ -228,8 +261,8 @@ class NomadNetBrowserStore:
         if entry is None:
             return None
 
-        item_id = str(raw.get("id") or "").strip()
-        group_id = str(raw.get("group_id") or NOMADNET_BOOKMARK_ROOT_ID).strip()
+        item_id = self._normalise_string(raw.get("id"))
+        group_id = self._normalise_string(raw.get("group_id") or NOMADNET_BOOKMARK_ROOT_ID)
 
         if item_id == "":
             item_id = f"bookmark-{entry['destination_hash'][:12]}-{abs(hash(entry['path']))}"
@@ -240,41 +273,122 @@ class NomadNetBrowserStore:
         return {
             "id": item_id,
             "group_id": group_id,
-            "name": str(raw.get("name") or entry["name"] or entry["destination_hash"]).strip(),
+            "name": self._normalise_string(raw.get("name") or entry["name"] or entry["destination_hash"]),
             "destination_hash": entry["destination_hash"],
             "identity_hash": entry["identity_hash"],
             "hops": entry["hops"],
             "path": entry["path"],
+            "announced_path": self._normalise_path(raw.get("announced_path") or entry["path"]),
             "runtime": entry["runtime"],
-            "created_at": str(raw.get("created_at") or ""),
-            "updated_at": str(raw.get("updated_at") or ""),
+            "last_interface": entry["last_interface"],
+            "last_transport": entry["last_transport"],
+            "last_announce_at": entry["last_announce_at"],
+            "last_success_at": entry["last_success_at"],
+            "last_opened_at": entry["last_opened_at"],
+            "announce_seen_count": self._normalise_non_negative_int(raw.get("announce_seen_count")),
+            "created_at": self._normalise_string(raw.get("created_at")),
+            "updated_at": self._normalise_string(raw.get("updated_at")),
         }
 
     def _normalise_page_entry(self, raw: object) -> dict[str, object] | None:
         if not isinstance(raw, dict):
             return None
 
-        destination = str(raw.get("destination_hash") or "").strip().lower()
+        destination = self._normalise_destination_hash(raw.get("destination_hash"))
 
         if destination == "":
             return None
 
-        path = str(raw.get("path") or NOMADNET_DEFAULT_PATH).strip() or NOMADNET_DEFAULT_PATH
-
-        if not path.startswith("/"):
-            path = f"/{path}"
-
         return {
-            "name": str(raw.get("name") or ""),
+            "name": self._normalise_string(raw.get("name")),
             "destination_hash": destination,
-            "identity_hash": str(raw.get("identity_hash") or ""),
-            "hops": raw.get("hops", ""),
-            "path": path,
+            "identity_hash": self._normalise_string(raw.get("identity_hash")),
+            "hops": self._normalise_hops(raw.get("hops", "")),
+            "path": self._normalise_path(raw.get("path")),
             "source": "",
-            "runtime": str(raw.get("runtime") or "stub"),
+            "runtime": self._normalise_string(raw.get("runtime") or "stub") or "stub",
             "error": "",
             "loading": False,
+            "last_interface": self._normalise_string(raw.get("last_interface")),
+            "last_transport": self._normalise_transport_hint(raw.get("last_transport")),
+            "last_announce_at": self._normalise_string(raw.get("last_announce_at")),
+            "last_success_at": self._normalise_string(raw.get("last_success_at")),
+            "last_opened_at": self._normalise_string(raw.get("last_opened_at")),
         }
+
+    def _normalise_transport_hint(self, raw: object) -> dict[str, object]:
+        if not isinstance(raw, dict):
+            return {}
+
+        hint = {}
+
+        for key in (
+            "interface",
+            "interface_name",
+            "interface_type",
+            "target_host",
+            "target_port",
+            "transport_identity_hash",
+            "next_hop",
+        ):
+            value = self._normalise_string(raw.get(key))
+
+            if value == "":
+                continue
+
+            hint[key] = value
+
+        return hint
+
+    def _normalise_destination_hash(self, value: object) -> str:
+        destination = self._normalise_string(value).lower()
+
+        if len(destination) != 32:
+            return ""
+
+        if any(char not in "0123456789abcdef" for char in destination):
+            return ""
+
+        return destination
+
+    def _normalise_path(self, value: object) -> str:
+        clean = self._normalise_string(value or NOMADNET_DEFAULT_PATH).replace("\\", "/")
+
+        if clean == "":
+            clean = NOMADNET_DEFAULT_PATH
+
+        if not clean.startswith("/"):
+            clean = f"/{clean}"
+
+        if "\0" in clean or "//" in clean or "/../" in clean or clean.endswith("/.."):
+            return NOMADNET_DEFAULT_PATH
+
+        return clean
+
+    def _normalise_hops(self, value: object) -> int | str:
+        if value is None or value == "":
+            return ""
+
+        try:
+            hops = int(value)
+        except (TypeError, ValueError):
+            return ""
+
+        if hops < 0:
+            return ""
+
+        return hops
+
+    def _normalise_non_negative_int(self, value: object) -> int:
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            return 0
+
+        return max(0, number)
+
+    def _normalise_string(self, value: object) -> str:
+        return str(value or "").strip()
 
     def _as_list(self, value: object) -> list[object]:
         return value if isinstance(value, list) else []

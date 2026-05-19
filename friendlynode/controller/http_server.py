@@ -185,7 +185,13 @@ class ControllerHttpServer:
                     params = parse_qs(parsed.query)
                     destination_hash = params.get("destination_hash", [""])[0]
                     path = params.get("path", ["/page/index.mu"])[0]
-                    self._send_json(app.fetch_nomadnet_page(destination_hash, path))
+                    discovery_hints = {
+                        "bookmark_id": params.get("bookmark_id", [""])[0],
+                        "last_interface": params.get("last_interface", [""])[0],
+                        "last_announce_at": params.get("last_announce_at", [""])[0],
+                        "last_transport_key": params.get("last_transport_key", [""])[0],
+                    }
+                    self._send_json(app.fetch_nomadnet_page(destination_hash, path, discovery_hints=discovery_hints))
                     return
                 if parsed.path == "/api/clients":
                     self._send_json(app.list_clients())

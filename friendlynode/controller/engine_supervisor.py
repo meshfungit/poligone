@@ -50,9 +50,19 @@ class EngineSupervisor:
             interface_name=interface_name,
         )
 
-    def fetch_nomadnet_page(self, destination_hash: str, path: str) -> dict[str, object]:
+    def fetch_nomadnet_page(
+            self,
+            destination_hash: str,
+            path: str,
+            discovery_hints: dict[str, object] | None = None,
+    ) -> dict[str, object]:
         if self.engine is None:
             raise RuntimeError("Engine is not running")
+        return self.engine.fetch_nomadnet_page(
+            destination_hash,
+            path,
+            discovery_hints=discovery_hints or {},
+        )
 
         return self.engine.fetch_nomadnet_page(destination_hash, path)
 

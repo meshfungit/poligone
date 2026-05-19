@@ -16,6 +16,7 @@ let nomadnetBrowserHistory = [];
 let nomadnetBrowserHistoryIndex = -1;
 const NOMADNET_BOOKMARK_ROOT_ID = "root";
 const NOMADNET_BROWSER_HISTORY_LIMIT = 50;
+const NOMADNET_BROWSER_STATE_VERSION = 2;
 let nomadnetBrowserStorageLoaded = false;
 let nomadnetBrowserStorageSaveTimer = null;
 let nomadnetBookmarkStore = createDefaultNomadNetBookmarkStore();
@@ -1122,6 +1123,8 @@ function renderNomadNetBookmarkPageModal() {
   details.appendChild(renderCompactSetting("Path", item.path || "/page/index.mu"));
   details.appendChild(renderCompactSetting("Identity", item.identity_hash || "-"));
   details.appendChild(renderCompactSetting("Hops", item.hops ?? "-"));
+  details.appendChild(renderCompactSetting("Last announce", item.last_announce_at || "-"));
+  details.appendChild(renderCompactSetting("Last success", item.last_success_at || "-"));
   dialog.appendChild(details);
 
   const actions = document.createElement("div");
@@ -1834,6 +1837,73 @@ function createNomadNetId(prefix) {
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+function getNomadNetIsoNow() {
+  return new Date().toISOString();
+}
+
+function normaliseNomadNetDestinationHash(value) {
+  const destination = String(value || "").trim().toLowerCase();
+
+  if (!/^[0-9a-f]{32}$/.test(destination)) {
+    return "";
+  }
+
+  return destination;
+}
+
+function normaliseNomadNetPagePath(value) {
+  const rawPath = String(value || NOMADNET_DEFAULT_PATH).trim().replaceAll("\\", "/") || NOMADNET_DEFAULT_PATH;
+  const path = rawPath.startsWith("/") ? rawPath : `/${rawPath}`;
+
+  if (path.includes("\0") || path.includes("//") || path.includes("/../") || path.endsWith("/..")) {
+    return NOMADNET_DEFAULT_PATH;
+  }
+
+  return path;
+}
+
+function normaliseNomadNetHops(value) {
+  if (value === null || value === undefined || value === "") {
+    return "";
+  }
+
+  const number = Number(value);
+
+  if (!Number.isFinite(number) || number < 0) {
+    return "";
+  }
+
+  return Number.isInteger(number) ? number : String(value);
+}
+
+function normaliseNomadNetTransportHint(rawHint) {
+  if (!rawHint || typeof rawHint !== "object") {
+    return {};
+  }
+
+  const hint = {};
+
+  for (const key of [
+    "interface",
+    "interface_name",
+    "interface_type",
+    "target_host",
+    "target_port",
+    "transport_identity_hash",
+    "next_hop",
+  ]) {
+    const value = rawHint[key];
+
+    if (value === null || value === undefined || value === "") {
+      continue;
+    }
+
+    hint[key] = String(value);
+  }
+
+  return hint;
+}
+
 function normaliseNomadNetBrowserStorage(raw) {
   const payload = raw && typeof raw === "object" ? raw : {};
   const bookmarkStore = normaliseNomadNetBookmarkStore(payload.bookmarks);
@@ -1850,6 +1920,7 @@ function normaliseNomadNetBrowserStorage(raw) {
       : history.length - 1;
 
   return {
+    version: NOMADNET_BROWSER_STATE_VERSION,
     history,
     history_index: historyIndex,
     bookmarks: bookmarkStore,
@@ -1861,12 +1932,12 @@ function normaliseNomadNetBookmarkStore(rawBookmarks) {
 
   if (Array.isArray(rawBookmarks)) {
     store.items = rawBookmarks
-      .map((destination) => String(destination || "").trim())
+      .map((destination) => normaliseNomadNetDestinationHash(destination))
       .filter((destination) => destination !== "")
       .map((destination) => createNomadNetBookmarkItemFromState({
         name: destination,
         destination_hash: destination,
-        path: "/page/index.mu",
+        path: NOMADNET_DEFAULT_PATH,
       }));
     return store;
   }
@@ -1962,10 +2033,11 @@ function normaliseNomadNetBookmarkStoreInPlace() {
 
 function createNomadNetBookmarkItemFromState(state, groupId = NOMADNET_BOOKMARK_ROOT_ID) {
   const entry = createNomadNetHistoryEntry(state);
-  const cleanPath = String(entry.path || "/page/index.mu").trim() || "/page/index.mu";
-  const cleanDestination = String(entry.destination_hash || "").trim();
+  const cleanPath = normaliseNomadNetPagePath(entry.path);
+  const cleanDestination = normaliseNomadNetDestinationHash(entry.destination_hash);
   const name = String(state?.name || "").trim()
     || `${cleanDestination.slice(0, 12) || "NomadNet"} ${cleanPath}`;
+  const now = getNomadNetIsoNow();
 
   return {
     id: String(state?.id || "").trim() || createNomadNetId("bookmark"),
@@ -1975,9 +2047,16 @@ function createNomadNetBookmarkItemFromState(state, groupId = NOMADNET_BOOKMARK_
     identity_hash: String(entry.identity_hash || ""),
     hops: entry.hops ?? "",
     path: cleanPath,
+    announced_path: normaliseNomadNetPagePath(state?.announced_path || cleanPath),
     runtime: String(entry.runtime || "stub"),
-    created_at: String(state?.created_at || new Date().toISOString()),
-    updated_at: new Date().toISOString(),
+    last_interface: String(state?.last_interface || entry.last_interface || ""),
+    last_transport: normaliseNomadNetTransportHint(state?.last_transport || entry.last_transport),
+    last_announce_at: String(state?.last_announce_at || entry.last_announce_at || ""),
+    last_success_at: String(state?.last_success_at || entry.last_success_at || ""),
+    last_opened_at: String(state?.last_opened_at || entry.last_opened_at || ""),
+    announce_seen_count: Math.max(0, Number(state?.announce_seen_count || 0) || 0),
+    created_at: String(state?.created_at || now),
+    updated_at: String(state?.updated_at || now),
   };
 }
 
@@ -1993,7 +2072,7 @@ function serialiseNomadNetHistoryEntry(entry) {
 
 function getNomadNetBrowserStoragePayload() {
   return {
-    version: 1,
+    version: NOMADNET_BROWSER_STATE_VERSION,
     history: nomadnetBrowserHistory
       .map(serialiseNomadNetHistoryEntry)
       .filter(isNomadNetHistoryEntryUsable)
@@ -2022,6 +2101,7 @@ async function loadNomadNetBrowserStorage() {
     nomadnetBookmarkStore = payload.bookmarks;
     nomadnetBookmarkCollapsedGroups = new Set(Array.isArray(payload.bookmarks.collapsed_group_ids) ? payload.bookmarks.collapsed_group_ids : []);
     rebuildNomadNetBookmarkSet();
+    updateNomadNetBookmarksFromAnnounces(currentStatus?.announces || [], { save: false });
 
     if (nomadnetBrowserHistoryIndex >= 0 && nomadnetBrowserState === null) {
       nomadnetBrowserState = {
@@ -2068,6 +2148,13 @@ async function saveNomadNetBrowserStorage() {
     if (!response.ok) {
       throw new Error(`NomadNet browser state save failed: HTTP ${response.status}`);
     }
+
+    const payload = normaliseNomadNetBrowserStorage(await response.json());
+    nomadnetBrowserHistory = payload.history;
+    nomadnetBrowserHistoryIndex = payload.history_index;
+    nomadnetBookmarkStore = payload.bookmarks;
+    nomadnetBookmarkCollapsedGroups = new Set(Array.isArray(payload.bookmarks.collapsed_group_ids) ? payload.bookmarks.collapsed_group_ids : []);
+    rebuildNomadNetBookmarkSet();
   } catch (error) {
     appendUiError(error);
 
@@ -2201,8 +2288,10 @@ function addNomadNetBookmarkFromState(state, groupId = NOMADNET_BOOKMARK_ROOT_ID
       ...item,
       id: existing.id,
       group_id: existing.group_id || groupId,
+      last_announce_at: existing.last_announce_at || item.last_announce_at || "",
+      last_success_at: existing.last_success_at || item.last_success_at || "",
       created_at: existing.created_at || item.created_at,
-      updated_at: new Date().toISOString(),
+      updated_at: getNomadNetIsoNow(),
     });
   } else {
     nomadnetBookmarkStore.items.push(item);
@@ -2244,14 +2333,11 @@ function openNomadNetBookmarkItem(item) {
   nomadnetBookmarkTreeModalState = null;
   nomadnetBookmarkAddGroupState = null;
   nomadnetBrowserState = {
+    ...createNomadNetHistoryEntry(item),
     name: item.name || "Bookmarked page",
-    destination_hash: item.destination_hash || "",
-    identity_hash: item.identity_hash || "",
-    hops: item.hops ?? "",
-    path: item.path || "/page/index.mu",
-    runtime: item.runtime || "stub",
     loading: true,
     error: "",
+    last_opened_at: getNomadNetIsoNow(),
   };
   pushNomadNetBrowserHistory(nomadnetBrowserState);
   render("NomadNet");
@@ -2373,36 +2459,43 @@ function getNomadNetBrowserState() {
 
   return {
     name: announce.name || "NomadNet node",
-    destination_hash: announce.destination_hash || "",
+    destination_hash: normaliseNomadNetDestinationHash(announce.destination_hash),
     identity_hash: announce.identity_hash || "",
     hops: announce.hops,
-    path: "/page/index.mu",
+    path: NOMADNET_DEFAULT_PATH,
     source: "",
     runtime: "stub",
+    last_announce_at: String(announce.time || ""),
+    last_interface: String(announce.interface || ""),
   };
 }
 
 
 function createNomadNetHistoryEntry(state) {
   return {
-    name: state?.name || "",
-    destination_hash: state?.destination_hash || "",
-    identity_hash: state?.identity_hash || "",
-    hops: state?.hops ?? "",
-    path: state?.path || "/page/index.mu",
-    source: state?.source || "",
-    runtime: state?.runtime || "stub",
-    error: state?.error || "",
+    name: String(state?.name || ""),
+    destination_hash: normaliseNomadNetDestinationHash(state?.destination_hash),
+    identity_hash: String(state?.identity_hash || ""),
+    hops: normaliseNomadNetHops(state?.hops),
+    path: normaliseNomadNetPagePath(state?.path),
+    source: String(state?.source || ""),
+    runtime: String(state?.runtime || "stub"),
+    error: String(state?.error || ""),
     loading: false,
+    last_interface: String(state?.last_interface || ""),
+    last_transport: normaliseNomadNetTransportHint(state?.last_transport),
+    last_announce_at: String(state?.last_announce_at || ""),
+    last_success_at: String(state?.last_success_at || ""),
+    last_opened_at: String(state?.last_opened_at || ""),
   };
 }
 
 function isNomadNetHistoryEntryUsable(entry) {
-  return String(entry?.destination_hash || "").trim() !== "";
+  return normaliseNomadNetDestinationHash(entry?.destination_hash) !== "";
 }
 
 function getNomadNetHistoryKey(entry) {
-  return `${String(entry?.destination_hash || "").trim()}\n${String(entry?.path || "/page/index.mu").trim()}`;
+  return `${normaliseNomadNetDestinationHash(entry?.destination_hash)}\n${normaliseNomadNetPagePath(entry?.path)}`;
 }
 
 function isSameNomadNetHistoryEntry(left, right) {
@@ -2533,6 +2626,7 @@ function openNomadNetPageFromFields(destinationInput, pathInput, current) {
     path,
     loading: true,
     error: "",
+    last_opened_at: getNomadNetIsoNow(),
   };
   pushNomadNetBrowserHistory(nomadnetBrowserState);
   render("NomadNet");
@@ -2540,11 +2634,30 @@ function openNomadNetPageFromFields(destinationInput, pathInput, current) {
 }
 
 async function fetchNomadNetPage(destinationHash, path) {
+  const fetchHints = getNomadNetFetchHints(destinationHash, path);
+
   try {
     const query = new URLSearchParams({
       destination_hash: destinationHash,
       path,
     });
+
+    if (fetchHints.bookmark_id) {
+      query.set("bookmark_id", fetchHints.bookmark_id);
+    }
+
+    if (fetchHints.last_interface) {
+      query.set("last_interface", fetchHints.last_interface);
+    }
+
+    if (fetchHints.last_announce_at) {
+      query.set("last_announce_at", fetchHints.last_announce_at);
+    }
+
+    if (fetchHints.last_transport_key) {
+      query.set("last_transport_key", fetchHints.last_transport_key);
+    }
+
     const response = await fetch(`/api/nomadnet/page?${query.toString()}`, {
       method: "GET",
       headers: {
@@ -2578,15 +2691,23 @@ async function fetchNomadNetPage(destinationHash, path) {
       return;
     }
 
-    nomadnetBrowserState = {
+    const successState = {
       ...(nomadnetBrowserState || {}),
       destination_hash: page.destination_hash || destinationHash,
+      identity_hash: page.identity_hash || nomadnetBrowserState?.identity_hash || "",
+      hops: page.hops ?? nomadnetBrowserState?.hops ?? "",
       path: page.path || path,
       source: page.source || "",
       runtime: page.runtime || "reticulum",
+      last_interface: page.interface || page.last_interface || nomadnetBrowserState?.last_interface || "",
+      last_transport: page.last_transport || nomadnetBrowserState?.last_transport || {},
+      last_success_at: getNomadNetIsoNow(),
       loading: false,
       error: "",
     };
+
+    nomadnetBrowserState = successState;
+    updateNomadNetBookmarksFromPageSuccess(successState);
     replaceNomadNetBrowserHistory(nomadnetBrowserState);
   } catch (error) {
     nomadnetBrowserState = {
@@ -2600,6 +2721,244 @@ async function fetchNomadNetPage(destinationHash, path) {
   if (getActiveTab() === "NomadNet") {
     render("NomadNet");
   }
+}
+
+function getNomadNetFetchHints(destinationHash, path) {
+  const key = getNomadNetHistoryKey({ destination_hash: destinationHash, path });
+  const item = nomadnetBookmarkStore.items.find((candidate) => getNomadNetBookmarkKey(candidate) === key) || null;
+
+  if (item === null) {
+    return {};
+  }
+
+  const lastTransport = normaliseNomadNetTransportHint(item.last_transport);
+  const lastTransportParts = [
+    lastTransport.interface_type || "",
+    lastTransport.interface_name || item.last_interface || "",
+    lastTransport.target_host || "",
+    lastTransport.target_port || "",
+  ].filter((value) => String(value).trim() !== "");
+
+  return {
+    bookmark_id: item.id || "",
+    last_interface: item.last_interface || lastTransport.interface_name || lastTransport.interface || "",
+    last_announce_at: item.last_announce_at || "",
+    last_transport_key: lastTransportParts.join("|"),
+  };
+}
+
+
+function isNomadNetAnnounce(announce) {
+  return getAnnounceType(announce) === "nomadnet" || String(announce?.aspect || "") === "nomadnetwork.node";
+}
+
+function getNomadNetAnnounceDestination(announce) {
+  return normaliseNomadNetDestinationHash(announce?.destination_hash);
+}
+
+function getNomadNetAnnouncePath(announce) {
+  const directPath = announce?.path || announce?.page_path || announce?.nomadnet_path || announce?.request_path;
+
+  if (directPath) {
+    return normaliseNomadNetPagePath(directPath);
+  }
+
+  const preview = String(announce?.app_data_preview || "").trim();
+
+  if (!preview.startsWith("{")) {
+    return "";
+  }
+
+  try {
+    const parsed = JSON.parse(preview);
+    const parsedPath = parsed.path || parsed.page_path || parsed.nomadnet_path || parsed.request_path;
+    return parsedPath ? normaliseNomadNetPagePath(parsedPath) : "";
+  } catch (error) {
+    return "";
+  }
+}
+
+function updateNomadNetBookmarksFromAnnounces(announces, options = {}) {
+  if (!Array.isArray(announces) || announces.length === 0) {
+    return false;
+  }
+
+  let changed = false;
+
+  for (const announce of announces) {
+    if (updateNomadNetBookmarksFromAnnounce(announce)) {
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    rebuildNomadNetBookmarkSet();
+
+    if (options.save !== false) {
+      scheduleNomadNetBrowserStorageSave();
+    }
+  }
+
+  return changed;
+}
+
+function updateNomadNetBookmarksFromAnnounce(announce) {
+  if (!isNomadNetAnnounce(announce)) {
+    return false;
+  }
+
+  const destination = getNomadNetAnnounceDestination(announce);
+
+  if (destination === "") {
+    return false;
+  }
+
+  normaliseNomadNetBookmarkStoreInPlace();
+  const announcePath = getNomadNetAnnouncePath(announce);
+  const announceTime = String(announce.time || getNomadNetIsoNow());
+  const announceName = String(announce.name || "").trim();
+  const announceIdentity = String(announce.identity_hash || "").trim();
+  const announceInterface = String(announce.interface || "").trim();
+  const announceHops = normaliseNomadNetHops(announce.hops);
+  let changed = false;
+
+  for (const item of nomadnetBookmarkStore.items) {
+    if (normaliseNomadNetDestinationHash(item.destination_hash) !== destination) {
+      continue;
+    }
+
+    const previousAnnouncedPath = normaliseNomadNetPagePath(item.announced_path || item.path || NOMADNET_DEFAULT_PATH);
+    const previousPath = normaliseNomadNetPagePath(item.path || NOMADNET_DEFAULT_PATH);
+    const nextPath = announcePath !== "" && (previousPath === NOMADNET_DEFAULT_PATH || previousPath === previousAnnouncedPath)
+      ? announcePath
+      : previousPath;
+    const updates = {
+      last_announce_at: announceTime,
+      announce_seen_count: Math.max(0, Number(item.announce_seen_count || 0) || 0) + 1,
+      updated_at: getNomadNetIsoNow(),
+    };
+
+    if (announceName !== "" && item.name !== announceName) {
+      updates.name = announceName;
+    }
+
+    if (announceIdentity !== "" && item.identity_hash !== announceIdentity) {
+      updates.identity_hash = announceIdentity;
+    }
+
+    if (announceHops !== "" && item.hops !== announceHops) {
+      updates.hops = announceHops;
+    }
+
+    if (announceInterface !== "" && item.last_interface !== announceInterface) {
+      updates.last_interface = announceInterface;
+      updates.last_transport = {
+        ...(normaliseNomadNetTransportHint(item.last_transport)),
+        interface: announceInterface,
+        interface_name: announceInterface,
+      };
+    }
+
+    if (announcePath !== "" && item.announced_path !== announcePath) {
+      updates.announced_path = announcePath;
+    }
+
+    if (nextPath !== previousPath) {
+      updates.path = nextPath;
+    }
+
+    Object.assign(item, updates);
+    changed = true;
+  }
+
+  if (changed) {
+    updateNomadNetHistoryFromAnnounce({
+      destination,
+      announcePath,
+      announceTime,
+      announceName,
+      announceIdentity,
+      announceHops,
+      announceInterface,
+    });
+  }
+
+  return changed;
+}
+
+function updateNomadNetHistoryFromAnnounce(data) {
+  const now = getNomadNetIsoNow();
+
+  for (let index = 0; index < nomadnetBrowserHistory.length; index += 1) {
+    const entry = nomadnetBrowserHistory[index];
+
+    if (normaliseNomadNetDestinationHash(entry.destination_hash) !== data.destination) {
+      continue;
+    }
+
+    const previousPath = normaliseNomadNetPagePath(entry.path || NOMADNET_DEFAULT_PATH);
+    const updates = {
+      ...entry,
+      last_announce_at: data.announceTime,
+    };
+
+    if (data.announceName !== "") {
+      updates.name = data.announceName;
+    }
+
+    if (data.announceIdentity !== "") {
+      updates.identity_hash = data.announceIdentity;
+    }
+
+    if (data.announceHops !== "") {
+      updates.hops = data.announceHops;
+    }
+
+    if (data.announceInterface !== "") {
+      updates.last_interface = data.announceInterface;
+      updates.last_transport = {
+        ...(normaliseNomadNetTransportHint(entry.last_transport)),
+        interface: data.announceInterface,
+        interface_name: data.announceInterface,
+      };
+    }
+
+    if (data.announcePath !== "" && previousPath === NOMADNET_DEFAULT_PATH) {
+      updates.path = data.announcePath;
+    }
+
+    updates.updated_at = now;
+    nomadnetBrowserHistory[index] = updates;
+  }
+}
+
+function updateNomadNetBookmarksFromPageSuccess(state) {
+  const key = getNomadNetBookmarkKey(state);
+  let changed = false;
+  const now = getNomadNetIsoNow();
+
+  for (const item of nomadnetBookmarkStore.items) {
+    if (getNomadNetBookmarkKey(item) !== key) {
+      continue;
+    }
+
+    Object.assign(item, {
+      identity_hash: state.identity_hash || item.identity_hash || "",
+      hops: state.hops ?? item.hops ?? "",
+      runtime: state.runtime || item.runtime || "reticulum",
+      last_interface: state.last_interface || item.last_interface || "",
+      last_transport: normaliseNomadNetTransportHint(state.last_transport || item.last_transport),
+      last_success_at: now,
+      updated_at: now,
+    });
+    changed = true;
+  }
+
+  if (changed) {
+    scheduleNomadNetBrowserStorageSave();
+  }
+
+  return changed;
 }
 
 function renderAnnounceListHeader() {
@@ -2766,6 +3125,7 @@ async function fetchAnnouncesSnapshot(params) {
     }
 
     currentStatus.announces = Array.isArray(payload.announces) ? payload.announces : [];
+    updateNomadNetBookmarksFromAnnounces(currentStatus.announces);
 
     if (getActiveTab() === "Announces") {
       render("Announces");
@@ -2826,6 +3186,7 @@ function appendAnnounceFromStream(announce) {
   }
 
   currentStatus.announces = current.slice(-500);
+  updateNomadNetBookmarksFromAnnounce(announce);
 
   if (getActiveTab() === "Announces") {
     renderAnnouncesAfterStreamUpdate();

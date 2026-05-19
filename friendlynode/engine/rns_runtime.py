@@ -223,7 +223,12 @@ class RnsRuntime:
             "announced_at": now if sent > 0 else None,
         }
 
-    def fetch_nomadnet_page(self, destination_hash: str, path: str) -> dict[str, object]:
+    def fetch_nomadnet_page(
+            self,
+            destination_hash: str,
+            path: str,
+            discovery_hints: dict[str, object] | None = None,
+    ) -> dict[str, object]:
         destination = self._normalise_nomadnet_destination_hash(destination_hash)
         page_path = self._normalise_nomadnet_path(path)
         started_at = time.time()
@@ -246,7 +251,7 @@ class RnsRuntime:
 
         try:
             destination_hash_bytes = bytes.fromhex(destination)
-            self._wait_for_nomadnet_path(destination_hash_bytes)
+            self._wait_for_nomadnet_path(destination_hash_bytes, discovery_hints or {})
 
             remote_identity = self.RNS.Identity.recall(destination_hash_bytes)
             if remote_identity is None:
@@ -285,6 +290,7 @@ class RnsRuntime:
 
             source = self._decode_nomadnet_response(response)
 
+            path_interface = self._path_interface_for_destination(destination_hash_bytes)
             return {
                 "status": "ok",
                 "destination_hash": destination,
@@ -292,6 +298,9 @@ class RnsRuntime:
                 "source": source,
                 "runtime": "reticulum",
                 "elapsed_sec": round(time.time() - started_at, 3),
+                "interface": self._interface_display_name(path_interface) if path_interface is not None else "",
+                "last_interface": self._interface_display_name(path_interface) if path_interface is not None else "",
+                "last_transport": self._transport_hint_for_interface(path_interface),
             }
 
         except Exception as exc:
@@ -321,22 +330,98 @@ class RnsRuntime:
 
         return clean_path
 
-    def _wait_for_nomadnet_path(self, destination_hash: bytes) -> None:
+    def _wait_for_nomadnet_path(
+            self,
+            destination_hash: bytes,
+            discovery_hints: dict[str, object] | None = None,
+    ) -> None:
         transport = self.RNS.Transport
 
         if transport.has_path(destination_hash):
             return
 
-        transport.request_path(destination_hash)
-
+        hints = discovery_hints or {}
         deadline = time.time() + NOMADNET_PATH_REQUEST_TIMEOUT_SEC
+
+        for interface in self._path_request_candidate_interfaces(hints):
+            self._request_path(destination_hash, interface)
+
+            if self._wait_until_path_available(destination_hash, min(4.0, max(0.0, deadline - time.time()))):
+                return
+
+        self._request_path(destination_hash, None)
+
+        if self._wait_until_path_available(destination_hash, max(0.0, deadline - time.time())):
+            return
+
+        raise TimeoutError("Timed out waiting for Reticulum path to NomadNet node")
+
+    def _wait_until_path_available(self, destination_hash: bytes, timeout: float) -> bool:
+        transport = self.RNS.Transport
+        deadline = time.time() + max(0.0, timeout)
+
         while time.time() < deadline:
             if transport.has_path(destination_hash):
-                return
+                return True
 
             time.sleep(NOMADNET_WAIT_STEP_SEC)
 
-        raise TimeoutError("Timed out waiting for Reticulum path to NomadNet node")
+        return transport.has_path(destination_hash)
+
+    def _request_path(self, destination_hash: bytes, interface: object | None) -> None:
+        transport = self.RNS.Transport
+
+        if interface is None:
+            transport.request_path(destination_hash)
+            return
+
+        try:
+            transport.request_path(destination_hash, on_interface=interface)
+        except TypeError:
+            transport.request_path(destination_hash)
+
+    def _path_request_candidate_interfaces(self, hints: dict[str, object]) -> list[object]:
+        last_interface = str(hints.get("last_interface") or "").strip()
+        interfaces = self._live_interfaces()
+
+        if last_interface == "":
+            return []
+
+        selected = [
+            interface
+            for interface in interfaces
+            if self._interface_matches(interface, last_interface)
+        ]
+
+        return selected
+
+    def _path_interface_for_destination(self, destination_hash: bytes) -> object | None:
+        transport = self.RNS.Transport
+
+        for method_name in ("next_hop_interface", "next_hop_if_name"):
+            method = getattr(transport, method_name, None)
+
+            if not callable(method):
+                continue
+
+            try:
+                return method(destination_hash)
+            except Exception:
+                continue
+
+        return None
+
+    def _transport_hint_for_interface(self, interface: object | None) -> dict[str, object]:
+        if interface is None:
+            return {}
+
+        return {
+            "interface": self._interface_display_name(interface),
+            "interface_name": str(getattr(interface, "name", "")),
+            "interface_type": type(interface).__name__,
+            "target_host": str(getattr(interface, "target_host", "") or getattr(interface, "target_ip", "")),
+            "target_port": str(getattr(interface, "target_port", "")),
+        }
 
     def _open_nomadnet_link(self, remote_destination: object) -> object:
         established = threading.Event()

@@ -330,17 +330,27 @@ class ControllerApp:
             "nodes": nodes,
         }
 
-    def fetch_nomadnet_page(self, destination_hash: str, path: str) -> dict[str, object]:
+    def fetch_nomadnet_page(
+            self,
+            destination_hash: str,
+            path: str,
+            discovery_hints: dict[str, object] | None = None,
+    ) -> dict[str, object]:
         destination = destination_hash.strip().lower()
         page_path = path.strip() or NOMADNET_DEFAULT_PATH
-
         if not page_path.startswith("/"):
             page_path = f"/{page_path}"
-
-        self.state.append_log("info", "nomadnet", f"Page requested: {destination or '-'}{page_path}")
-
-        result = self.engine_supervisor.fetch_nomadnet_page(destination, page_path)
-
+        hints = discovery_hints or {}
+        self.state.append_log(
+            "info",
+            "nomadnet",
+            f"Page requested: {destination or '-'}{page_path}; last_interface={hints.get('last_interface', '') or '-'}",
+        )
+        result = self.engine_supervisor.fetch_nomadnet_page(
+            destination,
+            page_path,
+            discovery_hints=hints,
+        )
         if result.get("status") == "error":
             self.state.append_log(
                 "error",
@@ -351,9 +361,8 @@ class ControllerApp:
             self.state.append_log(
                 "info",
                 "nomadnet",
-                f"Page received: {destination or '-'}{page_path}",
+                f"Page received: {destination or '-'}{page_path}; interface={result.get('interface', '') or '-'}",
             )
-
         return result
 
     def list_nomadnet_pages(self) -> dict[str, object]:
