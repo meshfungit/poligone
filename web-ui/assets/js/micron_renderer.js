@@ -48,51 +48,73 @@
         continue;
       }
 
+      if (renderState.literal) {
+        const literalExit = parseLiteralExitLine(rawLine, renderState.sectionDepth, renderState.alignment);
+
+        if (literalExit !== null) {
+          renderState.literal = false;
+          const line = document.createElement("div");
+          line.className = literalExit.className;
+          line.dataset.depth = String(literalExit.depth);
+          appendInline(line, literalExit.text, rawOffset + literalExit.offset, selection, inlineState, options, renderState);
+
+          if (line.childNodes.length > 0) {
+            root.appendChild(line);
+          }
+
+          rawOffset += rawLine.length + 1;
+          continue;
+        }
+
+        const line = document.createElement("div");
+        const literalClasses = ["micron-line", "micron-literal"];
+        addAlignmentClassName(literalClasses, renderState.alignment);
+        addDepthClassName(literalClasses, renderState.sectionDepth);
+        line.className = literalClasses.join(" ");
+        line.dataset.depth = String(renderState.sectionDepth);
+        appendLiteral(line, rawLine, rawOffset, selection, options, inlineState);
+        root.appendChild(line);
+        rawOffset += rawLine.length + 1;
+        continue;
+      }
+
       const parsed = parseLinePrefix(rawLine, renderState.sectionDepth, renderState.alignment);
       renderState.alignment = parsed.alignment;
 
-      if (!renderState.literal) {
-        const parsedTrimmed = parsed.text.trim();
+      const parsedTrimmed = parsed.text.trim();
 
-        if (isDividerLine(parsedTrimmed)) {
-          const divider = renderDividerElement(parsedTrimmed, parsed.depth, parsed.alignment);
-          copyAlignmentClasses(parsed.className, divider);
-          root.appendChild(divider);
-          rawOffset += rawLine.length + 1;
-          continue;
-        }
+      if (isDividerLine(parsedTrimmed)) {
+        const divider = renderDividerElement(parsedTrimmed, parsed.depth, parsed.alignment);
+        copyAlignmentClasses(parsed.className, divider);
+        root.appendChild(divider);
+        rawOffset += rawLine.length + 1;
+        continue;
+      }
 
-        const partial = parseMicronPartialFromLine(parsedTrimmed);
-        if (partial !== null) {
-          const line = document.createElement("div");
-          line.className = parsed.className;
-          line.dataset.depth = String(parsed.depth);
-          line.appendChild(partial.element);
-          root.appendChild(line);
-          rawOffset += rawLine.length + 1;
-          continue;
-        }
+      const partial = parseMicronPartialFromLine(parsedTrimmed);
+      if (partial !== null) {
+        const line = document.createElement("div");
+        line.className = parsed.className;
+        line.dataset.depth = String(parsed.depth);
+        line.appendChild(partial.element);
+        root.appendChild(line);
+        rawOffset += rawLine.length + 1;
+        continue;
       }
 
       const line = document.createElement("div");
       line.className = parsed.className;
       line.dataset.depth = String(parsed.depth);
-
-      if (renderState.literal) {
-        appendLiteral(line, rawLine, rawOffset, selection, options);
-      } else {
-        appendInline(line, parsed.text, rawOffset + parsed.offset, selection, inlineState, options, renderState);
-      }
+      appendInline(line, parsed.text, rawOffset + parsed.offset, selection, inlineState, options, renderState);
 
       if (parsed.nextSectionDepth !== null) {
         renderState.sectionDepth = parsed.nextSectionDepth;
       }
 
-      if (parsed.toggleLiteral) {
-        renderState.literal = !renderState.literal;
+      if (line.childNodes.length > 0 || rawLine === "") {
+        root.appendChild(line);
       }
 
-      root.appendChild(line);
       rawOffset += rawLine.length + 1;
     }
 
@@ -125,16 +147,6 @@
     let nextSectionDepth = null;
     let alignment = normalizeAlignment(currentAlignment);
     const classes = ["micron-line"];
-    let toggleLiteral = false;
-
-    if (text.startsWith("`=")) {
-      classes.push("micron-literal");
-      text = text.slice(2).trimStart();
-      offset += 2;
-      offset += line.slice(2).length - text.length;
-      toggleLiteral = true;
-    }
-
     const alignmentPrefix = text.match(/^`([clra])\s*/);
     if (alignmentPrefix) {
       alignment = normalizeAlignment(alignmentPrefix[1]);
@@ -162,7 +174,35 @@
       depth,
       alignment,
       nextSectionDepth,
-      toggleLiteral,
+    };
+  }
+
+  function parseLiteralExitLine(line, currentDepth, currentAlignment = "a") {
+    if (!line.startsWith("`=")) {
+      return null;
+    }
+
+    let text = line.slice(2);
+    let offset = 2;
+    let alignment = normalizeAlignment(currentAlignment);
+    const classes = ["micron-line"];
+
+    const alignmentPrefix = text.match(/^`([clra])\s*/);
+    if (alignmentPrefix) {
+      alignment = normalizeAlignment(alignmentPrefix[1]);
+      text = text.slice(alignmentPrefix[0].length);
+      offset += alignmentPrefix[0].length;
+    }
+
+    addAlignmentClassName(classes, alignment);
+    addDepthClassName(classes, currentDepth);
+
+    return {
+      className: classes.join(" "),
+      text,
+      offset,
+      depth: currentDepth,
+      alignment,
     };
   }
 
@@ -227,9 +267,14 @@
     }
   }
 
-  function appendLiteral(parent, text, rawStart, selection, options) {
+  function appendLiteral(parent, text, rawStart, selection, options, state = createInlineState()) {
     let buffer = "";
     let selected = false;
+    const cellMode = shouldRenderTextAsCells(text);
+
+    if (cellMode && parent instanceof HTMLElement) {
+      parent.classList.add("micron-cell-line");
+    }
 
     function flush() {
       if (buffer === "") {
@@ -237,7 +282,11 @@
       }
 
       const span = document.createElement("span");
-      appendRenderedText(span, buffer, options);
+      appendRenderedText(span, buffer, {
+        ...options,
+        micronCellMode: cellMode,
+      });
+      applyInlineState(span, state);
 
       if (selected) {
         span.classList.add("micron-selected");
@@ -359,6 +408,29 @@
       if (["c", "l", "r", "a"].includes(command)) {
         flush();
         applyInlineAlignment(parent, command, renderState);
+        index += 2;
+        continue;
+      }
+
+      if (command === "=") {
+        flush();
+
+        if (renderState && typeof renderState === "object") {
+          renderState.literal = !renderState.literal;
+
+          if (renderState.literal) {
+            parent.classList.add("micron-literal");
+            const rest = text.slice(index + 2);
+
+            if (rest !== "") {
+              appendLiteral(parent, rest, rawStart + index + 2, selection, options, state);
+            }
+
+            index = text.length;
+            continue;
+          }
+        }
+
         index += 2;
         continue;
       }
