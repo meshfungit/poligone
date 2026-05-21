@@ -393,7 +393,7 @@
 
       if (command === "[" || command === "<" || command === "{") {
         const parsed = command === "["
-          ? parseMicronLink(text, index)
+          ? parseMicronLink(text, index, options)
           : command === "<"
             ? parseMicronField(text, index, renderState)
             : parseMicronPartial(text, index);
@@ -578,7 +578,7 @@
     return "";
   }
 
-  function parseMicronLink(text, startIndex) {
+  function parseMicronLink(text, startIndex, options = {}) {
     const endIndex = findUnescaped(text, "]", startIndex + 2);
 
     if (endIndex === -1) {
@@ -609,12 +609,20 @@
 
     element.onclick = (event) => {
       event.preventDefault();
-      console.debug("Micron link", {
+      const payload = {
         label,
         target,
         fields,
         request,
-      });
+        element,
+      };
+
+      if (options && typeof options.onLink === "function") {
+        options.onLink(payload, event);
+        return;
+      }
+
+      console.debug("Micron link", payload);
     };
 
     return {
