@@ -2801,3 +2801,56 @@ tr:last-child td { border-bottom: 0; }
 .micron-line-bg-fill .micron-cell {
   background-color: transparent !important;
 }
+
+/* Micron terminal row compaction and divider opacity fix.
+   MeshChat/NomadNet render Micron as terminal cells: row background fills the full row height, and dividers are not translucent. */
+.nomadnet-page .micron-content,
+.nomadnet-rendered-input .micron-content,
+.message-bubble .micron-content {
+  line-height: 1.15;
+}
+
+.nomadnet-page .micron-line,
+.nomadnet-page .micron-divider,
+.nomadnet-rendered-input .micron-line,
+.nomadnet-rendered-input .micron-divider,
+.message-bubble .micron-line,
+.message-bubble .micron-divider {
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  min-height: 1.15em;
+  line-height: 1.15;
+}
+
+.nomadnet-page .micron-line.micron-heading,
+.nomadnet-rendered-input .micron-line.micron-heading,
+.message-bubble .micron-line.micron-heading {
+  margin-top: 0 !important;
+}
+
+.nomadnet-page .micron-divider,
+.nomadnet-rendered-input .micron-divider,
+.message-bubble .micron-divider {
+  opacity: 1 !important;
+  border-top: 0 !important;
+}
+
+.nomadnet-page .micron-divider:not(:empty),
+.nomadnet-rendered-input .micron-divider:not(:empty),
+.message-bubble .micron-divider:not(:empty) {
+  line-height: 1.15;
+}
+
+.nomadnet-page .micron-line > span,
+.nomadnet-page .micron-link:not(.micron-request-link),
+.nomadnet-page .micron-cell,
+.nomadnet-rendered-input .micron-line > span,
+.nomadnet-rendered-input .micron-link:not(.micron-request-link),
+.nomadnet-rendered-input .micron-cell,
+.message-bubble .micron-line > span,
+.message-bubble .micron-link:not(.micron-request-link),
+.message-bubble .micron-cell {
+  line-height: inherit;
+}
