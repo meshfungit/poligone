@@ -12,6 +12,7 @@ let clearMessagesState = null;
 let transientConversation = null;
 let nomadnetBrowserState = null;
 let nomadnetBrowserSettingsModalOpen = false;
+let nomadnetBrowserSaveStatus = "";
 let nomadnetBrowserHistory = [];
 let nomadnetBrowserHistoryIndex = -1;
 const NOMADNET_BOOKMARK_ROOT_ID = "root";
@@ -681,6 +682,21 @@ function renderNomadNetBrowser() {
   browserPanel.appendChild(runtime);
   header.appendChild(browserPanel);
 
+  const headerActions = document.createElement("div");
+  headerActions.className = "nomadnet-browser-actions";
+  headerActions.style.display = "inline-flex";
+  headerActions.style.gap = "8px";
+  headerActions.style.alignItems = "stretch";
+
+  const saveButton = document.createElement("button");
+  saveButton.type = "button";
+  saveButton.className = "nomadnet-browser-save-button nomadnet-browser-settings-button";
+  saveButton.textContent = "Save";
+  saveButton.disabled = current.loading || !current.source;
+  saveButton.title = current.source ? "Save current page to local NomadNet pages" : "No loaded page source to save";
+  saveButton.onclick = () => saveNomadNetBrowserPage(current);
+  headerActions.appendChild(saveButton);
+
   const settingsButton = document.createElement("button");
   settingsButton.type = "button";
   settingsButton.className = "nomadnet-browser-settings-button";
@@ -689,8 +705,16 @@ function renderNomadNetBrowser() {
     nomadnetBrowserSettingsModalOpen = true;
     render("NomadNet");
   };
-  header.appendChild(settingsButton);
+  headerActions.appendChild(settingsButton);
+  header.appendChild(headerActions);
   block.appendChild(header);
+
+  if (nomadnetBrowserSaveStatus !== "") {
+    const saveStatus = document.createElement("div");
+    saveStatus.className = nomadnetBrowserSaveStatus.startsWith("Error:") ? "settings-error" : "settings-hint";
+    saveStatus.textContent = nomadnetBrowserSaveStatus;
+    block.appendChild(saveStatus);
+  }
 
   const controls = document.createElement("div");
   controls.className = "nomadnet-address-row";
@@ -1719,6 +1743,62 @@ function renderNomadNetOpenFileList(pathInput) {
   return list;
 }
 
+function getNomadNetBrowserLocalSavePath(path) {
+  const clean = normaliseNomadNetEditorPath(path);
+
+  if (clean.startsWith("page/")) {
+    const pagePath = clean.slice("page/".length).replace(/^\/+/, "");
+    return pagePath === "" ? "index.mu" : pagePath;
+  }
+
+  return clean;
+}
+
+async function saveNomadNetBrowserPage(current) {
+  const source = String(current?.source || "");
+  const pagePath = getNomadNetBrowserLocalSavePath(current?.path || "/page/index.mu");
+
+  if (source === "") {
+    nomadnetBrowserSaveStatus = "Error: no loaded page source to save.";
+    render("NomadNet");
+    return;
+  }
+
+  nomadnetBrowserSaveStatus = `Saving ${pagePath}...`;
+  render("NomadNet");
+
+  try {
+    const response = await fetch("/api/nomadnet/local-page", {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        path: pagePath,
+        source,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`NomadNet page save failed: HTTP ${response.status}`);
+    }
+
+    const payload = await response.json();
+    const savedPath = payload.path || pagePath;
+    nomadnetEditorPath = savedPath;
+    nomadnetEditorDraft = source;
+    nomadnetBrowserSaveStatus = `Saved ${savedPath}.`;
+    await refreshNomadNetEditorPages();
+  } catch (error) {
+    nomadnetBrowserSaveStatus = `Error: ${error instanceof Error ? error.message : String(error)}`;
+  }
+
+  if (getActiveTab() === "NomadNet" && activeNomadNetSection === "Browser") {
+    render("NomadNet");
+  }
+}
+
 function normaliseNomadNetEditorPath(path) {
   const clean = String(path || "").trim().replaceAll("\\", "/").replace(/^\/+/, "");
   return clean === "" ? "index.mu" : clean;
@@ -2617,6 +2697,7 @@ function renderNomadNetHistoryButtons() {
 }
 
 function openNomadNetPageFromFields(destinationInput, pathInput, current) {
+  nomadnetBrowserSaveStatus = "";
   const destination = String(destinationInput?.value || current.destination_hash || "").trim();
   const path = String(pathInput?.value || current.path || "/page/index.mu").trim() || "/page/index.mu";
 
