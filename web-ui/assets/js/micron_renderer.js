@@ -430,8 +430,9 @@
         }
       }
 
+      flush();
       index += 1;
-      buffer += char;
+      continue;
     }
 
     flush();

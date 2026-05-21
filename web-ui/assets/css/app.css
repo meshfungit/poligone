@@ -2711,3 +2711,35 @@ tr:last-child td { border-bottom: 0; }
   line-height: inherit;
   text-decoration: inherit;
 }
+
+/* Micron renderer V5: inline link parity with terminal NomadNet renderers.
+   Normal Micron links must look like styled text, not browser controls.
+   Request links keep button-like rendering. */
+.micron-link:not(.micron-request-link) {
+  display: inline;
+  align-items: normal;
+  justify-content: normal;
+  gap: 0;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  background: inherit;
+  color: inherit;
+  font: inherit;
+  line-height: inherit;
+  vertical-align: baseline;
+  overflow-wrap: normal;
+  text-decoration: inherit;
+}
+
+.micron-link:not(.micron-request-link):hover {
+  border-color: transparent;
+}
+
+.micron-link:not(.micron-request-link).micron-underline {
+  text-decoration: underline;
+}
+
+.micron-line .micron-link:not(.micron-request-link) {
+  white-space: inherit;
+}
