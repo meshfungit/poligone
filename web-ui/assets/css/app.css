@@ -2756,3 +2756,32 @@ tr:last-child td { border-bottom: 0; }
 .micron-link:not(.micron-request-link).micron-underline {
   text-decoration: underline;
 }
+
+/* Micron divider/background fix V7.
+   Divider rows are document-width rows, and repeated-character dividers are clipped by the page viewport. */
+.micron-content .micron-divider {
+  display: block;
+  width: 100%;
+  max-width: none;
+  box-sizing: border-box;
+  overflow: hidden;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.micron-content .micron-divider:not(:empty) {
+  border-top: 0;
+  line-height: 1.25;
+}
+
+.micron-content .micron-divider.micron-align-c,
+.micron-content .micron-divider.micron-align-r {
+  text-align: left;
+}
+
+.micron-content .micron-line > span,
+.micron-content .micron-link:not(.micron-request-link),
+.micron-content .micron-cell {
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}

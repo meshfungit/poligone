@@ -1,6 +1,7 @@
 (function () {
   const MICRON_DEFAULT_FIELD_WIDTH = 24;
   const MICRON_MAX_FIELD_WIDTH = 256;
+  const MICRON_DIVIDER_REPEAT = 512;
 
   function render(source, options = {}) {
     const selection = normalizeSelection(options.selectionStart, options.selectionEnd);
@@ -43,7 +44,7 @@
       }
 
       if (!renderState.literal && isDividerLine(trimmed)) {
-        root.appendChild(renderDividerElement(trimmed, renderState.sectionDepth, renderState.alignment));
+        root.appendChild(renderDividerElement(trimmed, renderState.sectionDepth, renderState.alignment, inlineState));
         rawOffset += rawLine.length + 1;
         continue;
       }
@@ -84,7 +85,7 @@
       const parsedTrimmed = parsed.text.trim();
 
       if (isDividerLine(parsedTrimmed)) {
-        const divider = renderDividerElement(parsedTrimmed, parsed.depth, parsed.alignment);
+        const divider = renderDividerElement(parsedTrimmed, parsed.depth, parsed.alignment, inlineState);
         copyAlignmentClasses(parsed.className, divider);
         root.appendChild(divider);
         rawOffset += rawLine.length + 1;
@@ -240,19 +241,21 @@
       return "";
     }
 
-    return line[1].repeat(32);
+    return line[1].repeat(MICRON_DIVIDER_REPEAT);
   }
 
-  function renderDividerElement(line, depth, alignment = "a") {
+  function renderDividerElement(line, depth, alignment = "a", state = createInlineState()) {
     const divider = document.createElement("div");
     divider.className = "micron-divider";
     divider.dataset.micronSource = line;
     divider.dataset.depth = String(depth);
     addAlignmentClass(divider, alignment);
     addDepthClass(divider, depth);
+    applyInlineState(divider, state);
 
     const dividerText = renderDividerText(line);
     if (dividerText !== "") {
+      divider.dataset.micronDividerChar = line[1];
       divider.textContent = dividerText;
     }
 
