@@ -2654,3 +2654,36 @@ tr:last-child td { border-bottom: 0; }
   min-width: 0;
   overflow-wrap: anywhere;
 }
+
+/* Micron renderer center/pseudographics fix.
+   Append to web-ui/assets/css/app.css after the previous Micron CSS blocks. */
+
+.nomadnet-page .micron-content {
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  line-height: 1.22;
+}
+
+.nomadnet-page .micron-line {
+  min-height: 1.22em;
+  white-space: pre;
+  overflow-wrap: normal;
+  word-break: normal;
+  tab-size: 8;
+}
+
+.nomadnet-page .micron-divider {
+  white-space: pre;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+.nomadnet-page .micron-link,
+.nomadnet-page .micron-request-link,
+.nomadnet-page .micron-field,
+.nomadnet-page .micron-choice {
+  font: inherit;
+}
+
+.nomadnet-page .micron-choice input {
+  vertical-align: -0.1em;
+}

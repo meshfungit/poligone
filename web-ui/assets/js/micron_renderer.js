@@ -14,6 +14,8 @@
     const renderState = {
       literal: false,
       sectionDepth: 0,
+      alignment: "a",
+      defaultAlignment: "a",
       pageHeaders: {},
       radioPrefix: createRadioPrefix(),
     };
@@ -41,18 +43,19 @@
       }
 
       if (!renderState.literal && isDividerLine(trimmed)) {
-        root.appendChild(renderDividerElement(trimmed, renderState.sectionDepth));
+        root.appendChild(renderDividerElement(trimmed, renderState.sectionDepth, renderState.alignment));
         rawOffset += rawLine.length + 1;
         continue;
       }
 
-      const parsed = parseLinePrefix(rawLine, renderState.sectionDepth);
+      const parsed = parseLinePrefix(rawLine, renderState.sectionDepth, renderState.alignment);
+      renderState.alignment = parsed.alignment;
 
       if (!renderState.literal) {
         const parsedTrimmed = parsed.text.trim();
 
         if (isDividerLine(parsedTrimmed)) {
-          const divider = renderDividerElement(parsedTrimmed, parsed.depth);
+          const divider = renderDividerElement(parsedTrimmed, parsed.depth, parsed.alignment);
           copyAlignmentClasses(parsed.className, divider);
           root.appendChild(divider);
           rawOffset += rawLine.length + 1;
@@ -115,11 +118,12 @@
     root.dataset[`header${key.charAt(0).toUpperCase()}${key.slice(1)}`] = value;
   }
 
-  function parseLinePrefix(line, currentDepth) {
+  function parseLinePrefix(line, currentDepth, currentAlignment = "a") {
     let text = line;
     let offset = 0;
     let depth = currentDepth;
     let nextSectionDepth = null;
+    let alignment = normalizeAlignment(currentAlignment);
     const classes = ["micron-line"];
     let toggleLiteral = false;
 
@@ -131,11 +135,11 @@
       toggleLiteral = true;
     }
 
-    const alignment = text.match(/^`([clra])\s*/);
-    if (alignment) {
-      classes.push(`micron-align-${alignment[1]}`);
-      text = text.slice(alignment[0].length);
-      offset += alignment[0].length;
+    const alignmentPrefix = text.match(/^`([clra])\s*/);
+    if (alignmentPrefix) {
+      alignment = normalizeAlignment(alignmentPrefix[1]);
+      text = text.slice(alignmentPrefix[0].length);
+      offset += alignmentPrefix[0].length;
     }
 
     const section = text.match(/^(>+)\s*(.*)$/);
@@ -148,6 +152,7 @@
       offset += section[0].length - section[2].length;
     }
 
+    addAlignmentClassName(classes, alignment);
     addDepthClassName(classes, depth);
 
     return {
@@ -155,9 +160,23 @@
       text,
       offset,
       depth,
+      alignment,
       nextSectionDepth,
       toggleLiteral,
     };
+  }
+
+  function normalizeAlignment(value) {
+    return ["c", "l", "r", "a"].includes(value) ? value : "a";
+  }
+
+  function addAlignmentClass(element, alignment) {
+    element.classList.remove("micron-align-c", "micron-align-l", "micron-align-r", "micron-align-a");
+    element.classList.add(`micron-align-${normalizeAlignment(alignment)}`);
+  }
+
+  function addAlignmentClassName(classes, alignment) {
+    classes.push(`micron-align-${normalizeAlignment(alignment)}`);
   }
 
   function addDepthClass(element, depth) {
@@ -184,11 +203,12 @@
     return line[1].repeat(32);
   }
 
-  function renderDividerElement(line, depth) {
+  function renderDividerElement(line, depth, alignment = "a") {
     const divider = document.createElement("div");
     divider.className = "micron-divider";
     divider.dataset.micronSource = line;
     divider.dataset.depth = String(depth);
+    addAlignmentClass(divider, alignment);
     addDepthClass(divider, depth);
 
     const dividerText = renderDividerText(line);
@@ -330,7 +350,7 @@
 
       if (["c", "l", "r", "a"].includes(command)) {
         flush();
-        applyInlineAlignment(parent, command);
+        applyInlineAlignment(parent, command, renderState);
         index += 2;
         continue;
       }
@@ -342,6 +362,10 @@
         state.underline = false;
         state.foreground = "";
         state.background = "";
+        if (renderState && typeof renderState === "object") {
+          renderState.alignment = normalizeAlignment(renderState.defaultAlignment);
+          addAlignmentClass(parent, renderState.alignment);
+        }
         index += 2;
         continue;
       }
@@ -405,25 +429,13 @@
     flush();
   }
 
-  function applyInlineAlignment(element, command) {
-    element.classList.remove("micron-align-c", "micron-align-l", "micron-align-r", "micron-align-a");
+  function applyInlineAlignment(element, command, renderState = null) {
+    const alignment = normalizeAlignment(command);
+    addAlignmentClass(element, alignment);
 
-    if (command === "c") {
-      element.classList.add("micron-align-c");
-      return;
+    if (renderState && typeof renderState === "object") {
+      renderState.alignment = alignment;
     }
-
-    if (command === "r") {
-      element.classList.add("micron-align-r");
-      return;
-    }
-
-    if (command === "l") {
-      element.classList.add("micron-align-l");
-      return;
-    }
-
-    element.classList.add("micron-align-a");
   }
 
   function applyInlineState(element, state) {
