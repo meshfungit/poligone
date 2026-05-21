@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 import json
+import subprocess
+import sys
 from typing import Any
 from friendlynode.client_accounts import ClientAccountStore
 from friendlynode.config.app_config import AppConfig
@@ -21,7 +23,11 @@ from friendlynode.nomadnet_browser_store import NOMADNET_BROWSER_STATE_FILENAME,
 DEFAULT_ANNOUNCE_LIMIT = 500
 MAX_ANNOUNCE_LIMIT = 2000
 NOMADNET_DEFAULT_PATH = "/page/index.mu"
-
+LXMF_IMPORT_NAME = "LXMF"
+LXMF_PACKAGE_NAME = "lxmf"
+RNS_CONFIG_TRUE_VALUES = frozenset({"yes", "true", "on", "1"})
+RUNTIME_PACKAGE_INSTALL_TIMEOUT_SECONDS = 180
+RUNTIME_INSTALL_OUTPUT_LIMIT = 1400
 ANNOUNCE_TYPE_BY_ASPECT = {
     "lxmf.delivery": "identity",
     "lxmf.propagation": "lxmf.propagation",
@@ -112,6 +118,15 @@ class ControllerApp:
             f"active runtime resolved: name={runtime.name}, kind={runtime.kind}",
         )
 
+        if not self._preflight_runtime_dependencies(runtime):
+            self.engine_supervisor.stop()
+            self.state.append_log(
+                "error",
+                "controller",
+                "controller started without Reticulum engine: runtime dependency preflight failed",
+            )
+            return
+
         self.engine_supervisor.start()
         self.state.append_log("info", "controller", "controller started")
 
@@ -129,6 +144,15 @@ class ControllerApp:
             "runtime",
             f"active runtime resolved: name={runtime.name}, kind={runtime.kind}",
         )
+
+        if not self._preflight_runtime_dependencies(runtime):
+            self.engine_supervisor.stop()
+            self.state.append_log(
+                "error",
+                "controller",
+                "Reticulum restart skipped: runtime dependency preflight failed",
+            )
+            return
 
         self.engine_supervisor.restart()
         self.state.append_log("info", "controller", "Reticulum restart completed")
@@ -541,6 +565,160 @@ class ControllerApp:
             "client_id": client_id,
             "contact": self.client_store.export_contact(client_id, contact_id),
         }
+
+    def _preflight_runtime_dependencies(self, runtime: RuntimeInfo) -> bool:
+        if not self._reticulum_discovery_enabled():
+            return True
+
+        python_path = self._runtime_python_path(runtime)
+
+        if self._python_import_available(python_path, LXMF_IMPORT_NAME):
+            self.state.append_log(
+                "info",
+                "runtime",
+                "LXMF preflight ok: discover_interfaces is enabled and LXMF is installed",
+            )
+            return True
+
+        self.state.append_log(
+            "info",
+            "runtime",
+            f"LXMF preflight: discover_interfaces is enabled, installing {LXMF_PACKAGE_NAME} into {python_path}",
+        )
+
+        install_result = self._install_python_package(python_path, LXMF_PACKAGE_NAME)
+
+        if not install_result["ok"]:
+            self.state.append_log(
+                "error",
+                "runtime",
+                f"LXMF install failed: {install_result['message']}",
+            )
+            return False
+
+        if self._python_import_available(python_path, LXMF_IMPORT_NAME):
+            self.state.append_log(
+                "info",
+                "runtime",
+                "LXMF installed successfully",
+            )
+            return True
+
+        self.state.append_log(
+            "error",
+            "runtime",
+            "LXMF install completed, but import LXMF still fails",
+        )
+        return False
+
+    def _reticulum_discovery_enabled(self) -> bool:
+        config_path = self.config.rns_config_dir / "config"
+
+        try:
+            lines = config_path.read_text(encoding="utf-8").splitlines()
+        except FileNotFoundError:
+            return False
+        except OSError as exc:
+            self.state.append_log(
+                "error",
+                "runtime",
+                f"Cannot read Reticulum config for dependency preflight: {type(exc).__name__}: {exc}",
+            )
+            return False
+
+        in_reticulum_section = False
+
+        for raw_line in lines:
+            line = raw_line.split("#", 1)[0].split(";", 1)[0].strip()
+
+            if line == "":
+                continue
+
+            if line.startswith("[") and line.endswith("]"):
+                in_reticulum_section = line == "[reticulum]"
+                continue
+
+            if not in_reticulum_section or "=" not in line:
+                continue
+
+            key, value = line.split("=", 1)
+
+            if key.strip() != "discover_interfaces":
+                continue
+
+            return value.strip().lower() in RNS_CONFIG_TRUE_VALUES
+
+        return False
+
+    def _runtime_python_path(self, runtime: RuntimeInfo) -> str:
+        python_path = getattr(runtime, "python_path", None) or self.config.runtime_python
+
+        if python_path is None:
+            return sys.executable
+
+        return str(python_path)
+
+    def _python_import_available(self, python_path: str, import_name: str) -> bool:
+        result = subprocess.run(
+            [
+                python_path,
+                "-c",
+                f"import {import_name}",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+
+        return result.returncode == 0
+
+    def _install_python_package(self, python_path: str, package_name: str) -> dict[str, object]:
+        try:
+            result = subprocess.run(
+                [
+                    python_path,
+                    "-m",
+                    "pip",
+                    "install",
+                    package_name,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=RUNTIME_PACKAGE_INSTALL_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired:
+            return {
+                "ok": False,
+                "message": f"pip install timed out after {RUNTIME_PACKAGE_INSTALL_TIMEOUT_SECONDS} seconds",
+            }
+        except OSError as exc:
+            return {
+                "ok": False,
+                "message": f"{type(exc).__name__}: {exc}",
+            }
+
+        output = self._compact_command_output(result.stdout, result.stderr)
+
+        if result.returncode == 0:
+            return {
+                "ok": True,
+                "message": output,
+            }
+
+        return {
+            "ok": False,
+            "message": output or f"pip exited with code {result.returncode}",
+        }
+
+    def _compact_command_output(self, stdout: str, stderr: str) -> str:
+        text = "\n".join(part.strip() for part in (stdout, stderr) if part.strip() != "")
+
+        if len(text) <= RUNTIME_INSTALL_OUTPUT_LIMIT:
+            return text
+
+        return text[-RUNTIME_INSTALL_OUTPUT_LIMIT:]
 
     def _apply_active_runtime(self) -> RuntimeInfo:
         runtime = self.runtime_manager.get_runtime(self.config.engine_name)
