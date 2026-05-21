@@ -58,6 +58,7 @@
           line.className = literalExit.className;
           line.dataset.depth = String(literalExit.depth);
           appendInline(line, literalExit.text, rawOffset + literalExit.offset, selection, inlineState, options, renderState);
+          applyLineBackgroundFill(line, inlineState);
 
           if (line.childNodes.length > 0) {
             root.appendChild(line);
@@ -74,6 +75,7 @@
         line.className = literalClasses.join(" ");
         line.dataset.depth = String(renderState.sectionDepth);
         appendLiteral(line, rawLine, rawOffset, selection, options, inlineState);
+        applyLineBackgroundFill(line, inlineState);
         root.appendChild(line);
         rawOffset += rawLine.length + 1;
         continue;
@@ -98,6 +100,7 @@
         line.className = parsed.className;
         line.dataset.depth = String(parsed.depth);
         line.appendChild(partial.element);
+        applyLineBackgroundFill(line, inlineState);
         root.appendChild(line);
         rawOffset += rawLine.length + 1;
         continue;
@@ -107,6 +110,7 @@
       line.className = parsed.className;
       line.dataset.depth = String(parsed.depth);
       appendInline(line, parsed.text, rawOffset + parsed.offset, selection, inlineState, options, renderState);
+      applyLineBackgroundFill(line, inlineState);
 
       if (parsed.nextSectionDepth !== null) {
         renderState.sectionDepth = parsed.nextSectionDepth;
@@ -542,6 +546,36 @@
     if (state.background !== "") {
       element.style.backgroundColor = state.background;
     }
+  }
+
+  function applyLineBackgroundFill(line, state = createInlineState()) {
+    const background = findRenderedBackgroundColor(line) || (state && state.background ? state.background : "");
+
+    if (background === "") {
+      line.classList.remove("micron-line-bg-fill");
+      return;
+    }
+
+    line.style.backgroundColor = background;
+    line.classList.add("micron-line-bg-fill");
+  }
+
+  function findRenderedBackgroundColor(root) {
+    if (!root || typeof root.querySelectorAll !== "function") {
+      return "";
+    }
+
+    if (root.style && root.style.backgroundColor !== "") {
+      return root.style.backgroundColor;
+    }
+
+    for (const element of Array.from(root.querySelectorAll("*"))) {
+      if (element.style && element.style.backgroundColor !== "") {
+        return element.style.backgroundColor;
+      }
+    }
+
+    return "";
   }
 
   function parseMicronLink(text, startIndex) {

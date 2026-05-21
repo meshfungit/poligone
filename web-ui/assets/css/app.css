@@ -2785,3 +2785,19 @@ tr:last-child td { border-bottom: 0; }
   -webkit-box-decoration-break: clone;
   box-decoration-break: clone;
 }
+
+/* Micron terminal-style line background fill.
+   Browser inline backgrounds only cover glyph runs; NomadNet/MeshChat render background as terminal cells across the line. */
+.micron-line-bg-fill {
+  display: block;
+  width: 100%;
+}
+
+.micron-line-bg-fill > span,
+.micron-line-bg-fill .micron-link:not(.micron-request-link) {
+  background-color: transparent !important;
+}
+
+.micron-line-bg-fill .micron-cell {
+  background-color: transparent !important;
+}
