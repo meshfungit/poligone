@@ -1,29 +1,53 @@
 (function () {
+  const MICRON_DEFAULT_FIELD_WIDTH = 24;
+  const MICRON_MAX_FIELD_WIDTH = 256;
+
   function render(source, options = {}) {
     const selection = normalizeSelection(options.selectionStart, options.selectionEnd);
     const root = document.createElement("div");
     root.className = "micron-content";
     root.dataset.symbolStyle = normalizeSymbolStyle(options.symbolStyle);
+
     const normalizedSource = String(source).replace(/\r\n/g, "\n");
     const lines = normalizedSource.split("\n");
-    let literal = false;
-    let rawOffset = 0;
     const inlineState = createInlineState();
+    const renderState = {
+      literal: false,
+      sectionDepth: 0,
+      pageHeaders: {},
+      radioPrefix: createRadioPrefix(),
+    };
+
+    let rawOffset = 0;
 
     for (const rawLine of lines) {
       const trimmed = rawLine.trim();
 
-      if (!literal && trimmed.startsWith("#")) {
+      if (!renderState.literal && trimmed.startsWith("#!")) {
+        parsePageHeader(root, renderState, trimmed);
         rawOffset += rawLine.length + 1;
         continue;
       }
 
-      if (!literal && isDividerLine(trimmed)) {
+      if (!renderState.literal && trimmed.startsWith("#")) {
+        rawOffset += rawLine.length + 1;
+        continue;
+      }
+
+      if (!renderState.literal && trimmed === "<") {
+        renderState.sectionDepth = 0;
+        rawOffset += rawLine.length + 1;
+        continue;
+      }
+
+      if (!renderState.literal && isDividerLine(trimmed)) {
         const divider = document.createElement("div");
         divider.className = "micron-divider";
         divider.dataset.micronSource = trimmed;
-        const dividerText = renderDividerText(trimmed);
+        divider.dataset.depth = String(renderState.sectionDepth);
+        addDepthClass(divider, renderState.sectionDepth);
 
+        const dividerText = renderDividerText(trimmed);
         if (dividerText !== "") {
           divider.textContent = dividerText;
         }
@@ -34,17 +58,22 @@
       }
 
       const line = document.createElement("div");
-      const parsed = parseLinePrefix(rawLine);
+      const parsed = parseLinePrefix(rawLine, renderState.sectionDepth);
       line.className = parsed.className;
+      line.dataset.depth = String(parsed.depth);
 
-      if (literal) {
+      if (renderState.literal) {
         appendLiteral(line, rawLine, rawOffset, selection, options);
       } else {
-        appendInline(line, parsed.text, rawOffset + parsed.offset, selection, inlineState, options);
+        appendInline(line, parsed.text, rawOffset + parsed.offset, selection, inlineState, options, renderState);
+      }
+
+      if (parsed.nextSectionDepth !== null) {
+        renderState.sectionDepth = parsed.nextSectionDepth;
       }
 
       if (parsed.toggleLiteral) {
-        literal = !literal;
+        renderState.literal = !renderState.literal;
       }
 
       root.appendChild(line);
@@ -54,9 +83,30 @@
     return root;
   }
 
-  function parseLinePrefix(line) {
+  function parsePageHeader(root, renderState, line) {
+    const body = line.slice(2).trim();
+    const equals = body.indexOf("=");
+
+    if (equals <= 0) {
+      return;
+    }
+
+    const key = body.slice(0, equals).trim();
+    const value = body.slice(equals + 1).trim();
+
+    if (key === "") {
+      return;
+    }
+
+    renderState.pageHeaders[key] = value;
+    root.dataset[`header${key.charAt(0).toUpperCase()}${key.slice(1)}`] = value;
+  }
+
+  function parseLinePrefix(line, currentDepth) {
     let text = line;
     let offset = 0;
+    let depth = currentDepth;
+    let nextSectionDepth = null;
     const classes = ["micron-line"];
     let toggleLiteral = false;
 
@@ -69,7 +119,6 @@
     }
 
     const alignment = text.match(/^`([clra])\s*/);
-
     if (alignment) {
       classes.push(`micron-align-${alignment[1]}`);
       text = text.slice(alignment[0].length);
@@ -77,20 +126,37 @@
     }
 
     const section = text.match(/^(>+)\s*(.*)$/);
-
     if (section) {
       const level = Math.min(section[1].length, 6);
       classes.push("micron-heading", `micron-heading-${level}`);
+      depth = level;
+      nextSectionDepth = level;
       text = section[2];
       offset += section[0].length - section[2].length;
     }
+
+    addDepthClassName(classes, depth);
 
     return {
       className: classes.join(" "),
       text,
       offset,
+      depth,
+      nextSectionDepth,
       toggleLiteral,
     };
+  }
+
+  function addDepthClass(element, depth) {
+    if (depth > 0) {
+      element.classList.add(`micron-depth-${Math.min(depth, 6)}`);
+    }
+  }
+
+  function addDepthClassName(classes, depth) {
+    if (depth > 0) {
+      classes.push(`micron-depth-${Math.min(depth, 6)}`);
+    }
   }
 
   function isDividerLine(line) {
@@ -149,7 +215,7 @@
     };
   }
 
-  function appendInline(parent, text, rawStart, selection, state = createInlineState(), options = {}) {
+  function appendInline(parent, text, rawStart, selection, state = createInlineState(), options = {}, renderState = {}) {
     let index = 0;
     let buffer = "";
     let bufferSelected = false;
@@ -161,29 +227,10 @@
 
       const span = document.createElement("span");
       appendRenderedText(span, buffer, options);
+      applyInlineState(span, state);
 
       if (bufferSelected) {
         span.classList.add("micron-selected");
-      }
-
-      if (state.bold) {
-        span.classList.add("micron-bold");
-      }
-
-      if (state.italic) {
-        span.classList.add("micron-italic");
-      }
-
-      if (state.underline) {
-        span.classList.add("micron-underline");
-      }
-
-      if (state.foreground !== "") {
-        span.style.color = state.foreground;
-      }
-
-      if (state.background !== "") {
-        span.style.backgroundColor = state.background;
       }
 
       parent.appendChild(span);
@@ -217,6 +264,25 @@
       }
 
       const command = text[index + 1];
+
+      if (command === "[" || command === "<") {
+        const parsed = command === "["
+          ? parseMicronLink(text, index)
+          : parseMicronField(text, index, renderState);
+
+        if (parsed !== null) {
+          flush();
+          applyInlineState(parsed.element, state);
+
+          if (isRawSelected(rawStart + index, rawStart + parsed.nextIndex, selection)) {
+            parsed.element.classList.add("micron-selected");
+          }
+
+          parent.appendChild(parsed.element);
+          index = parsed.nextIndex;
+          continue;
+        }
+      }
 
       if (command === "`") {
         flush();
@@ -286,6 +352,243 @@
     }
 
     flush();
+  }
+
+  function applyInlineState(element, state) {
+    if (state.bold) {
+      element.classList.add("micron-bold");
+    }
+
+    if (state.italic) {
+      element.classList.add("micron-italic");
+    }
+
+    if (state.underline) {
+      element.classList.add("micron-underline");
+    }
+
+    if (state.foreground !== "") {
+      element.style.color = state.foreground;
+    }
+
+    if (state.background !== "") {
+      element.style.backgroundColor = state.background;
+    }
+  }
+
+  function parseMicronLink(text, startIndex) {
+    const endIndex = findUnescaped(text, "]", startIndex + 2);
+
+    if (endIndex === -1) {
+      return null;
+    }
+
+    const body = text.slice(startIndex + 2, endIndex);
+    const parts = splitMicronParts(body, "`");
+    const target = parts.length >= 2 ? parts[1] : parts[0];
+    const label = parts.length >= 2 ? parts[0] : target;
+    const fields = parts.length >= 3 ? parts.slice(2).join("`") : "";
+    const request = fields !== "";
+    const element = document.createElement(request ? "button" : "a");
+
+    element.className = request ? "micron-link micron-request-link" : "micron-link";
+
+    if (request) {
+      element.type = "button";
+    } else {
+      element.href = "#";
+    }
+
+    element.dataset.micronTarget = target;
+    element.dataset.micronLabel = label;
+    element.dataset.micronFields = fields;
+    element.dataset.micronRequest = request ? "true" : "false";
+    element.appendChild(document.createTextNode(label || target || "link"));
+
+    element.onclick = (event) => {
+      event.preventDefault();
+      console.debug("Micron link", {
+        label,
+        target,
+        fields,
+        request,
+      });
+    };
+
+    return {
+      element,
+      nextIndex: endIndex + 1,
+    };
+  }
+
+  function parseMicronField(text, startIndex, renderState) {
+    const endIndex = findUnescaped(text, ">", startIndex + 2);
+
+    if (endIndex === -1) {
+      return null;
+    }
+
+    const body = text.slice(startIndex + 2, endIndex);
+    const [spec, label = ""] = splitMicronParts(body, "`", 2);
+
+    if (spec.startsWith("?")) {
+      return {
+        element: createMicronChoice("checkbox", spec.slice(1), label),
+        nextIndex: endIndex + 1,
+      };
+    }
+
+    if (spec.startsWith("^")) {
+      return {
+        element: createMicronChoice("radio", spec.slice(1), label, renderState),
+        nextIndex: endIndex + 1,
+      };
+    }
+
+    return {
+      element: createMicronTextField(spec, label),
+      nextIndex: endIndex + 1,
+    };
+  }
+
+  function createMicronTextField(spec, value) {
+    let body = spec;
+    let masked = false;
+    let width = MICRON_DEFAULT_FIELD_WIDTH;
+
+    if (body.startsWith("!")) {
+      masked = true;
+      body = body.slice(1);
+    }
+
+    const widthMatch = body.match(/^(\d+)\|(.*)$/);
+    if (widthMatch !== null) {
+      width = Math.max(1, Math.min(MICRON_MAX_FIELD_WIDTH, Number(widthMatch[1]) || MICRON_DEFAULT_FIELD_WIDTH));
+      body = widthMatch[2];
+    }
+
+    const name = body.trim();
+    const input = document.createElement("input");
+    input.className = "micron-field micron-text-field";
+    input.type = masked ? "password" : "text";
+    input.name = name;
+    input.value = value;
+    input.size = width;
+    input.dataset.micronFieldType = masked ? "password" : "text";
+    input.dataset.micronName = name;
+    input.dataset.micronWidth = String(width);
+    input.onchange = () => {
+      console.debug("Micron field", {
+        name,
+        value: input.value,
+        type: input.dataset.micronFieldType,
+      });
+    };
+    return input;
+  }
+
+  function createMicronChoice(kind, spec, label, renderState = {}) {
+    const parts = spec.split("|");
+    const cleanParts = parts[0] === "" ? parts.slice(1) : parts;
+    const name = cleanParts[0] || "";
+    const value = cleanParts[1] || "";
+    const checked = cleanParts.includes("*");
+    const wrapper = document.createElement("label");
+    wrapper.className = `micron-choice micron-${kind}`;
+
+    const input = document.createElement("input");
+    input.type = kind;
+    input.value = value;
+    input.checked = checked;
+    input.dataset.micronName = name;
+    input.dataset.micronValue = value;
+    input.dataset.micronFieldType = kind;
+
+    if (kind === "radio") {
+      input.name = `${renderState.radioPrefix || "micron"}-${name}`;
+    } else {
+      input.name = name;
+    }
+
+    input.onchange = () => {
+      console.debug("Micron choice", {
+        type: kind,
+        name,
+        value,
+        checked: input.checked,
+      });
+    };
+
+    wrapper.appendChild(input);
+
+    if (label !== "") {
+      const text = document.createElement("span");
+      text.className = "micron-choice-label";
+      text.textContent = label;
+      wrapper.appendChild(text);
+    }
+
+    return wrapper;
+  }
+
+  function findUnescaped(text, needle, startIndex) {
+    let escaped = false;
+
+    for (let index = startIndex; index < text.length; index += 1) {
+      const char = text[index];
+
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+
+      if (char === "\\") {
+        escaped = true;
+        continue;
+      }
+
+      if (char === needle) {
+        return index;
+      }
+    }
+
+    return -1;
+  }
+
+  function splitMicronParts(text, separator, limit = 0) {
+    const parts = [];
+    let buffer = "";
+    let escaped = false;
+
+    for (let index = 0; index < text.length; index += 1) {
+      const char = text[index];
+
+      if (escaped) {
+        buffer += char;
+        escaped = false;
+        continue;
+      }
+
+      if (char === "\\") {
+        escaped = true;
+        continue;
+      }
+
+      if (char === separator && (limit <= 0 || parts.length < limit - 1)) {
+        parts.push(buffer);
+        buffer = "";
+        continue;
+      }
+
+      buffer += char;
+    }
+
+    parts.push(buffer);
+    return parts;
+  }
+
+  function createRadioPrefix() {
+    return `micron-${Math.random().toString(36).slice(2, 10)}`;
   }
 
   function appendRenderedText(parent, text, options) {
@@ -395,7 +698,6 @@
       }
 
       flushBuffer();
-
       const span = document.createElement("span");
       span.className = symbolClassName;
       span.textContent = char;
