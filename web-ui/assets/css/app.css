@@ -2743,3 +2743,16 @@ tr:last-child td { border-bottom: 0; }
 .micron-line .micron-link:not(.micron-request-link) {
   white-space: inherit;
 }
+
+/* Micron links: keep inline link layout, but do not let the link reset Micron inline styles. */
+.micron-link:not(.micron-request-link).micron-bold {
+  font-weight: 700;
+}
+
+.micron-link:not(.micron-request-link).micron-italic {
+  font-style: italic;
+}
+
+.micron-link:not(.micron-request-link).micron-underline {
+  text-decoration: underline;
+}
