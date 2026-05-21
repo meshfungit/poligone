@@ -335,21 +335,28 @@ class ControllerApp:
             destination_hash: str,
             path: str,
             discovery_hints: dict[str, object] | None = None,
+            request_data: dict[str, object] | None = None,
     ) -> dict[str, object]:
         destination = destination_hash.strip().lower()
         page_path = path.strip() or NOMADNET_DEFAULT_PATH
         if not page_path.startswith("/"):
             page_path = f"/{page_path}"
         hints = discovery_hints or {}
+        request_payload = self._normalise_nomadnet_request_data(request_data)
         self.state.append_log(
             "info",
             "nomadnet",
-            f"Page requested: {destination or '-'}{page_path}; last_interface={hints.get('last_interface', '') or '-'}",
+            (
+                f"Page requested: {destination or '-'}{page_path}; "
+                f"last_interface={hints.get('last_interface', '') or '-'}; "
+                f"request_fields={len(request_payload)}"
+            ),
         )
         result = self.engine_supervisor.fetch_nomadnet_page(
             destination,
             page_path,
             discovery_hints=hints,
+            request_data=request_payload,
         )
         if result.get("status") == "error":
             self.state.append_log(
@@ -364,6 +371,41 @@ class ControllerApp:
                 f"Page received: {destination or '-'}{page_path}; interface={result.get('interface', '') or '-'}",
             )
         return result
+
+    def _normalise_nomadnet_request_data(
+        self,
+        request_data: dict[str, object] | None,
+    ) -> dict[str, object]:
+        if request_data is None:
+            return {}
+
+        if not isinstance(request_data, dict):
+            raise ValueError("NomadNet request_data must be an object")
+
+        normalised: dict[str, object] = {}
+
+        for raw_key, raw_value in request_data.items():
+            key = str(raw_key).strip()
+
+            if key == "":
+                continue
+
+            if len(key) > 128:
+                key = key[:128]
+
+            if isinstance(raw_value, (list, tuple)):
+                value = ",".join(str(item) for item in raw_value if item is not None)
+            elif raw_value is None:
+                value = ""
+            else:
+                value = str(raw_value)
+
+            if len(value) > 4096:
+                value = value[:4096]
+
+            normalised[key] = value
+
+        return normalised
 
     def list_nomadnet_pages(self) -> dict[str, object]:
         pages_dir = self.config.nomadnet_pages_dir

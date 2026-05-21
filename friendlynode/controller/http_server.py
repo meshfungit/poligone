@@ -311,6 +311,33 @@ class ControllerHttpServer:
                     self._send_json(app.save_nomadnet_local_page(payload))
                     return
 
+                if parsed.path == "/api/nomadnet/page":
+                    payload = self._read_json_body()
+                    destination_hash = str(payload.get("destination_hash") or "")
+                    path = str(payload.get("path") or "/page/index.mu")
+                    discovery_hints = payload.get("discovery_hints") or {}
+                    request_data = payload.get("request_data") or {}
+
+                    if not isinstance(discovery_hints, dict):
+                        discovery_hints = {}
+
+                    if not isinstance(request_data, dict):
+                        self._send_json(
+                            {"error": "bad_request", "message": "request_data must be an object"},
+                            HTTPStatus.BAD_REQUEST,
+                        )
+                        return
+
+                    self._send_json(
+                        app.fetch_nomadnet_page(
+                            destination_hash,
+                            path,
+                            discovery_hints=discovery_hints,
+                            request_data=request_data,
+                        )
+                    )
+                    return
+
                 if parsed.path == "/api/nomadnet/browser-state":
                     payload = self._read_json_body()
                     self._send_json(app.save_nomadnet_browser_state(payload))

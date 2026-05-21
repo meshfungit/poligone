@@ -2720,37 +2720,57 @@ function openNomadNetPageFromFields(destinationInput, pathInput, current) {
   fetchNomadNetPage(destination, path);
 }
 
-async function fetchNomadNetPage(destinationHash, path) {
+async function fetchNomadNetPage(destinationHash, path, options = {}) {
   const fetchHints = getNomadNetFetchHints(destinationHash, path);
+  const requestData = normaliseNomadNetMicronRequestData(options.requestData || {});
+  const hasRequestData = Object.keys(requestData).length > 0;
 
   try {
-    const query = new URLSearchParams({
-      destination_hash: destinationHash,
-      path,
-    });
+    let response = null;
 
-    if (fetchHints.bookmark_id) {
-      query.set("bookmark_id", fetchHints.bookmark_id);
+    if (hasRequestData) {
+      response = await fetch("/api/nomadnet/page", {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          destination_hash: destinationHash,
+          path,
+          discovery_hints: fetchHints,
+          request_data: requestData,
+        }),
+      });
+    } else {
+      const query = new URLSearchParams({
+        destination_hash: destinationHash,
+        path,
+      });
+
+      if (fetchHints.bookmark_id) {
+        query.set("bookmark_id", fetchHints.bookmark_id);
+      }
+
+      if (fetchHints.last_interface) {
+        query.set("last_interface", fetchHints.last_interface);
+      }
+
+      if (fetchHints.last_announce_at) {
+        query.set("last_announce_at", fetchHints.last_announce_at);
+      }
+
+      if (fetchHints.last_transport_key) {
+        query.set("last_transport_key", fetchHints.last_transport_key);
+      }
+
+      response = await fetch(`/api/nomadnet/page?${query.toString()}`, {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+        },
+      });
     }
-
-    if (fetchHints.last_interface) {
-      query.set("last_interface", fetchHints.last_interface);
-    }
-
-    if (fetchHints.last_announce_at) {
-      query.set("last_announce_at", fetchHints.last_announce_at);
-    }
-
-    if (fetchHints.last_transport_key) {
-      query.set("last_transport_key", fetchHints.last_transport_key);
-    }
-
-    const response = await fetch(`/api/nomadnet/page?${query.toString()}`, {
-      method: "GET",
-      headers: {
-        Accept: "application/json",
-      },
-    });
 
     if (!response.ok) {
       throw new Error(`NomadNet page request failed: HTTP ${response.status}`);
@@ -2789,6 +2809,7 @@ async function fetchNomadNetPage(destinationHash, path) {
       last_interface: page.interface || page.last_interface || nomadnetBrowserState?.last_interface || "",
       last_transport: page.last_transport || nomadnetBrowserState?.last_transport || {},
       last_success_at: getNomadNetIsoNow(),
+      last_request_data: requestData,
       loading: false,
       error: "",
     };
@@ -2838,15 +2859,20 @@ function handleNomadNetMicronLink(payload, event) {
     return;
   }
 
-  if (payload?.request) {
-    console.debug("Micron request link fields", {
+  const requestData = buildNomadNetMicronRequestData(payload);
+
+  if (payload?.request || Object.keys(requestData).length > 0) {
+    console.debug("Micron request link data", {
       target,
       fields: payload.fields || "",
-      values: collectNomadNetMicronFieldValues(payload.element),
+      request_data: requestData,
     });
   }
 
-  openNomadNetPageFromMicronLink(resolved.destination_hash, resolved.path, payload);
+  openNomadNetPageFromMicronLink(resolved.destination_hash, resolved.path, {
+    ...payload,
+    requestData,
+  });
 }
 
 function isExternalMicronTarget(target) {
@@ -2942,6 +2968,7 @@ function resolveNomadNetRelativePath(target, currentPath) {
 function openNomadNetPageFromMicronLink(destinationHash, path, payload = {}) {
   const destination = normaliseNomadNetDestinationHash(destinationHash);
   const pagePath = normaliseNomadNetPagePath(path || "/page/index.mu");
+  const requestData = normaliseNomadNetMicronRequestData(payload.requestData || {});
 
   if (destination === "") {
     return;
@@ -2961,14 +2988,26 @@ function openNomadNetPageFromMicronLink(destinationHash, path, payload = {}) {
     loading: true,
     error: "",
     last_opened_at: getNomadNetIsoNow(),
+    last_request_data: requestData,
   };
 
   pushNomadNetBrowserHistory(nomadnetBrowserState);
   render("NomadNet");
-  fetchNomadNetPage(destination, pagePath);
+  fetchNomadNetPage(destination, pagePath, { requestData });
 }
 
-function collectNomadNetMicronFieldValues(anchorElement) {
+function buildNomadNetMicronRequestData(payload = {}) {
+  const element = payload?.element;
+  const fieldSpec = String(payload?.fields || "").trim();
+
+  if (fieldSpec === "") {
+    return {};
+  }
+
+  return collectNomadNetMicronFieldValues(element, fieldSpec);
+}
+
+function collectNomadNetMicronFieldValues(anchorElement, fieldSpec = "*") {
   const root = anchorElement instanceof HTMLElement
     ? anchorElement.closest(".micron-content")
     : null;
@@ -2977,23 +3016,24 @@ function collectNomadNetMicronFieldValues(anchorElement) {
     return {};
   }
 
-  const values = {};
+  const request = parseNomadNetMicronFieldSpec(fieldSpec);
+  const values = { ...request.variables };
 
   for (const input of Array.from(root.querySelectorAll(".micron-field"))) {
     const name = String(input.dataset.micronName || input.name || "").trim();
 
-    if (name === "") {
+    if (name === "" || !shouldCollectNomadNetMicronField(request, name)) {
       continue;
     }
 
-    values[name] = input.value;
+    values[`field_${name}`] = input.value;
   }
 
   for (const input of Array.from(root.querySelectorAll(".micron-choice input"))) {
     const name = String(input.dataset.micronName || input.name || "").trim();
     const value = String(input.dataset.micronValue || input.value || "");
 
-    if (name === "") {
+    if (name === "" || !shouldCollectNomadNetMicronField(request, name)) {
       continue;
     }
 
@@ -3002,29 +3042,93 @@ function collectNomadNetMicronFieldValues(anchorElement) {
         continue;
       }
 
-      if (values[name] === undefined) {
-        values[name] = value;
-      } else if (Array.isArray(values[name])) {
-        values[name].push(value);
+      const key = `field_${name}`;
+
+      if (values[key] === undefined) {
+        values[key] = value;
+      } else if (Array.isArray(values[key])) {
+        values[key].push(value);
       } else {
-        values[name] = [values[name], value];
+        values[key] = [values[key], value];
       }
 
       continue;
     }
 
     if (input.type === "radio" && input.checked) {
-      values[name] = value;
+      values[`field_${name}`] = value;
     }
   }
 
-  for (const [name, value] of Object.entries(values)) {
-    if (Array.isArray(value)) {
-      values[name] = value.join(",");
+  return normaliseNomadNetMicronRequestData(values);
+}
+
+function parseNomadNetMicronFieldSpec(fieldSpec) {
+  const request = {
+    allFields: false,
+    fieldNames: new Set(),
+    variables: {},
+  };
+
+  for (const rawPart of String(fieldSpec || "").split("|")) {
+    const part = rawPart.trim();
+
+    if (part === "") {
+      continue;
     }
+
+    if (part === "*") {
+      request.allFields = true;
+      continue;
+    }
+
+    const separator = part.indexOf("=");
+
+    if (separator > 0) {
+      const key = part.slice(0, separator).trim();
+      const value = part.slice(separator + 1);
+
+      if (key !== "") {
+        request.variables[`var_${key}`] = value;
+      }
+
+      continue;
+    }
+
+    request.fieldNames.add(part);
   }
 
-  return values;
+  return request;
+}
+
+function shouldCollectNomadNetMicronField(request, name) {
+  return Boolean(request.allFields || request.fieldNames.has(name));
+}
+
+function normaliseNomadNetMicronRequestData(values) {
+  const result = {};
+
+  for (const [rawName, rawValue] of Object.entries(values || {})) {
+    const name = String(rawName || "").trim();
+
+    if (name === "") {
+      continue;
+    }
+
+    if (Array.isArray(rawValue)) {
+      result[name] = rawValue.map((value) => String(value)).join(",");
+      continue;
+    }
+
+    if (rawValue === undefined || rawValue === null) {
+      result[name] = "";
+      continue;
+    }
+
+    result[name] = String(rawValue);
+  }
+
+  return result;
 }
 
 function getNomadNetFetchHints(destinationHash, path) {

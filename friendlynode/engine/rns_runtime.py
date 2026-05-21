@@ -228,6 +228,7 @@ class RnsRuntime:
             destination_hash: str,
             path: str,
             discovery_hints: dict[str, object] | None = None,
+            request_data: dict[str, object] | None = None,
     ) -> dict[str, object]:
         destination = self._normalise_nomadnet_destination_hash(destination_hash)
         page_path = self._normalise_nomadnet_path(path)
@@ -281,7 +282,7 @@ class RnsRuntime:
             link = self._open_nomadnet_link(remote_destination)
 
             try:
-                response = self._request_nomadnet_path(link, page_path)
+                response = self._request_nomadnet_path(link, page_path, request_data or {})
             finally:
                 try:
                     link.teardown()
@@ -458,9 +459,15 @@ class RnsRuntime:
 
         raise TimeoutError("Timed out establishing link to NomadNet node")
 
-    def _request_nomadnet_path(self, link: object, page_path: str) -> object:
+    def _request_nomadnet_path(
+            self,
+            link: object,
+            page_path: str,
+            request_data: dict[str, object] | None = None,
+    ) -> object:
         completed = threading.Event()
         result: dict[str, object] = {}
+        normalised_request_data = self._normalise_nomadnet_request_data(request_data)
 
         def got_response(request_receipt: object) -> None:
             result["response"] = getattr(request_receipt, "response", None)
@@ -472,7 +479,7 @@ class RnsRuntime:
 
         request_receipt = link.request(
             page_path,
-            data=None,
+            data=normalised_request_data,
             response_callback=got_response,
             failed_callback=request_failed,
             timeout=NOMADNET_REQUEST_TIMEOUT_SEC,
@@ -488,6 +495,40 @@ class RnsRuntime:
             raise RuntimeError(str(result["error"]))
 
         return result.get("response")
+
+    def _normalise_nomadnet_request_data(
+            self,
+            request_data: dict[str, object] | None,
+    ) -> dict[str, str] | None:
+        if not isinstance(request_data, dict) or len(request_data) == 0:
+            return None
+
+        normalised: dict[str, str] = {}
+
+        for raw_key, raw_value in request_data.items():
+            key = str(raw_key).strip()
+
+            if key == "":
+                continue
+
+            if len(key) > 128:
+                key = key[:128]
+
+            if isinstance(raw_value, (list, tuple)):
+                value = ",".join(str(item) for item in raw_value if item is not None)
+            elif isinstance(raw_value, bool):
+                value = "true" if raw_value else "false"
+            elif raw_value is None:
+                value = ""
+            else:
+                value = str(raw_value)
+
+            if len(value) > 4096:
+                value = value[:4096]
+
+            normalised[key] = value
+
+        return normalised or None
 
     def _decode_nomadnet_response(self, response: object) -> str:
         if response is None:
