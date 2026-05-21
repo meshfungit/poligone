@@ -2622,3 +2622,35 @@ tr:last-child td { border-bottom: 0; }
 .micron-choice-label {
   overflow-wrap: anywhere;
 }
+
+/* Micron renderer step 1.1: partials and compact interactive controls. Append to web-ui/assets/css/app.css. */
+.micron-partial {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  gap: 6px;
+  border: 1px dashed var(--line);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--panel2) 70%, transparent);
+  color: var(--muted);
+  padding: 1px 7px;
+  font: inherit;
+  line-height: 1.25;
+  vertical-align: baseline;
+  cursor: pointer;
+}
+
+.micron-partial:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.micron-partial-marker {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.micron-partial-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}

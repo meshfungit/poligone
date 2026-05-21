@@ -41,24 +41,37 @@
       }
 
       if (!renderState.literal && isDividerLine(trimmed)) {
-        const divider = document.createElement("div");
-        divider.className = "micron-divider";
-        divider.dataset.micronSource = trimmed;
-        divider.dataset.depth = String(renderState.sectionDepth);
-        addDepthClass(divider, renderState.sectionDepth);
-
-        const dividerText = renderDividerText(trimmed);
-        if (dividerText !== "") {
-          divider.textContent = dividerText;
-        }
-
-        root.appendChild(divider);
+        root.appendChild(renderDividerElement(trimmed, renderState.sectionDepth));
         rawOffset += rawLine.length + 1;
         continue;
       }
 
-      const line = document.createElement("div");
       const parsed = parseLinePrefix(rawLine, renderState.sectionDepth);
+
+      if (!renderState.literal) {
+        const parsedTrimmed = parsed.text.trim();
+
+        if (isDividerLine(parsedTrimmed)) {
+          const divider = renderDividerElement(parsedTrimmed, parsed.depth);
+          copyAlignmentClasses(parsed.className, divider);
+          root.appendChild(divider);
+          rawOffset += rawLine.length + 1;
+          continue;
+        }
+
+        const partial = parseMicronPartialFromLine(parsedTrimmed);
+        if (partial !== null) {
+          const line = document.createElement("div");
+          line.className = parsed.className;
+          line.dataset.depth = String(parsed.depth);
+          line.appendChild(partial.element);
+          root.appendChild(line);
+          rawOffset += rawLine.length + 1;
+          continue;
+        }
+      }
+
+      const line = document.createElement("div");
       line.className = parsed.className;
       line.dataset.depth = String(parsed.depth);
 
@@ -171,6 +184,29 @@
     return line[1].repeat(32);
   }
 
+  function renderDividerElement(line, depth) {
+    const divider = document.createElement("div");
+    divider.className = "micron-divider";
+    divider.dataset.micronSource = line;
+    divider.dataset.depth = String(depth);
+    addDepthClass(divider, depth);
+
+    const dividerText = renderDividerText(line);
+    if (dividerText !== "") {
+      divider.textContent = dividerText;
+    }
+
+    return divider;
+  }
+
+  function copyAlignmentClasses(className, element) {
+    for (const name of String(className || "").split(/\s+/)) {
+      if (name.startsWith("micron-align-")) {
+        element.classList.add(name);
+      }
+    }
+  }
+
   function appendLiteral(parent, text, rawStart, selection, options) {
     let buffer = "";
     let selected = false;
@@ -257,18 +293,26 @@
         continue;
       }
 
-      if (char !== "`" || index + 1 >= text.length) {
+      if (char !== "`") {
         appendVisible(char, index, index + 1);
+        index += 1;
+        continue;
+      }
+
+      if (index + 1 >= text.length) {
+        flush();
         index += 1;
         continue;
       }
 
       const command = text[index + 1];
 
-      if (command === "[" || command === "<") {
+      if (command === "[" || command === "<" || command === "{") {
         const parsed = command === "["
           ? parseMicronLink(text, index)
-          : parseMicronField(text, index, renderState);
+          : command === "<"
+            ? parseMicronField(text, index, renderState)
+            : parseMicronPartial(text, index);
 
         if (parsed !== null) {
           flush();
@@ -282,6 +326,13 @@
           index = parsed.nextIndex;
           continue;
         }
+      }
+
+      if (["c", "l", "r", "a"].includes(command)) {
+        flush();
+        applyInlineAlignment(parent, command);
+        index += 2;
+        continue;
       }
 
       if (command === "`") {
@@ -354,6 +405,27 @@
     flush();
   }
 
+  function applyInlineAlignment(element, command) {
+    element.classList.remove("micron-align-c", "micron-align-l", "micron-align-r", "micron-align-a");
+
+    if (command === "c") {
+      element.classList.add("micron-align-c");
+      return;
+    }
+
+    if (command === "r") {
+      element.classList.add("micron-align-r");
+      return;
+    }
+
+    if (command === "l") {
+      element.classList.add("micron-align-l");
+      return;
+    }
+
+    element.classList.add("micron-align-a");
+  }
+
   function applyInlineState(element, state) {
     if (state.bold) {
       element.classList.add("micron-bold");
@@ -419,6 +491,62 @@
       element,
       nextIndex: endIndex + 1,
     };
+  }
+
+  function parseMicronPartialFromLine(line) {
+    if (!line.startsWith("`{")) {
+      return null;
+    }
+
+    const parsed = parseMicronPartial(line, 0);
+
+    if (parsed === null || parsed.nextIndex !== line.length) {
+      return null;
+    }
+
+    return parsed;
+  }
+
+  function parseMicronPartial(text, startIndex) {
+    const endIndex = findUnescaped(text, "}", startIndex + 2);
+
+    if (endIndex === -1) {
+      return null;
+    }
+
+    const body = text.slice(startIndex + 2, endIndex);
+    const parts = splitMicronParts(body, "`");
+    const target = parts[0] || "";
+    const refresh = parts.length >= 2 ? parts[1] : "";
+    const fields = parts.length >= 3 ? parts.slice(2).join("`") : "";
+
+    if (target === "") {
+      return null;
+    }
+
+    const element = document.createElement("span");
+    element.className = "micron-partial";
+    element.dataset.micronTarget = target;
+    element.dataset.micronRefresh = refresh;
+    element.dataset.micronFields = fields;
+    element.title = refresh === "" ? `Partial: ${target}` : `Partial: ${target}, refresh ${refresh}s`;
+
+    const marker = document.createElement("span");
+    marker.className = "micron-partial-marker";
+    marker.textContent = "⧖";
+    element.appendChild(marker);
+
+    const label = document.createElement("span");
+    label.className = "micron-partial-label";
+    label.textContent = target;
+    element.appendChild(label);
+
+    element.onclick = (event) => {
+      event.preventDefault();
+      console.debug("Micron partial", { target, refresh, fields });
+    };
+
+    return { element, nextIndex: endIndex + 1 };
   }
 
   function parseMicronField(text, startIndex, renderState) {
@@ -503,6 +631,7 @@
     input.dataset.micronName = name;
     input.dataset.micronValue = value;
     input.dataset.micronFieldType = kind;
+    applyChoiceAccentColor(input, value);
 
     if (kind === "radio") {
       input.name = `${renderState.radioPrefix || "micron"}-${name}`;
@@ -529,6 +658,23 @@
     }
 
     return wrapper;
+  }
+
+  function applyChoiceAccentColor(input, value) {
+    const color = String(value || "").trim();
+
+    if (color === "") {
+      return;
+    }
+
+    const isHex = /^#?[0-9a-fA-F]{3}([0-9a-fA-F]{3})?$/.test(color);
+    const cssColor = isHex && !color.startsWith("#") ? `#${color}` : color;
+
+    if (typeof CSS !== "undefined" && typeof CSS.supports === "function" && !CSS.supports("color", cssColor)) {
+      return;
+    }
+
+    input.style.accentColor = cssColor;
   }
 
   function findUnescaped(text, needle, startIndex) {
