@@ -549,33 +549,16 @@
   }
 
   function applyLineBackgroundFill(line, state = createInlineState()) {
-    const background = findRenderedBackgroundColor(line) || (state && state.background ? state.background : "");
+    const background = state && state.background ? state.background : "";
 
     if (background === "") {
+      line.style.backgroundColor = "";
       line.classList.remove("micron-line-bg-fill");
       return;
     }
 
     line.style.backgroundColor = background;
     line.classList.add("micron-line-bg-fill");
-  }
-
-  function findRenderedBackgroundColor(root) {
-    if (!root || typeof root.querySelectorAll !== "function") {
-      return "";
-    }
-
-    if (root.style && root.style.backgroundColor !== "") {
-      return root.style.backgroundColor;
-    }
-
-    for (const element of Array.from(root.querySelectorAll("*"))) {
-      if (element.style && element.style.backgroundColor !== "") {
-        return element.style.backgroundColor;
-      }
-    }
-
-    return "";
   }
 
   function parseMicronLink(text, startIndex, options = {}) {
