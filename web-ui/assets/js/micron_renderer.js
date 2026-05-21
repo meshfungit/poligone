@@ -275,6 +275,11 @@
     let index = 0;
     let buffer = "";
     let bufferSelected = false;
+    const cellMode = shouldRenderTextAsCells(text);
+
+    if (cellMode && parent instanceof HTMLElement) {
+      parent.classList.add("micron-cell-line");
+    }
 
     function flush() {
       if (buffer === "") {
@@ -282,7 +287,10 @@
       }
 
       const span = document.createElement("span");
-      appendRenderedText(span, buffer, options);
+      appendRenderedText(span, buffer, {
+        ...options,
+        micronCellMode: cellMode,
+      });
       applyInlineState(span, state);
 
       if (bufferSelected) {
@@ -750,6 +758,11 @@
   }
 
   function appendRenderedText(parent, text, options) {
+    if (options && options.micronCellMode) {
+      appendCellText(parent, text);
+      return;
+    }
+
     const style = normalizeSymbolStyle(options.symbolStyle);
 
     if (style === "system") {
@@ -763,6 +776,20 @@
     }
 
     appendFriendlyNodeText(parent, text);
+  }
+
+
+  function shouldRenderTextAsCells(text) {
+    return /[─-╿]/u.test(String(text || ""));
+  }
+
+  function appendCellText(parent, text) {
+    for (const char of Array.from(String(text))) {
+      const cell = document.createElement("span");
+      cell.className = "micron-cell";
+      cell.textContent = char === " " ? " " : char;
+      parent.appendChild(cell);
+    }
   }
 
   function appendFriendlyNodeText(parent, text) {

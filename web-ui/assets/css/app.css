@@ -2687,3 +2687,27 @@ tr:last-child td { border-bottom: 0; }
 .nomadnet-page .micron-choice input {
   vertical-align: -0.1em;
 }
+
+/* Micron pseudographics cell alignment fix.
+   Append to web-ui/assets/css/app.css after previous Micron CSS append blocks. */
+
+.nomadnet-page .micron-cell-line,
+.nomadnet-rendered-input .micron-cell-line {
+  white-space: pre;
+  font-variant-ligatures: none;
+  font-feature-settings: "liga" 0, "calt" 0;
+}
+
+.nomadnet-page .micron-cell,
+.nomadnet-rendered-input .micron-cell {
+  display: inline-block;
+  width: 1ch;
+  min-width: 1ch;
+  max-width: 1ch;
+  text-align: center;
+  white-space: pre;
+  overflow: visible;
+  font: inherit;
+  line-height: inherit;
+  text-decoration: inherit;
+}
