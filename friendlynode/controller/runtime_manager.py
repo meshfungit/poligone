@@ -18,7 +18,11 @@ from friendlynode.config.defaults import RUNTIMES_DIR
 
 RUNTIME_MANIFEST_NAME = "runtime.json"
 DEFAULT_RUNTIME_NAME = "stub"
-DEFAULT_RETICULUM_RELEASE = "1.2.5"
+MIN_RETICULUM_RELEASE = "1.2.6"
+DEFAULT_RETICULUM_RELEASE = MIN_RETICULUM_RELEASE
+
+PYPI_RNS_PROJECT_JSON_URL = "https://pypi.org/pypi/rns/json"
+PYPI_RNS_RELEASE_JSON_URL = "https://pypi.org/pypi/rns/{version}/json"
 DEFAULT_INTERFACE_TYPES = (
     "AutoInterface",
     "BackboneInterface",
@@ -42,25 +46,6 @@ RUNTIME_FEATURES = {
         "default_enabled": False,
     },
 }
-RETICULUM_RELEASES = (
-    {
-        "version": "1.2.5",
-        "label": "Reticulum 1.2.5",
-        "recommended": True,
-        "verified": True,
-        "source": "pypi",
-        "notes": "Stable baseline matching the current public GitHub release.",
-    },
-    {
-        "version": "1.2.6",
-        "label": "Reticulum 1.2.6",
-        "recommended": False,
-        "verified": False,
-        "source": "pypi",
-        "notes": "PyPI-only release at the time of inspection; not selected by default.",
-    },
-)
-
 
 @dataclass(slots=True)
 class RuntimeInfo:
@@ -168,25 +153,69 @@ class RuntimeManager:
         return self.get_runtime(DEFAULT_RUNTIME_NAME)
 
     def list_reticulum_releases(self) -> list[dict[str, object]]:
-        runtimes = {
+        installed_by_version = {
             runtime.release_version: runtime
             for runtime in self.list_runtimes()
             if runtime.release_version != ""
         }
-        releases = []
 
-        for release in RETICULUM_RELEASES:
+        try:
+            pypi_releases = self._list_pypi_reticulum_releases()
+        except Exception:
+            pypi_releases = []
+
+        result: list[dict[str, object]] = []
+        known_versions: set[str] = set()
+
+        highest_version = ""
+        if len(pypi_releases) > 0:
+            highest_version = str(pypi_releases[0]["version"])
+
+        for release in pypi_releases:
             version = str(release["version"])
-            runtime = runtimes.get(version)
-            releases.append(
+            installed_runtime = installed_by_version.get(version)
+            runtime_name = installed_runtime.name if installed_runtime is not None else self._runtime_name(version)
+
+            result.append(
                 {
-                    **release,
-                    "installed": runtime is not None,
-                    "runtime_name": runtime.name if runtime is not None else self._runtime_name(version),
+                    "version": version,
+                    "label": f"Reticulum {version}",
+                    "recommended": version == highest_version,
+                    "verified": False,
+                    "source": "pypi",
+                    "notes": "Reticulum release from PyPI.",
+                    "released": str(release.get("upload_time") or ""),
+                    "installed": installed_runtime is not None,
+                    "runtime_name": runtime_name,
                 }
             )
 
-        return releases
+            known_versions.add(version)
+
+        for version, runtime in installed_by_version.items():
+            if version in known_versions:
+                continue
+
+            if not self._is_supported_reticulum_release(version):
+                continue
+
+            result.append(
+                {
+                    "version": version,
+                    "label": f"Reticulum {version}",
+                    "recommended": False,
+                    "verified": False,
+                    "source": "local",
+                    "notes": "Installed locally, but not returned by the current PyPI release listing.",
+                    "released": "",
+                    "installed": True,
+                    "runtime_name": runtime.name,
+                }
+            )
+
+        return result
+
+
 
     def install_reticulum_release(
         self,
@@ -194,7 +223,7 @@ class RuntimeManager:
         *,
         features: dict[str, bool] | None = None,
     ) -> RuntimeInfo:
-        release = self._get_release(version)
+        release = self._get_pypi_release(version)
         runtime_name = self._runtime_name(version)
         runtime_path = (self.runtimes_dir / runtime_name).resolve()
         source_path = runtime_path / "src"
@@ -372,12 +401,41 @@ class RuntimeManager:
 
         return f"rns-{clean_version}"
 
-    def _get_release(self, version: str) -> dict[str, object]:
-        for release in RETICULUM_RELEASES:
-            if release["version"] == version:
-                return release
+    def _get_pypi_release(self, version: str) -> dict[str, object]:
+        if not self._is_supported_reticulum_release(version):
+            raise ValueError(
+                f"Unsupported Reticulum release {version}. "
+                f"Minimum supported version is {MIN_RETICULUM_RELEASE}."
+            )
 
-        raise KeyError(f"Unsupported Reticulum release: {version}")
+        metadata = self._load_json_url(
+            PYPI_RNS_RELEASE_JSON_URL.format(version=version),
+            timeout=30,
+        )
+
+        info = metadata.get("info", {})
+        urls = metadata.get("urls", [])
+
+        if not isinstance(info, dict):
+            raise RuntimeError(f"Invalid PyPI metadata for rns {version}.")
+
+        if not isinstance(urls, list):
+            raise RuntimeError(f"Invalid PyPI file list for rns {version}.")
+
+        sdist = self._find_sdist(urls)
+
+        if sdist is None:
+            raise RuntimeError(f"No source distribution found on PyPI for rns {version}.")
+
+        resolved_version = str(info.get("version") or version)
+
+        return {
+            "version": resolved_version,
+            "label": f"Reticulum {resolved_version}",
+            "source": "pypi",
+            "sdist_url": str(sdist["url"]),
+            "sdist_sha256": str(sdist.get("digests", {}).get("sha256") or ""),
+        }
 
     def _get_feature(self, feature_name: str) -> dict[str, object]:
         feature = RUNTIME_FEATURES.get(feature_name)
@@ -398,22 +456,123 @@ class RuntimeManager:
         return features
 
     def _download_sdist(self, version: str) -> bytes:
-        metadata_url = f"https://pypi.org/pypi/rns/{version}/json"
-        request = urllib.request.Request(metadata_url, headers={"Accept": "application/json"})
-        metadata = json.loads(urllib.request.urlopen(request, timeout=30).read().decode("utf-8"))
+        release = self._get_pypi_release(version)
 
-        for item in metadata.get("urls", []):
+        url = str(release["sdist_url"])
+        expected_sha256 = str(release.get("sdist_sha256") or "")
+
+        with urllib.request.urlopen(url, timeout=60) as response:
+            data = response.read()
+
+        if expected_sha256 != "":
+            actual_sha256 = hashlib.sha256(data).hexdigest()
+
+            if actual_sha256 != expected_sha256:
+                raise RuntimeError(
+                    f"Downloaded rns {version} source distribution failed SHA256 check. "
+                    f"Expected {expected_sha256}, got {actual_sha256}."
+                )
+
+        return data
+
+    def _list_pypi_reticulum_releases(self) -> list[dict[str, object]]:
+        metadata = self._load_json_url(PYPI_RNS_PROJECT_JSON_URL, timeout=30)
+        releases = metadata.get("releases", {})
+
+        if not isinstance(releases, dict):
+            raise RuntimeError("Invalid PyPI release metadata for rns.")
+
+        result: list[dict[str, object]] = []
+
+        for version, files in releases.items():
+            if not isinstance(version, str):
+                continue
+
+            if not isinstance(files, list):
+                continue
+
+            if not self._is_supported_reticulum_release(version):
+                continue
+
+            if self._find_sdist(files) is None:
+                continue
+
+            result.append(
+                {
+                    "version": version,
+                    "upload_time": self._release_upload_time(files),
+                }
+            )
+
+        result.sort(key=lambda item: self._version_key(str(item["version"])), reverse=True)
+
+        return result
+
+    def _load_json_url(self, url: str, timeout: int) -> dict[str, object]:
+        request = urllib.request.Request(
+            url,
+            headers={"Accept": "application/json"},
+        )
+
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+
+        if not isinstance(payload, dict):
+            raise RuntimeError(f"Invalid JSON object returned by {url}.")
+
+        return payload
+
+    def _find_sdist(self, files: list[object]) -> dict[str, object] | None:
+        for item in files:
+            if not isinstance(item, dict):
+                continue
+
             if item.get("packagetype") != "sdist":
                 continue
 
-            url = str(item.get("url") or "")
+            url = item.get("url")
 
-            if url == "":
+            if not isinstance(url, str) or url == "":
                 continue
 
-            return urllib.request.urlopen(url, timeout=60).read()
+            return item
 
-        raise RuntimeError(f"No source distribution found for rns {version}")
+        return None
+
+    def _release_upload_time(self, files: list[object]) -> str:
+        sdist = self._find_sdist(files)
+
+        if sdist is None:
+            return ""
+
+        upload_time = sdist.get("upload_time_iso_8601") or sdist.get("upload_time") or ""
+
+        return str(upload_time)
+
+    def _is_supported_reticulum_release(self, version: str) -> bool:
+        return self._version_key(version) >= self._version_key(MIN_RETICULUM_RELEASE)
+
+    def _is_supported_reticulum_release(self, version: str) -> bool:
+        return self._version_key(version) >= self._version_key(MIN_RETICULUM_RELEASE)
+
+    def _version_key(self, version: str) -> tuple[int, ...]:
+        parts: list[int] = []
+
+        for raw_part in version.split("."):
+            number = ""
+
+            for char in raw_part:
+                if not char.isdigit():
+                    break
+
+                number += char
+
+            if number == "":
+                return tuple()
+
+            parts.append(int(number))
+
+        return tuple(parts)
 
     def _extract_sdist(self, data: bytes, destination: Path) -> None:
         with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as archive:
