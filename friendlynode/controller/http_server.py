@@ -97,17 +97,10 @@ class ControllerHttpServer:
     def _restart_process_after_response(self) -> None:
         time.sleep(0.6)
 
-        if self._running_under_debugger():
-            print(
-                "[friendlynode] Process restart requested under debugger; shutting down instead of os.execv",
-                flush=True,
-            )
-            for httpd in self.httpds:
-                httpd.shutdown()
-            return
-
         args = [sys.executable, *sys.argv]
+
         print(f"[friendlynode] Process restart requested: {' '.join(args)}", flush=True)
+
         os.execv(sys.executable, args)
 
     def _running_under_debugger(self) -> bool:
@@ -290,8 +283,15 @@ class ControllerHttpServer:
                         )
                         return
 
-                    app.select_runtime(runtime_name)
-                    self._send_json(self._build_status_response())
+                    runtime = app.select_runtime(runtime_name)
+                    self._send_json(
+                        {
+                            "status": "process_restarting",
+                            "message": "Runtime selected. FriendlyNode process restart requested.",
+                            "runtime": runtime.to_dict(),
+                        }
+                    )
+                    controller_server.request_process_restart()
                     return
 
                 if parsed.path == "/api/runtime/install":
@@ -305,8 +305,15 @@ class ControllerHttpServer:
                         )
                         return
 
-                    app.install_reticulum_release(version)
-                    self._send_json(self._build_status_response())
+                    runtime = app.install_reticulum_release(version)
+                    self._send_json(
+                        {
+                            "status": "process_restarting",
+                            "message": "Runtime installed and selected. FriendlyNode process restart requested.",
+                            "runtime": runtime.to_dict(),
+                        }
+                    )
+                    controller_server.request_process_restart()
                     return
 
                 if parsed.path == "/api/runtime/feature":

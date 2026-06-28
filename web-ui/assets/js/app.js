@@ -7667,7 +7667,19 @@ async function selectRuntimeFromUi() {
       throw new Error(`Runtime selection failed: HTTP ${response.status}`);
     }
 
-    currentStatus = await response.json();
+    const payload = await response.json();
+
+    if (payload.status === "process_restarting") {
+      if (button !== null) {
+        button.textContent = "Restarting process...";
+      }
+
+      await waitForFriendlyNodeAfterProcessRestart();
+      window.location.reload();
+      return;
+    }
+
+    currentStatus = payload;
     updateSummaryCards(currentStatus);
     render("Settings");
   } catch (error) {
@@ -7710,7 +7722,19 @@ async function installRuntimeReleaseFromUi() {
       throw new Error(`Runtime install failed: HTTP ${response.status}`);
     }
 
-    currentStatus = await response.json();
+    const payload = await response.json();
+
+    if (payload.status === "process_restarting") {
+      if (button !== null) {
+        button.textContent = "Restarting process...";
+      }
+
+      await waitForFriendlyNodeAfterProcessRestart();
+      window.location.reload();
+      return;
+    }
+
+    currentStatus = payload;
     updateSummaryCards(currentStatus);
     render("Settings");
   } catch (error) {

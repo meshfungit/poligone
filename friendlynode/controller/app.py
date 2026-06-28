@@ -190,11 +190,8 @@ class ControllerApp:
         self.state.append_log(
             "info",
             "runtime",
-            f"runtime selected: name={runtime.name}, kind={runtime.kind}",
+            f"runtime selected: name={runtime.name}, kind={runtime.kind}; process restart required",
         )
-
-        self.engine_supervisor.restart()
-        self.state.append_log("info", "controller", "Reticulum restart completed")
 
         return runtime
 
@@ -208,11 +205,8 @@ class ControllerApp:
         self.state.append_log(
             "info",
             "runtime",
-            f"Reticulum runtime installed: name={runtime.name}, version={runtime.release_version}",
+            f"Reticulum runtime installed and selected: name={runtime.name}, version={runtime.release_version}; process restart required",
         )
-
-        self.engine_supervisor.restart()
-        self.state.append_log("info", "controller", "Reticulum restart completed")
 
         return runtime
 
