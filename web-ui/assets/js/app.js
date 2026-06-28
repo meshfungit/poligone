@@ -7561,12 +7561,42 @@ window.setInterval(() => {
     });
 }, 5000);
 
+function sleep(ms) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
+
+async function waitForFriendlyNodeAfterProcessRestart() {
+  await sleep(1200);
+
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    try {
+      const response = await fetch("/api/status", {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+        },
+        cache: "no-store",
+      });
+
+      if (response.ok) {
+        return;
+      }
+    } catch (error) {
+      // Controller is restarting.
+    }
+
+    await sleep(500);
+  }
+}
+
 async function restartReticulum() {
   const button = document.querySelector("#restart-reticulum");
 
   if (button !== null) {
     button.disabled = true;
-    button.textContent = "Restarting...";
+    button.textContent = "Restarting process...";
   }
 
   try {
@@ -7581,7 +7611,15 @@ async function restartReticulum() {
       throw new Error(`Restart request failed: HTTP ${response.status}`);
     }
 
-    currentStatus = await response.json();
+    const payload = await response.json();
+
+    if (payload.status === "process_restarting") {
+      await waitForFriendlyNodeAfterProcessRestart();
+      window.location.reload();
+      return;
+    }
+
+    currentStatus = payload;
     updateSummaryCards(currentStatus);
 
     const activeTab = getActiveTab();

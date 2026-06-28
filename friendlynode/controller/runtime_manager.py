@@ -8,6 +8,7 @@ import shutil
 import tarfile
 import tempfile
 import urllib.request
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any

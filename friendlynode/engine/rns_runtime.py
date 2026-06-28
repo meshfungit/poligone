@@ -149,7 +149,41 @@ class RnsRuntime:
 
     def stop(self) -> None:
         self._stop_announce_monitor()
+
+        if self.RNS is not None and getattr(self.RNS, "__version__", None) != STUB_RNS_VERSION:
+            transport = getattr(self.RNS, "Transport", None)
+
+            detach_interfaces = getattr(transport, "detach_interfaces", None)
+            if callable(detach_interfaces):
+                try:
+                    detach_interfaces()
+                    print("[friendlynode] Reticulum stop: interfaces detached", flush=True)
+                except Exception as exc:
+                    print(
+                        f"[friendlynode] Reticulum stop: detach_interfaces failed: {type(exc).__name__}: {exc}",
+                        flush=True,
+                    )
+
+            reticulum_class = getattr(self.RNS, "Reticulum", None)
+            exit_handler = getattr(reticulum_class, "exit_handler", None)
+            if callable(exit_handler):
+                try:
+                    exit_handler()
+                    print("[friendlynode] Reticulum stop: exit_handler completed", flush=True)
+                except Exception as exc:
+                    print(
+                        f"[friendlynode] Reticulum stop: exit_handler failed: {type(exc).__name__}: {exc}",
+                        flush=True,
+                    )
+
         self.reticulum = None
+        self.RNS = None
+        self.LXMF = None
+        self.using_stubs = True
+        self.rns_using_stub = True
+        self.lxmf_using_stub = True
+
+        self._unload_runtime_modules()
         self.bus.publish(EngineEvent("rns.stopped", {}))
 
     def status(self) -> dict[str, object]:
@@ -570,7 +604,11 @@ class RnsRuntime:
         self,
     ) -> tuple[ModuleType | type[StubRnsModule], ModuleType | type[StubLxmfModule], bool]:
         if self.runtime_source_path is not None and self.runtime_source_path.exists():
-            sys.path.insert(0, str(self.runtime_source_path))
+            runtime_source = str(self.runtime_source_path)
+
+            if runtime_source not in sys.path:
+                sys.path.insert(0, runtime_source)
+
             self._unload_runtime_modules()
 
         try:

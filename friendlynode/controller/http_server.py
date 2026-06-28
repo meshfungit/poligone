@@ -5,6 +5,8 @@ from __future__ import annotations
 import errno
 import json
 import mimetypes
+import os
+import sys
 import threading
 import time
 from http import HTTPStatus
@@ -87,15 +89,35 @@ class ControllerHttpServer:
         for httpd in self.httpds:
             httpd.server_close()
 
-    def request_restart(self) -> None:
+    def request_process_restart(self) -> None:
         self.restart_requested = True
-        thread = threading.Thread(target=self._shutdown_after_response, daemon=True)
+        thread = threading.Thread(target=self._restart_process_after_response, daemon=True)
         thread.start()
 
-    def _shutdown_after_response(self) -> None:
-        time.sleep(0.2)
-        for httpd in self.httpds:
-            httpd.shutdown()
+    def _restart_process_after_response(self) -> None:
+        time.sleep(0.6)
+
+        if self._running_under_debugger():
+            print(
+                "[friendlynode] Process restart requested under debugger; shutting down instead of os.execv",
+                flush=True,
+            )
+            for httpd in self.httpds:
+                httpd.shutdown()
+            return
+
+        args = [sys.executable, *sys.argv]
+        print(f"[friendlynode] Process restart requested: {' '.join(args)}", flush=True)
+        os.execv(sys.executable, args)
+
+    def _running_under_debugger(self) -> bool:
+        if os.environ.get("PYCHARM_HOSTED") == "1":
+            return True
+
+        if sys.gettrace() is not None:
+            return True
+
+        return any(module_name.startswith("pydevd") for module_name in sys.modules)
 
     def _build_listen_hosts(self, configured_host: str) -> list[str]:
         host = configured_host.strip()
@@ -218,8 +240,13 @@ class ControllerHttpServer:
                 parsed = urlparse(self.path)
 
                 if parsed.path == "/api/reticulum/restart":
-                    app.restart_reticulum()
-                    self._send_json(self._build_status_response())
+                    self._send_json(
+                        {
+                            "status": "process_restarting",
+                            "message": "Reticulum cannot be safely restarted in-process; restarting FriendlyNode process.",
+                        }
+                    )
+                    controller_server.request_process_restart()
                     return
 
                 if parsed.path == "/api/reticulum/announce":
