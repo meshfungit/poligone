@@ -65,6 +65,7 @@ class ControllerHttpServer:
         self.port = port
         self.web_root = web_root.resolve()
         self.restart_requested = False
+        self.process_restart_requested = False
         handler_class = self._build_handler()
         self.listen_hosts = self._build_listen_hosts(self.host)
         self.httpds = [
@@ -89,19 +90,23 @@ class ControllerHttpServer:
         for httpd in self.httpds:
             httpd.server_close()
 
-    def request_process_restart(self) -> None:
+    def request_restart(self) -> None:
         self.restart_requested = True
-        thread = threading.Thread(target=self._restart_process_after_response, daemon=True)
+        self._shutdown_after_response()
+
+    def request_process_restart(self) -> None:
+        self.process_restart_requested = True
+        self._shutdown_after_response()
+
+    def _shutdown_after_response(self) -> None:
+        thread = threading.Thread(target=self._shutdown_servers_after_response, daemon=True)
         thread.start()
 
-    def _restart_process_after_response(self) -> None:
+    def _shutdown_servers_after_response(self) -> None:
         time.sleep(0.6)
 
-        args = [sys.executable, *sys.argv]
-
-        print(f"[friendlynode] Process restart requested: {' '.join(args)}", flush=True)
-
-        os.execv(sys.executable, args)
+        for httpd in self.httpds:
+            httpd.shutdown()
 
     def _running_under_debugger(self) -> bool:
         if os.environ.get("PYCHARM_HOSTED") == "1":
