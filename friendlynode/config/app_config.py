@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import ipaddress
 import subprocess
+import socket
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -157,7 +158,7 @@ class AppConfig:
         if self.ssh_access_enabled:
             ssh_host = self.ssh_tunnel_host.strip()
 
-            if ssh_host != "":
+            if ssh_host != "" and self._can_bind_host(ssh_host):
                 hosts.append(ssh_host)
 
         if self.tailscale_access_enabled and self._is_tailscale_ipv4(self.controller_host):
@@ -275,3 +276,17 @@ class AppConfig:
             seen.add(cleaned)
 
         return result
+
+    def _can_bind_host(self, host: str) -> bool:
+        cleaned_host = host.strip()
+
+        if cleaned_host == "":
+            return False
+
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+                probe.bind((cleaned_host, 0))
+        except OSError:
+            return False
+
+        return True
