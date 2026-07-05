@@ -7,6 +7,7 @@ import sys
 from typing import Any
 from friendlynode.client_accounts import ClientAccountStore
 from friendlynode.config.app_config import AppConfig
+from friendlynode.config.defaults import IMPORT_EXPORT_DIR, INTERFACES_EXPORT_PATH
 from friendlynode.controller.access import (
     build_channel_security_status,
     build_network_interfaces_status,
@@ -247,7 +248,59 @@ class ControllerApp:
     def save_rns_config(self, payload: dict[str, object]) -> dict[str, object]:
         parsed_config = save_rns_config(self.config.rns_config_dir, payload)
         self.state.append_log("info", "rns-config", "Reticulum config saved")
+
         return parsed_config.to_dict()
+
+    def export_rns_interfaces(self) -> dict[str, object]:
+        parsed_config = load_rns_config(self.config.rns_config_dir)
+
+        export_payload = {
+            "format": "friendlynode.reticulum.interfaces",
+            "version": 1,
+            "interfaces": parsed_config.interfaces,
+        }
+
+        IMPORT_EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+        INTERFACES_EXPORT_PATH.write_text(
+            json.dumps(export_payload, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+
+        self.state.append_log(
+            "info",
+            "rns-config",
+            f"Reticulum interfaces exported to {INTERFACES_EXPORT_PATH}",
+        )
+
+        return {
+            "status": "exported",
+            "path": str(INTERFACES_EXPORT_PATH),
+            "relative_path": "data/import-export/interfaces-export.json",
+        }
+
+    def import_rns_interfaces(self, payload: dict[str, object]) -> dict[str, object]:
+        if payload.get("format") != "friendlynode.reticulum.interfaces":
+            raise ValueError("Unsupported interfaces export format")
+
+        if int(payload.get("version") or 0) != 1:
+            raise ValueError("Unsupported interfaces export version")
+
+        interfaces = payload.get("interfaces")
+
+        if not isinstance(interfaces, list):
+            raise ValueError("Interfaces export must contain an interfaces list")
+
+        self.state.append_log(
+            "info",
+            "rns-config",
+            f"Reticulum interfaces imported into editor: count={len(interfaces)}",
+        )
+
+        return {
+            "status": "imported",
+            "interfaces": interfaces,
+            "message": "Interfaces imported into editor. Press Save interfaces to apply.",
+        }
 
     def save_app_config(self, payload: dict[str, object]) -> dict[str, object]:
         changed_controller_bind = False

@@ -5,6 +5,7 @@
   let addInterfaceType = "BackboneInterface";
   let addInterfaceOutgoing = true;
   let lastAddedInterfaceName = "";
+  let interfaceImportExportStatus = "";
 
   function render(options = {}) {
     const mode = options.mode || "full";
@@ -64,6 +65,19 @@
     }
 
     block.appendChild(renderConfigPaths());
+
+	if (mode === "interfaces") {
+	  block.appendChild(renderInterfaceImportExportActions());
+	}
+
+	if (interfaceImportExportStatus !== "") {
+	  const statusBox = document.createElement("div");
+	  statusBox.className = interfaceImportExportStatus.startsWith("Error:")
+		? "settings-error"
+		: "settings-hint";
+	  statusBox.textContent = interfaceImportExportStatus;
+	  block.appendChild(statusBox);
+	}
 
     if (mode === "interfaces") {
       block.appendChild(renderInterfaceAnnounceStatus(status));
@@ -149,6 +163,105 @@
       }
     }
   }
+
+function renderInterfaceImportExportActions() {
+  const row = document.createElement("div");
+  row.className = "settings-row rns-interface-import-export-actions";
+
+  const importButton = document.createElement("button");
+  importButton.type = "button";
+  importButton.textContent = "Import Interfaces";
+  importButton.onclick = importInterfacesFromFile;
+  row.appendChild(importButton);
+
+  const exportButton = document.createElement("button");
+  exportButton.type = "button";
+  exportButton.textContent = "Export Interfaces";
+  exportButton.onclick = exportInterfacesToServerFile;
+  row.appendChild(exportButton);
+
+  return row;
+}
+
+async function exportInterfacesToServerFile() {
+  interfaceImportExportStatus = "Exporting interfaces...";
+  rerenderActiveRnsEditor();
+
+  try {
+    const response = await fetch("/api/rns-config/interfaces/export", {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Interfaces export failed: HTTP ${response.status}`);
+    }
+
+    const result = await response.json();
+    interfaceImportExportStatus = `Interfaces exported to ${result.relative_path || result.path || "data/import-export/interfaces-export.json"}`;
+  } catch (error) {
+    interfaceImportExportStatus = `Error: ${error instanceof Error ? error.message : String(error)}`;
+  }
+
+  rerenderActiveRnsEditor();
+}
+
+function importInterfacesFromFile() {
+  const input = document.createElement("input");
+
+  input.type = "file";
+  input.accept = ".json,application/json";
+
+  input.onchange = async () => {
+    const file = input.files && input.files.length > 0 ? input.files[0] : null;
+
+    if (file === null) {
+      return;
+    }
+
+    interfaceImportExportStatus = `Importing ${file.name}...`;
+    rerenderActiveRnsEditor();
+
+    try {
+      const text = await file.text();
+      const payload = JSON.parse(text);
+
+      const response = await fetch("/api/rns-config/interfaces/import", {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Interfaces import failed: HTTP ${response.status}`);
+      }
+
+      const result = await response.json();
+
+      if (!Array.isArray(result.interfaces)) {
+        throw new Error("Interfaces import response does not contain interfaces list");
+      }
+
+      if (configState === null) {
+        configState = {};
+      }
+
+      configState.interfaces = result.interfaces;
+      interfaceImportExportStatus = result.message || "Interfaces imported into editor. Press Save interfaces to apply.";
+    } catch (error) {
+      interfaceImportExportStatus = `Error: ${error instanceof Error ? error.message : String(error)}`;
+    }
+
+    rerenderActiveRnsEditor();
+  };
+
+  input.click();
+}  
 
   function renderConfigPaths() {
     const box = document.createElement("div");

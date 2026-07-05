@@ -551,6 +551,15 @@ class ControllerHttpServer:
                     self._send_json(app.save_rns_config(payload))
                     return
 
+                if parsed.path == "/api/rns-config/interfaces/export":
+                    self._send_json(app.export_rns_interfaces())
+                    return
+
+                if parsed.path == "/api/rns-config/interfaces/import":
+                    payload = self._read_json_body()
+                    self._send_json(app.import_rns_interfaces(payload))
+                    return
+
                 if parsed.path == "/api/config":
                     payload = self._read_json_body()
                     self._send_json(app.save_app_config(payload))

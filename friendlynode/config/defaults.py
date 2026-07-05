@@ -8,6 +8,8 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 DATA_DIR = PROJECT_ROOT / "data"
+IMPORT_EXPORT_DIR = DATA_DIR / "import-export"
+INTERFACES_EXPORT_PATH = IMPORT_EXPORT_DIR / "interfaces-export.json"
 WEB_UI_DIR = PROJECT_ROOT / "web-ui"
 RUNTIMES_DIR = PROJECT_ROOT / "runtimes"
 CUSTOM_INTERFACES_DIR = PROJECT_ROOT / "custom_interfaces"
