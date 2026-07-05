@@ -353,7 +353,7 @@ class ControllerHttpServer:
         self.restart_requested = False
         self.process_restart_requested = False
         handler_class = self._build_handler()
-        self.listen_hosts = self._build_listen_hosts(self.host)
+        self.listen_hosts = self.app.config.controller_listen_hosts()
         self.httpds = self._build_http_servers(handler_class)
 
     def _build_http_servers(
@@ -421,17 +421,6 @@ class ControllerHttpServer:
             return True
 
         return any(module_name.startswith("pydevd") for module_name in sys.modules)
-
-    def _build_listen_hosts(self, configured_host: str) -> list[str]:
-        host = configured_host.strip()
-
-        if host in ("", "127.0.0.1", "localhost"):
-            return ["127.0.0.1"]
-
-        if host == "0.0.0.0":
-            return ["0.0.0.0"]
-
-        return ["127.0.0.1", host]
 
     def _build_handler(self) -> type[BaseHTTPRequestHandler]:
         app = self.app

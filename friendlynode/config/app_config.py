@@ -76,7 +76,7 @@ class AppConfig:
 
         config.ensure_dirs()
 
-        if config.refresh_tailscale_controller_host():
+        if config.refresh_access_controller_host():
             config.save()
 
         return config
@@ -116,11 +116,7 @@ class AppConfig:
 
     def set_tailscale_access_enabled(self, enabled: bool) -> None:
         self.tailscale_access_enabled = enabled
-
-        if self.refresh_tailscale_controller_host():
-            self.save()
-            return
-
+        self.refresh_access_controller_host()
         self.save()
 
     def set_ssh_tunnel_endpoint(self, host: str, user: str) -> None:
@@ -155,6 +151,20 @@ class AppConfig:
             ),
         }
 
+    def controller_listen_hosts(self) -> list[str]:
+        hosts: list[str] = ["127.0.0.1"]
+
+        if self.ssh_access_enabled:
+            ssh_host = self.ssh_tunnel_host.strip()
+
+            if ssh_host != "":
+                hosts.append(ssh_host)
+
+        if self.tailscale_access_enabled and self._is_tailscale_ipv4(self.controller_host):
+            hosts.append(self.controller_host)
+
+        return self._unique_hosts(hosts)
+
     def _read_path(self, raw: dict[str, Any], key: str, default: Path) -> Path:
         value = raw.get(key)
 
@@ -163,8 +173,20 @@ class AppConfig:
 
         return Path(str(value))
 
-    def refresh_tailscale_controller_host(self) -> bool:
+    def refresh_access_controller_host(self) -> bool:
         if not self.tailscale_access_enabled:
+            if self._is_tailscale_ipv4(self.controller_host):
+                previous_host = self.controller_host
+                self.controller_host = DEFAULT_CONTROLLER_HOST
+
+                print(
+                    f"[friendlynode] Tailscale access disabled; controller host reset: "
+                    f"{previous_host} -> {self.controller_host}",
+                    flush=True,
+                )
+
+                return True
+
             return False
 
         tailscale_ip = self._discover_tailscale_ipv4()
@@ -176,6 +198,19 @@ class AppConfig:
                 flush=True,
             )
             return False
+
+        if self.controller_host == tailscale_ip:
+            return False
+
+        previous_host = self.controller_host
+        self.controller_host = tailscale_ip
+
+        print(
+            f"[friendlynode] Tailscale controller host updated: {previous_host} -> {tailscale_ip}",
+            flush=True,
+        )
+
+        return True
 
         if self.controller_host == tailscale_ip:
             return False
@@ -222,3 +257,21 @@ class AppConfig:
             return False
 
         return isinstance(address, ipaddress.IPv4Address) and address in TAILSCALE_IPV4_NETWORK
+
+    def _unique_hosts(self, hosts: list[str]) -> list[str]:
+        result: list[str] = []
+        seen: set[str] = set()
+
+        for host in hosts:
+            cleaned = host.strip()
+
+            if cleaned == "":
+                continue
+
+            if cleaned in seen:
+                continue
+
+            result.append(cleaned)
+            seen.add(cleaned)
+
+        return result
