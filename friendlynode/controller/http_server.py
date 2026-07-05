@@ -283,13 +283,12 @@ class FriendlyNodeThreadingHTTPServer(ThreadingHTTPServer):
     allow_reuse_address = False
 
     def server_bind(self) -> None:
-        stop_commands = stop_listener_commands(pids)
-
-        if len(stop_commands) > 0:
-            message_lines.append("To stop stale listener(s), run:")
-            for command in stop_commands:
-                message_lines.append(f"  {command}")
-
+        if sys.platform == "win32" and hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            self.socket.setsockopt(
+                socket.SOL_SOCKET,
+                socket.SO_EXCLUSIVEADDRUSE,
+                1,
+            )
         elif hasattr(socket, "SO_REUSEADDR"):
             self.socket.setsockopt(
                 socket.SOL_SOCKET,
@@ -301,7 +300,20 @@ class FriendlyNodeThreadingHTTPServer(ThreadingHTTPServer):
             self.socket.bind(self.server_address)
         except OSError as exc:
             host, port = self.server_address[:2]
-            diagnostics = describe_port_listeners(int(port))
+            port_number = int(port)
+
+            diagnostics = describe_port_listeners(port_number)
+            listener_items = collect_port_listeners(port_number)
+
+            pids = sorted(
+                {
+                    item["pid"]
+                    for item in listener_items
+                    if item.get("pid", "") != ""
+                }
+            )
+
+            stop_commands = stop_listener_commands(pids)
 
             message_lines = [
                 f"FriendlyNode controller port is not available on {host}:{port}: {exc.strerror}",
@@ -311,18 +323,10 @@ class FriendlyNodeThreadingHTTPServer(ThreadingHTTPServer):
                 message_lines.append("Current listener(s) on this port:")
                 message_lines.extend(f"  {line}" for line in diagnostics)
 
-                pids = sorted(
-                    {
-                        item["pid"]
-                        for item in collect_port_listeners(int(port))
-                        if item.get("pid", "") != ""
-                    }
-                )
-
-                if sys.platform == "win32" and len(pids) > 0:
+                if len(stop_commands) > 0:
                     message_lines.append("To stop stale listener(s), run:")
-                    for pid in pids:
-                        message_lines.append(f"  Stop-Process -Id {pid} -Force")
+                    for command in stop_commands:
+                        message_lines.append(f"  {command}")
             else:
                 message_lines.append("No owner information was available from OS port diagnostics.")
 
