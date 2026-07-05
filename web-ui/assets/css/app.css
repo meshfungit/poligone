@@ -2861,3 +2861,18 @@ tr:last-child td { border-bottom: 0; }
   margin: 0.75rem 0 1rem;
   flex-wrap: wrap;
 }
+
+.rns-interface-import-file-dialog {
+  border: 1px solid var(--border-color, #333);
+  border-radius: 0.5rem;
+  padding: 0.75rem;
+  margin: 0.75rem 0 1rem;
+}
+
+.rns-interface-import-file-row {
+  justify-content: space-between;
+}
+
+.rns-interface-import-file-row code {
+  overflow-wrap: anywhere;
+}

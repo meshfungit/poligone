@@ -5,7 +5,7 @@
   let addInterfaceType = "BackboneInterface";
   let addInterfaceOutgoing = true;
   let lastAddedInterfaceName = "";
-  let interfaceImportExportStatus = "";
+  let interfaceImportFileDialogState = null;
 
   function render(options = {}) {
     const mode = options.mode || "full";
@@ -77,6 +77,9 @@
 		: "settings-hint";
 	  statusBox.textContent = interfaceImportExportStatus;
 	  block.appendChild(statusBox);
+	}
+	if (interfaceImportFileDialogState !== null) {
+	  block.appendChild(renderInterfaceImportFileDialog());
 	}
 
     if (mode === "interfaces") {
@@ -171,7 +174,7 @@ function renderInterfaceImportExportActions() {
   const importButton = document.createElement("button");
   importButton.type = "button";
   importButton.textContent = "Import Interfaces";
-  importButton.onclick = importInterfacesFromFile;
+  importButton.onclick = openInterfaceImportFileDialog;
   row.appendChild(importButton);
 
   const exportButton = document.createElement("button");
@@ -208,7 +211,142 @@ async function exportInterfacesToServerFile() {
   rerenderActiveRnsEditor();
 }
 
-function importInterfacesFromFile() {
+async function openInterfaceImportFileDialog() {
+  interfaceImportExportStatus = "Loading import-export files...";
+  rerenderActiveRnsEditor();
+
+  try {
+    const response = await fetch("/api/rns-config/interfaces/import-files", {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Import file list failed: HTTP ${response.status}`);
+    }
+
+    const result = await response.json();
+    const files = Array.isArray(result.files) ? result.files : [];
+
+    interfaceImportFileDialogState = {
+      files,
+      directory: result.relative_directory || "data/import-export",
+    };
+
+    interfaceImportExportStatus = files.length === 0
+      ? "No .json files found in data/import-export."
+      : "";
+  } catch (error) {
+    interfaceImportFileDialogState = null;
+    interfaceImportExportStatus = `Error: ${error instanceof Error ? error.message : String(error)}`;
+  }
+
+  rerenderActiveRnsEditor();
+}
+
+function renderInterfaceImportFileDialog() {
+  const dialog = document.createElement("div");
+  dialog.className = "rns-interface-import-file-dialog";
+
+  const title = document.createElement("div");
+  title.className = "settings-hint";
+  title.textContent = `Import from ${interfaceImportFileDialogState.directory}`;
+  dialog.appendChild(title);
+
+  const files = Array.isArray(interfaceImportFileDialogState.files)
+    ? interfaceImportFileDialogState.files
+    : [];
+
+  if (files.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "settings-hint";
+    empty.textContent = "No .json files found.";
+    dialog.appendChild(empty);
+  }
+
+  for (const file of files) {
+    const row = document.createElement("div");
+    row.className = "settings-row rns-interface-import-file-row";
+
+    const name = document.createElement("code");
+    name.textContent = file.relative_path || file.filename || "-";
+    row.appendChild(name);
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = "Load";
+    button.onclick = () => importInterfacesFromServerFile(file.filename || "");
+    row.appendChild(button);
+
+    dialog.appendChild(row);
+  }
+
+  const closeRow = document.createElement("div");
+  closeRow.className = "settings-row";
+
+  const closeButton = document.createElement("button");
+  closeButton.type = "button";
+  closeButton.textContent = "Cancel";
+  closeButton.onclick = () => {
+    interfaceImportFileDialogState = null;
+    rerenderActiveRnsEditor();
+  };
+
+  closeRow.appendChild(closeButton);
+  dialog.appendChild(closeRow);
+
+  return dialog;
+}
+
+async function importInterfacesFromServerFile(filename) {
+  const cleanName = String(filename || "").trim();
+
+  if (cleanName === "") {
+    interfaceImportExportStatus = "Error: import filename is empty";
+    rerenderActiveRnsEditor();
+    return;
+  }
+
+  interfaceImportExportStatus = `Importing ${cleanName}...`;
+  rerenderActiveRnsEditor();
+
+  try {
+    const response = await fetch("/api/rns-config/interfaces/import-file", {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        filename: cleanName,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Interfaces import failed: HTTP ${response.status}`);
+    }
+
+    const result = await response.json();
+
+    if (!Array.isArray(result.interfaces)) {
+      throw new Error("Interfaces import response does not contain interfaces list");
+    }
+
+    if (configState === null) {
+      configState = {};
+    }
+
+    configState.interfaces = result.interfaces;
+    interfaceImportFileDialogState = null;
+    interfaceImportExportStatus = `Interfaces imported from ${result.source_relative_path || cleanName}. Press Save Reticulum config to apply.`;
+  } catch (error) {
+    interfaceImportExportStatus = `Error: ${error instanceof Error ? error.message : String(error)}`;
+  }
+
+  rerenderActiveRnsEditor();
+}
   const input = document.createElement("input");
 
   input.type = "file";

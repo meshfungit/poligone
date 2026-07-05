@@ -462,6 +462,9 @@ class ControllerHttpServer:
                 if parsed.path == "/api/rns-config":
                     self._send_json(app.get_rns_config())
                     return
+                if parsed.path == "/api/rns-config/interfaces/import-files":
+                    self._send_json(app.list_rns_interface_import_files())
+                    return
                 if parsed.path == "/api/announces":
                     params = parse_qs(parsed.query)
                     self._send_json(
@@ -549,6 +552,11 @@ class ControllerHttpServer:
                 if parsed.path == "/api/rns-config":
                     payload = self._read_json_body()
                     self._send_json(app.save_rns_config(payload))
+                    return
+
+                if parsed.path == "/api/rns-config/interfaces/import-file":
+                    payload = self._read_json_body()
+                    self._send_json(app.import_rns_interfaces_from_file(str(payload.get("filename") or "")))
                     return
 
                 if parsed.path == "/api/rns-config/interfaces/export":

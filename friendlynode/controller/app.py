@@ -302,6 +302,56 @@ class ControllerApp:
             "message": "Interfaces imported into editor. Press Save interfaces to apply.",
         }
 
+    def list_rns_interface_import_files(self) -> dict[str, object]:
+        IMPORT_EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+
+        files = []
+
+        for path in sorted(IMPORT_EXPORT_DIR.glob("*.json")):
+            if not path.is_file():
+                continue
+
+            files.append(
+                {
+                    "filename": path.name,
+                    "path": str(path),
+                    "relative_path": f"data/import-export/{path.name}",
+                    "size": path.stat().st_size,
+                }
+            )
+
+        return {
+            "files": files,
+            "directory": str(IMPORT_EXPORT_DIR),
+            "relative_directory": "data/import-export",
+        }
+
+    def import_rns_interfaces_from_file(self, filename: str) -> dict[str, object]:
+        clean_name = str(filename or "").strip()
+
+        if clean_name == "":
+            raise ValueError("Import filename is empty")
+
+        path = IMPORT_EXPORT_DIR / clean_name
+        resolved_dir = IMPORT_EXPORT_DIR.resolve()
+        resolved_path = path.resolve()
+
+        if resolved_dir not in resolved_path.parents:
+            raise ValueError("Import file must be inside data/import-export")
+
+        if resolved_path.suffix.lower() != ".json":
+            raise ValueError("Import file must be .json")
+
+        if not resolved_path.is_file():
+            raise FileNotFoundError(f"Import file was not found: {clean_name}")
+
+        payload = json.loads(resolved_path.read_text(encoding="utf-8"))
+        result = self.import_rns_interfaces(payload)
+        result["source_file"] = str(resolved_path)
+        result["source_relative_path"] = f"data/import-export/{resolved_path.name}"
+
+        return result
+
     def save_app_config(self, payload: dict[str, object]) -> dict[str, object]:
         changed_controller_bind = False
 
