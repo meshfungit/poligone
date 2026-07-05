@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import socket
 import errno
 import json
 import mimetypes
@@ -48,8 +49,34 @@ def is_client_disconnect_error(exc: BaseException) -> bool:
     error_number = getattr(exc, "errno", None)
     return error_number in CLIENT_DISCONNECT_ERRNOS
 
-class ReusableThreadingHTTPServer(ThreadingHTTPServer):
-    allow_reuse_address = True
+class FriendlyNodeThreadingHTTPServer(ThreadingHTTPServer):
+    allow_reuse_address = False
+
+    def server_bind(self) -> None:
+        if sys.platform == "win32" and hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            self.socket.setsockopt(
+                socket.SOL_SOCKET,
+                socket.SO_EXCLUSIVEADDRUSE,
+                1,
+            )
+        elif hasattr(socket, "SO_REUSEADDR"):
+            self.socket.setsockopt(
+                socket.SOL_SOCKET,
+                socket.SO_REUSEADDR,
+                1,
+            )
+
+        try:
+            self.socket.bind(self.server_address)
+        except OSError as exc:
+            host, port = self.server_address[:2]
+
+            raise OSError(
+                exc.errno,
+                f"FriendlyNode controller port is not available on {host}:{port}: {exc.strerror}",
+            ) from exc
+
+        self.server_address = self.socket.getsockname()
 
 
 class ControllerHttpServer:
@@ -68,10 +95,29 @@ class ControllerHttpServer:
         self.process_restart_requested = False
         handler_class = self._build_handler()
         self.listen_hosts = self._build_listen_hosts(self.host)
-        self.httpds = [
-            ReusableThreadingHTTPServer((listen_host, self.port), handler_class)
-            for listen_host in self.listen_hosts
-        ]
+        self.httpds = self._build_http_servers(handler_class)
+
+    def _build_http_servers(
+            self,
+            handler_class: type[BaseHTTPRequestHandler],
+    ) -> list[FriendlyNodeThreadingHTTPServer]:
+        httpds: list[FriendlyNodeThreadingHTTPServer] = []
+
+        try:
+            for listen_host in self.listen_hosts:
+                httpd = FriendlyNodeThreadingHTTPServer(
+                    (listen_host, self.port),
+                    handler_class,
+                )
+                httpds.append(httpd)
+
+            return httpds
+
+        except OSError:
+            for httpd in httpds:
+                httpd.server_close()
+
+            raise
 
     def serve_forever(self) -> None:
         threads = []
