@@ -10,6 +10,9 @@ import os
 import sys
 import threading
 import time
+import csv
+import io
+import subprocess
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -35,6 +38,9 @@ CLIENT_DISCONNECT_ERRNOS = frozenset(
     if value is not None
 )
 
+class ControllerPortBindError(OSError):
+    """Raised when FriendlyNode cannot bind the controller HTTP port."""
+
 def is_client_disconnect_error(exc: BaseException) -> bool:
     if isinstance(exc, (ConnectionAbortedError, ConnectionResetError, BrokenPipeError)):
         return True
@@ -48,6 +54,109 @@ def is_client_disconnect_error(exc: BaseException) -> bool:
 
     error_number = getattr(exc, "errno", None)
     return error_number in CLIENT_DISCONNECT_ERRNOS
+
+def describe_port_listeners(port: int) -> list[str]:
+    listeners = collect_port_listeners(port)
+    result: list[str] = []
+
+    for listener in listeners:
+        local_address = listener.get("local_address", "")
+        pid = listener.get("pid", "")
+        process_name = listener.get("process_name", "")
+
+        if process_name != "":
+            result.append(f"{local_address} pid={pid} process={process_name}")
+        else:
+            result.append(f"{local_address} pid={pid}")
+
+    return result
+
+
+def collect_port_listeners(port: int) -> list[dict[str, str]]:
+    if sys.platform == "win32":
+        return collect_windows_port_listeners(port)
+
+    return []
+
+
+def collect_windows_port_listeners(port: int) -> list[dict[str, str]]:
+    try:
+        completed = subprocess.run(
+            ["netstat", "-ano", "-p", "tcp"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+
+    listeners: list[dict[str, str]] = []
+
+    for line in completed.stdout.splitlines():
+        parts = line.split()
+
+        if len(parts) < 5:
+            continue
+
+        protocol = parts[0].upper()
+
+        if protocol != "TCP":
+            continue
+
+        local_address = parts[1]
+        state = parts[3].upper()
+        pid = parts[4]
+
+        if state != "LISTENING":
+            continue
+
+        if not local_address.endswith(f":{port}"):
+            continue
+
+        listeners.append(
+            {
+                "local_address": local_address,
+                "pid": pid,
+                "process_name": windows_process_name(pid),
+            }
+        )
+
+    return listeners
+
+
+def windows_process_name(pid: str) -> str:
+    try:
+        completed = subprocess.run(
+            ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+
+    output = completed.stdout.strip()
+
+    if output == "" or output.lower().startswith("info:"):
+        return ""
+
+    reader = csv.reader(io.StringIO(output))
+
+    try:
+        row = next(reader)
+    except StopIteration:
+        return ""
+
+    if len(row) == 0:
+        return ""
+
+    return row[0]
 
 class FriendlyNodeThreadingHTTPServer(ThreadingHTTPServer):
     allow_reuse_address = False
@@ -70,10 +179,34 @@ class FriendlyNodeThreadingHTTPServer(ThreadingHTTPServer):
             self.socket.bind(self.server_address)
         except OSError as exc:
             host, port = self.server_address[:2]
+            diagnostics = describe_port_listeners(int(port))
 
-            raise OSError(
-                exc.errno,
+            message_lines = [
                 f"FriendlyNode controller port is not available on {host}:{port}: {exc.strerror}",
+            ]
+
+            if len(diagnostics) > 0:
+                message_lines.append("Current listener(s) on this port:")
+                message_lines.extend(f"  {line}" for line in diagnostics)
+
+                pids = sorted(
+                    {
+                        item["pid"]
+                        for item in collect_port_listeners(int(port))
+                        if item.get("pid", "") != ""
+                    }
+                )
+
+                if sys.platform == "win32" and len(pids) > 0:
+                    message_lines.append("To stop stale listener(s), run:")
+                    for pid in pids:
+                        message_lines.append(f"  Stop-Process -Id {pid} -Force")
+            else:
+                message_lines.append("No owner information was available from OS port diagnostics.")
+
+            raise ControllerPortBindError(
+                exc.errno or 0,
+                "\n".join(message_lines),
             ) from exc
 
         self.server_address = self.socket.getsockname()

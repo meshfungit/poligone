@@ -6,23 +6,26 @@ import os
 import sys
 
 from friendlynode.controller.app import ControllerApp
-from friendlynode.controller.http_server import ControllerHttpServer
+from friendlynode.controller.http_server import ControllerHttpServer, ControllerPortBindError
 
 
 def main() -> None:
     app = ControllerApp()
     server: ControllerHttpServer | None = None
+    app_started = False
     app_stopped = False
 
     try:
-        app.start()
-
         while True:
             server = ControllerHttpServer(
                 app,
                 host=app.config.controller_host,
                 port=app.config.controller_port,
             )
+
+            if not app_started:
+                app.start()
+                app_started = True
 
             server.serve_forever()
 
@@ -38,19 +41,25 @@ def main() -> None:
                 app.stop()
                 app_stopped = True
 
-                os.execv(
-                    sys.executable,
-                    [
-                        sys.executable,
-                        "-m",
-                        "friendlynode.controller.main",
-                    ],
+                restart_args = _restart_process_args()
+
+                print(
+                    "FriendlyNode exec: " + " ".join(restart_args),
+                    flush=True,
                 )
+
+                os.execv(sys.executable, restart_args)
 
             if not restart_requested:
                 break
 
             print("FriendlyNode HTTP server restarting", flush=True)
+
+    except ControllerPortBindError as exc:
+        print("", flush=True)
+        print("[friendlynode] Controller HTTP port bind failed", flush=True)
+        print(str(exc), flush=True)
+        print("", flush=True)
 
     except KeyboardInterrupt:
         print("FriendlyNode controller stopped by user", flush=True)
@@ -59,8 +68,21 @@ def main() -> None:
         if server is not None:
             server.close()
 
-        if not app_stopped:
+        if app_started and not app_stopped:
             app.stop()
+
+
+def _restart_process_args() -> list[str]:
+    original_args = getattr(sys, "orig_argv", None)
+
+    if isinstance(original_args, list) and len(original_args) > 0:
+        return [str(arg) for arg in original_args]
+
+    return [
+        sys.executable,
+        "-m",
+        "friendlynode.controller.main",
+    ]
 
 
 if __name__ == "__main__":
