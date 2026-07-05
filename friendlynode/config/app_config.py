@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import ipaddress
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -16,14 +18,18 @@ from friendlynode.config.defaults import (
     DEFAULT_ENGINE_NAME,
     DEFAULT_NOMADNET_PAGES_DIR,
     DEFAULT_RNS_CONFIG_DIR,
+    DEFAULT_TAILSCALE_ACCESS_ENABLED,
 )
-
+TAILSCALE_IP_COMMAND = ("tailscale", "ip", "-4")
+TAILSCALE_COMMAND_TIMEOUT_SEC = 5
+TAILSCALE_IPV4_NETWORK = ipaddress.ip_network("100.64.0.0/10")
 
 @dataclass(slots=True)
 class AppConfig:
     controller_host: str = DEFAULT_CONTROLLER_HOST
     controller_port: int = DEFAULT_CONTROLLER_PORT
     ssh_access_enabled: bool = True
+    tailscale_access_enabled: bool = DEFAULT_TAILSCALE_ACCESS_ENABLED
     ssh_tunnel_host: str = ""
     ssh_tunnel_user: str = ""
 
@@ -52,6 +58,9 @@ class AppConfig:
         config.controller_host = str(raw.get("controller_host", config.controller_host))
         config.controller_port = int(raw.get("controller_port", config.controller_port))
         config.ssh_access_enabled = bool(raw.get("ssh_access_enabled", config.ssh_access_enabled))
+        config.tailscale_access_enabled = bool(
+            raw.get("tailscale_access_enabled", config.tailscale_access_enabled)
+        )
         config.ssh_tunnel_host = str(raw.get("ssh_tunnel_host", config.ssh_tunnel_host))
         config.ssh_tunnel_user = str(raw.get("ssh_tunnel_user", config.ssh_tunnel_user))
         config.engine_name = str(raw.get("engine_name", config.engine_name))
@@ -66,6 +75,10 @@ class AppConfig:
         )
 
         config.ensure_dirs()
+
+        if config.refresh_tailscale_controller_host():
+            config.save()
+
         return config
 
     def save(self) -> None:
@@ -75,6 +88,7 @@ class AppConfig:
             "controller_host": self.controller_host,
             "controller_port": self.controller_port,
             "ssh_access_enabled": self.ssh_access_enabled,
+            "tailscale_access_enabled": self.tailscale_access_enabled,
             "ssh_tunnel_host": self.ssh_tunnel_host,
             "ssh_tunnel_user": self.ssh_tunnel_user,
             "engine_name": self.engine_name,
@@ -100,6 +114,15 @@ class AppConfig:
         self.ssh_access_enabled = enabled
         self.save()
 
+    def set_tailscale_access_enabled(self, enabled: bool) -> None:
+        self.tailscale_access_enabled = enabled
+
+        if self.refresh_tailscale_controller_host():
+            self.save()
+            return
+
+        self.save()
+
     def set_ssh_tunnel_endpoint(self, host: str, user: str) -> None:
         self.ssh_tunnel_host = host.strip()
         self.ssh_tunnel_user = user.strip()
@@ -117,6 +140,7 @@ class AppConfig:
             "controller_host": self.controller_host,
             "controller_port": self.controller_port,
             "ssh_access_enabled": self.ssh_access_enabled,
+            "tailscale_access_enabled": self.tailscale_access_enabled,
             "ssh_tunnel_host": self.ssh_tunnel_host,
             "ssh_tunnel_user": self.ssh_tunnel_user,
             "engine_name": self.engine_name,
@@ -138,3 +162,63 @@ class AppConfig:
             return default
 
         return Path(str(value))
+
+    def refresh_tailscale_controller_host(self) -> bool:
+        if not self.tailscale_access_enabled:
+            return False
+
+        tailscale_ip = self._discover_tailscale_ipv4()
+
+        if tailscale_ip == "":
+            print(
+                "[friendlynode] Tailscale access enabled, but no Tailscale IPv4 address was found; "
+                f"using controller_host={self.controller_host}",
+                flush=True,
+            )
+            return False
+
+        if self.controller_host == tailscale_ip:
+            return False
+
+        previous_host = self.controller_host
+        self.controller_host = tailscale_ip
+
+        print(
+            f"[friendlynode] Tailscale controller host updated: {previous_host} -> {tailscale_ip}",
+            flush=True,
+        )
+
+        return True
+
+    def _discover_tailscale_ipv4(self) -> str:
+        try:
+            completed = subprocess.run(
+                list(TAILSCALE_IP_COMMAND),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=TAILSCALE_COMMAND_TIMEOUT_SEC,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return ""
+
+        if completed.returncode != 0:
+            return ""
+
+        for line in completed.stdout.splitlines():
+            candidate = line.strip()
+
+            if self._is_tailscale_ipv4(candidate):
+                return candidate
+
+        return ""
+
+    def _is_tailscale_ipv4(self, value: str) -> bool:
+        try:
+            address = ipaddress.ip_address(value)
+        except ValueError:
+            return False
+
+        return isinstance(address, ipaddress.IPv4Address) and address in TAILSCALE_IPV4_NETWORK

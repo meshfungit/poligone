@@ -282,6 +282,26 @@ class ControllerApp:
                 f"SSH tunnel access setting changed: {self.config.ssh_access_enabled}",
             )
 
+        if "tailscale_access_enabled" in payload:
+            previous_host = self.config.controller_host
+
+            self.config.set_tailscale_access_enabled(
+                bool(payload.get("tailscale_access_enabled"))
+            )
+
+            if self.config.controller_host != previous_host:
+                changed_controller_bind = True
+
+            self.state.append_log(
+                "info",
+                "config",
+                (
+                    "Tailscale access setting changed: "
+                    f"{self.config.tailscale_access_enabled}; "
+                    f"controller_host={self.config.controller_host}"
+                ),
+            )
+
         if "ssh_tunnel_host" in payload or "ssh_tunnel_user" in payload:
             self.config.set_ssh_tunnel_endpoint(
                 str(payload.get("ssh_tunnel_host", self.config.ssh_tunnel_host)),
