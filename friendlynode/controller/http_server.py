@@ -72,11 +72,20 @@ def describe_port_listeners(port: int) -> list[str]:
     return result
 
 
+def stop_listener_commands(pids: list[str]) -> list[str]:
+    if len(pids) == 0:
+        return []
+
+    if sys.platform == "win32":
+        return [f"Stop-Process -Id {pid} -Force" for pid in pids]
+
+    return [f"kill {pid}" for pid in pids]
+
 def collect_port_listeners(port: int) -> list[dict[str, str]]:
     if sys.platform == "win32":
         return collect_windows_port_listeners(port)
 
-    return []
+    return collect_unix_port_listeners(port)
 
 
 def collect_windows_port_listeners(port: int) -> list[dict[str, str]]:
@@ -126,6 +135,118 @@ def collect_windows_port_listeners(port: int) -> list[dict[str, str]]:
 
     return listeners
 
+def collect_unix_port_listeners(port: int) -> list[dict[str, str]]:
+    listeners = collect_unix_port_listeners_with_ss(port)
+
+    if len(listeners) > 0:
+        return listeners
+
+    return collect_unix_port_listeners_with_lsof(port)
+
+
+def collect_unix_port_listeners_with_ss(port: int) -> list[dict[str, str]]:
+    try:
+        completed = subprocess.run(
+            ["ss", "-ltnp"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+
+    listeners: list[dict[str, str]] = []
+
+    for line in completed.stdout.splitlines():
+        if "LISTEN" not in line:
+            continue
+
+        if f":{port} " not in line and f":{port}\t" not in line:
+            continue
+
+        parts = line.split()
+
+        if len(parts) < 4:
+            continue
+
+        local_address = parts[3]
+        pid = unix_pid_from_ss_line(line)
+
+        listeners.append(
+            {
+                "local_address": local_address,
+                "pid": pid,
+                "process_name": unix_process_name(pid),
+            }
+        )
+
+    return listeners
+
+
+def collect_unix_port_listeners_with_lsof(port: int) -> list[dict[str, str]]:
+    try:
+        completed = subprocess.run(
+            ["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+
+    listeners: list[dict[str, str]] = []
+
+    for line in completed.stdout.splitlines()[1:]:
+        parts = line.split()
+
+        if len(parts) < 9:
+            continue
+
+        listeners.append(
+            {
+                "local_address": parts[8],
+                "pid": parts[1],
+                "process_name": parts[0],
+            }
+        )
+
+    return listeners
+
+
+def unix_pid_from_ss_line(line: str) -> str:
+    marker = "pid="
+
+    if marker not in line:
+        return ""
+
+    tail = line.split(marker, 1)[1]
+    pid = ""
+
+    for char in tail:
+        if not char.isdigit():
+            break
+
+        pid += char
+
+    return pid
+
+
+def unix_process_name(pid: str) -> str:
+    if pid == "":
+        return ""
+
+    process_comm = Path("/proc") / pid / "comm"
+
+    try:
+        return process_comm.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
 
 def windows_process_name(pid: str) -> str:
     try:
@@ -162,12 +283,13 @@ class FriendlyNodeThreadingHTTPServer(ThreadingHTTPServer):
     allow_reuse_address = False
 
     def server_bind(self) -> None:
-        if sys.platform == "win32" and hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
-            self.socket.setsockopt(
-                socket.SOL_SOCKET,
-                socket.SO_EXCLUSIVEADDRUSE,
-                1,
-            )
+        stop_commands = stop_listener_commands(pids)
+
+        if len(stop_commands) > 0:
+            message_lines.append("To stop stale listener(s), run:")
+            for command in stop_commands:
+                message_lines.append(f"  {command}")
+
         elif hasattr(socket, "SO_REUSEADDR"):
             self.socket.setsockopt(
                 socket.SOL_SOCKET,
