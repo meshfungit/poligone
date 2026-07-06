@@ -12,11 +12,14 @@ from typing import Any
 
 from friendlynode.config.defaults import (
     DEFAULT_APP_CONFIG_PATH,
+    DEFAULT_CLIENT_ENABLED,
+    DEFAULT_CLIENTS_DIR,
     DEFAULT_CONTROLLER_HOST,
     DEFAULT_CONTROLLER_PORT,
     DEFAULT_DATABASE_PATH,
-    DEFAULT_CLIENTS_DIR,
     DEFAULT_ENGINE_NAME,
+    DEFAULT_LXMF_ENABLED,
+    DEFAULT_NOMADNET_ENABLED,
     DEFAULT_NOMADNET_PAGES_DIR,
     DEFAULT_RNS_CONFIG_DIR,
     DEFAULT_TAILSCALE_ACCESS_ENABLED,
@@ -31,6 +34,9 @@ class AppConfig:
     controller_port: int = DEFAULT_CONTROLLER_PORT
     ssh_access_enabled: bool = True
     tailscale_access_enabled: bool = DEFAULT_TAILSCALE_ACCESS_ENABLED
+    lxmf_enabled: bool = DEFAULT_LXMF_ENABLED
+    nomadnet_enabled: bool = DEFAULT_NOMADNET_ENABLED
+    client_enabled: bool = DEFAULT_CLIENT_ENABLED
     ssh_tunnel_host: str = ""
     ssh_tunnel_user: str = ""
 
@@ -62,6 +68,9 @@ class AppConfig:
         config.tailscale_access_enabled = bool(
             raw.get("tailscale_access_enabled", config.tailscale_access_enabled)
         )
+        config.lxmf_enabled = bool(raw.get("lxmf_enabled", config.lxmf_enabled))
+        config.nomadnet_enabled = bool(raw.get("nomadnet_enabled", config.nomadnet_enabled))
+        config.client_enabled = bool(raw.get("client_enabled", config.client_enabled))
         config.ssh_tunnel_host = str(raw.get("ssh_tunnel_host", config.ssh_tunnel_host))
         config.ssh_tunnel_user = str(raw.get("ssh_tunnel_user", config.ssh_tunnel_user))
         config.engine_name = str(raw.get("engine_name", config.engine_name))
@@ -90,6 +99,9 @@ class AppConfig:
             "controller_port": self.controller_port,
             "ssh_access_enabled": self.ssh_access_enabled,
             "tailscale_access_enabled": self.tailscale_access_enabled,
+            "lxmf_enabled": self.lxmf_enabled,
+            "nomadnet_enabled": self.nomadnet_enabled,
+            "client_enabled": self.client_enabled,
             "ssh_tunnel_host": self.ssh_tunnel_host,
             "ssh_tunnel_user": self.ssh_tunnel_user,
             "engine_name": self.engine_name,
@@ -138,6 +150,9 @@ class AppConfig:
             "controller_port": self.controller_port,
             "ssh_access_enabled": self.ssh_access_enabled,
             "tailscale_access_enabled": self.tailscale_access_enabled,
+            "lxmf_enabled": self.lxmf_enabled,
+            "nomadnet_enabled": self.nomadnet_enabled,
+            "client_enabled": self.client_enabled,
             "ssh_tunnel_host": self.ssh_tunnel_host,
             "ssh_tunnel_user": self.ssh_tunnel_user,
             "engine_name": self.engine_name,
