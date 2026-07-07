@@ -9,6 +9,7 @@ const FRIENDLYNODE_MODULE_KEYS = Object.freeze([
 
 let runtimeModuleDraft = null;
 let runtimeModuleApplyInFlight = false;
+let engineRestartInFlight = false;
 let clientEditorState = null;
 let activeClientId = "";
 let activeContactId = "";
@@ -6973,6 +6974,19 @@ async function applyFriendlyNodeModules() {
       );
     }
 
+    if (currentStatus !== null) {
+      currentStatus.config = saveResult;
+    }
+
+    runtimeModuleDraft = {
+      lxmf_enabled: Boolean(saveResult.lxmf_enabled),
+      nomadnet_enabled: Boolean(saveResult.nomadnet_enabled),
+      client_enabled: Boolean(saveResult.client_enabled),
+    };
+
+    setEngineRestartInFlight(true);
+    render("Settings");
+
     const restartResponse = await fetch("/api/reticulum/restart", {
       method: "POST",
       headers: {
@@ -6993,6 +7007,7 @@ async function applyFriendlyNodeModules() {
     await waitForFriendlyNodeProcessRestart();
   } catch (error) {
     runtimeModuleApplyInFlight = false;
+    setEngineRestartInFlight(false);
     render("Settings");
 
     window.alert(
@@ -7076,9 +7091,11 @@ function renderRuntimeFeatureCapabilities(activeRuntime, features) {
 
   const moduleStatus = document.createElement("div");
   moduleStatus.className = "settings-hint";
-  moduleStatus.textContent = friendlyNodeModuleDraftChanged()
-    ? "Module configuration has unapplied changes."
-    : "Module configuration is applied.";
+  moduleStatus.textContent = runtimeModuleApplyInFlight
+    ? "Module configuration saved. FriendlyNode is restarting."
+    : friendlyNodeModuleDraftChanged()
+      ? "Module configuration has unapplied changes."
+      : "Module configuration is applied.";
   moduleActions.appendChild(moduleStatus);
 
   wrapper.appendChild(moduleActions);
@@ -7680,6 +7697,18 @@ function setText(selector, value) {
   }
 }
 
+function setEngineRestartInFlight(restarting) {
+  engineRestartInFlight = Boolean(restarting);
+
+  if (engineRestartInFlight) {
+    setText("#engine-status", "engine: restarting");
+    return;
+  }
+
+  const running = Boolean(currentStatus?.engine?.running);
+  setText("#engine-status", running ? "engine: running" : "engine: stopped");
+}
+
 function updateSummaryCards(status) {
   const engine = status.engine || {};
   const rns = engine.rns || {};
@@ -7689,7 +7718,14 @@ function updateSummaryCards(status) {
   const availableRuntimes = Array.isArray(runtime.available) ? runtime.available : [];
   const rnsInterfaces = Array.isArray(rns.interfaces) ? rns.interfaces : [];
 
-  setText("#engine-status", engine.running ? "engine: running" : "engine: stopped");
+  setText(
+    "#engine-status",
+    engineRestartInFlight
+      ? "engine: restarting"
+      : engine.running
+        ? "engine: running"
+        : "engine: stopped",
+  );
 
   const cards = document.querySelectorAll(".card .value");
 
@@ -7849,6 +7885,8 @@ async function restartReticulum() {
     button.textContent = "Restarting process...";
   }
 
+  setEngineRestartInFlight(true);
+
   try {
     const response = await fetch("/api/reticulum/restart", {
       method: "POST",
@@ -7870,18 +7908,26 @@ async function restartReticulum() {
     }
 
     currentStatus = payload;
+    setEngineRestartInFlight(false);
     updateSummaryCards(currentStatus);
 
     const activeTab = getActiveTab();
 
-    if (activeTab === "Client" || activeTab === "Interfaces" || activeTab === "Transport" || activeTab === "Logs" || activeTab === "Settings") {
+    if (
+      activeTab === "Client"
+      || activeTab === "Interfaces"
+      || activeTab === "Transport"
+      || activeTab === "Logs"
+      || activeTab === "Settings"
+    ) {
       render(activeTab);
     }
   } catch (error) {
+    setEngineRestartInFlight(false);
     appendUiError(error);
     render("Logs");
   } finally {
-    if (button !== null) {
+    if (!engineRestartInFlight && button !== null) {
       button.disabled = false;
       button.textContent = "Restart Reticulum";
     }
