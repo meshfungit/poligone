@@ -2876,3 +2876,15 @@ tr:last-child td { border-bottom: 0; }
 .rns-interface-import-file-row code {
   overflow-wrap: anywhere;
 }
+
+.runtime-feature-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin: 0.75rem 0 1rem;
+}
+
+.runtime-feature-actions .settings-hint {
+  margin: 0;
+}

@@ -1,6 +1,14 @@
 const tabs = ["Client", "Announces", "Peers", "NomadNet", "Interfaces", "Transport", "Logs", "Settings"];
 
 let currentStatus = null;
+const FRIENDLYNODE_MODULE_KEYS = Object.freeze([
+  "lxmf_enabled",
+  "nomadnet_enabled",
+  "client_enabled",
+]);
+
+let runtimeModuleDraft = null;
+let runtimeModuleApplyInFlight = false;
 let clientEditorState = null;
 let activeClientId = "";
 let activeContactId = "";
@@ -6880,30 +6888,70 @@ async function waitForFriendlyNodeProcessRestart() {
   window.location.reload();
 }
 
-async function setFriendlyNodeModuleFromUi(featureName, enabled, checkbox) {
+function readFriendlyNodeModuleConfig() {
   const config = currentStatus?.config || {};
 
-  const payload = {
+  return {
     lxmf_enabled: Boolean(config.lxmf_enabled),
     nomadnet_enabled: Boolean(config.nomadnet_enabled),
     client_enabled: Boolean(config.client_enabled),
   };
+}
 
-  payload[featureName] = Boolean(enabled);
+function getFriendlyNodeModuleDraft() {
+  if (runtimeModuleDraft === null) {
+    runtimeModuleDraft = readFriendlyNodeModuleConfig();
+  }
+
+  return runtimeModuleDraft;
+}
+
+function friendlyNodeModuleDraftChanged() {
+  const saved = readFriendlyNodeModuleConfig();
+  const draft = getFriendlyNodeModuleDraft();
+
+  return FRIENDLYNODE_MODULE_KEYS.some(
+    (key) => Boolean(saved[key]) !== Boolean(draft[key]),
+  );
+}
+
+function setFriendlyNodeModuleDraft(featureName, enabled) {
+  if (!FRIENDLYNODE_MODULE_KEYS.includes(featureName)) {
+    return;
+  }
+
+  const draft = getFriendlyNodeModuleDraft();
+  draft[featureName] = Boolean(enabled);
 
   if (featureName === "client_enabled" && enabled) {
-    payload.lxmf_enabled = true;
+    draft.lxmf_enabled = true;
   }
 
   if (featureName === "lxmf_enabled" && !enabled) {
-    payload.client_enabled = false;
+    draft.client_enabled = false;
   }
 
-  const previousValue = Boolean(config[featureName]);
+  render("Settings");
+}
 
-  for (const item of document.querySelectorAll(".friendlynode-module-checkbox")) {
-    item.disabled = true;
+async function applyFriendlyNodeModules() {
+  if (
+    runtimeModuleApplyInFlight
+    || !friendlyNodeModuleDraftChanged()
+  ) {
+    return;
   }
+
+  const draft = getFriendlyNodeModuleDraft();
+
+  const payload = {
+    lxmf_enabled: Boolean(draft.lxmf_enabled),
+    nomadnet_enabled: Boolean(draft.nomadnet_enabled),
+    client_enabled: Boolean(draft.client_enabled),
+  };
+
+  runtimeModuleApplyInFlight = true;
+  render("Settings");
 
   try {
     const saveResponse = await fetch("/api/config", {
@@ -6925,10 +6973,6 @@ async function setFriendlyNodeModuleFromUi(featureName, enabled, checkbox) {
       );
     }
 
-    if (currentStatus !== null) {
-      currentStatus.config = saveResult;
-    }
-
     const restartResponse = await fetch("/api/reticulum/restart", {
       method: "POST",
       headers: {
@@ -6948,13 +6992,12 @@ async function setFriendlyNodeModuleFromUi(featureName, enabled, checkbox) {
 
     await waitForFriendlyNodeProcessRestart();
   } catch (error) {
-    checkbox.checked = previousValue;
+    runtimeModuleApplyInFlight = false;
+    render("Settings");
 
-    for (const item of document.querySelectorAll(".friendlynode-module-checkbox")) {
-      item.disabled = false;
-    }
-
-    window.alert(`Could not change FriendlyNode module: ${error.message}`);
+    window.alert(
+      `Could not apply FriendlyNode modules: ${error.message}`,
+    );
   }
 }
 
@@ -6966,25 +7009,25 @@ function renderRuntimeFeatureCapabilities(activeRuntime, features) {
   title.textContent = "Runtime features";
   wrapper.appendChild(title);
 
-  const config = currentStatus?.config || {};
+  const moduleConfig = getFriendlyNodeModuleDraft();
 
   const moduleFeatures = [
     {
       name: "lxmf_enabled",
       label: "LXMF",
-      enabled: Boolean(config.lxmf_enabled),
+      enabled: Boolean(moduleConfig.lxmf_enabled),
       description: "Load the LXMF messaging module. Client requires LXMF.",
     },
     {
       name: "nomadnet_enabled",
       label: "NomadNet",
-      enabled: Boolean(config.nomadnet_enabled),
+      enabled: Boolean(moduleConfig.nomadnet_enabled),
       description: "Enable NomadNet browser, publisher and page functions.",
     },
     {
       name: "client_enabled",
       label: "Client",
-      enabled: Boolean(config.client_enabled),
+      enabled: Boolean(moduleConfig.client_enabled),
       description: "Enable the messaging client. Enabling Client also enables LXMF.",
     },
   ];
@@ -7001,10 +7044,10 @@ function renderRuntimeFeatureCapabilities(activeRuntime, features) {
     checkbox.type = "checkbox";
     checkbox.className = "friendlynode-module-checkbox";
     checkbox.checked = feature.enabled;
-    checkbox.onchange = () => setFriendlyNodeModuleFromUi(
+    checkbox.disabled = runtimeModuleApplyInFlight;
+    checkbox.onchange = () => setFriendlyNodeModuleDraft(
       feature.name,
       checkbox.checked,
-      checkbox,
     );
 
     row.appendChild(checkbox);
@@ -7015,6 +7058,30 @@ function renderRuntimeFeatureCapabilities(activeRuntime, features) {
     hint.textContent = feature.description;
     wrapper.appendChild(hint);
   }
+
+  const moduleActions = document.createElement("div");
+  moduleActions.className = "runtime-feature-actions";
+
+  const applyButton = document.createElement("button");
+  applyButton.type = "button";
+  applyButton.textContent = runtimeModuleApplyInFlight
+    ? "Applying modules..."
+    : "Apply modules";
+  applyButton.disabled = (
+    runtimeModuleApplyInFlight
+    || !friendlyNodeModuleDraftChanged()
+  );
+  applyButton.onclick = applyFriendlyNodeModules;
+  moduleActions.appendChild(applyButton);
+
+  const moduleStatus = document.createElement("div");
+  moduleStatus.className = "settings-hint";
+  moduleStatus.textContent = friendlyNodeModuleDraftChanged()
+    ? "Module configuration has unapplied changes."
+    : "Module configuration is applied.";
+  moduleActions.appendChild(moduleStatus);
+
+  wrapper.appendChild(moduleActions);
 
   const packageTitle = document.createElement("h4");
   packageTitle.textContent = "Optional runtime packages";
@@ -8546,14 +8613,18 @@ document.addEventListener("DOMContentLoaded", () => {
     restartButton.addEventListener("click", restartReticulum);
   }
 
-  loadNomadNetBrowserStorage().catch((error) => {
-    appendUiError(error);
-  });
+  fetchStatus()
+    .then(() => {
+      if (!Boolean(currentStatus?.config?.nomadnet_enabled)) {
+        return;
+      }
 
-  fetchStatus().catch((error) => {
-    appendUiError(error);
-    render("Logs");
-  });
+      return loadNomadNetBrowserStorage();
+    })
+    .catch((error) => {
+      appendUiError(error);
+      render("Logs");
+    });
 });
 
 document.addEventListener("keydown", (event) => {
