@@ -5,7 +5,6 @@ import json
 import subprocess
 import sys
 from typing import Any
-from friendlynode.client_accounts import ClientAccountStore
 from friendlynode.config.app_config import AppConfig
 from friendlynode.config.defaults import IMPORT_EXPORT_DIR, INTERFACES_EXPORT_PATH
 from friendlynode.controller.access import (
@@ -18,7 +17,6 @@ from friendlynode.controller.runtime_manager import RuntimeInfo, RuntimeManager
 from friendlynode.controller.state_cache import StateCache
 from friendlynode.config.rns_config_editor import load_rns_config, save_rns_config
 from friendlynode.engine.events import EngineEvent
-from friendlynode.nomadnet_browser_store import NOMADNET_BROWSER_STATE_FILENAME, NomadNetBrowserStore
 
 
 DEFAULT_ANNOUNCE_LIMIT = 500
@@ -102,9 +100,22 @@ class ControllerApp:
         self.config = config or AppConfig.load()
         self.state = StateCache()
         self.runtime_manager = RuntimeManager()
-        self.client_store = ClientAccountStore(self.config.clients_dir)
-        self.nomadnet_browser_store = NomadNetBrowserStore(
-            self.config.database_path.parent / NOMADNET_BROWSER_STATE_FILENAME)
+
+        self.client_store: Any | None = None
+        self.nomadnet_browser_store: Any | None = None
+
+        if self.config.client_enabled:
+            from friendlynode.client_accounts import ClientAccountStore
+
+            self.client_store = ClientAccountStore(self.config.clients_dir)
+
+        if self.config.nomadnet_enabled:
+            from friendlynode.nomadnet_browser_store import NOMADNET_BROWSER_STATE_FILENAME, NomadNetBrowserStore
+
+            self.nomadnet_browser_store = NomadNetBrowserStore(
+                self.config.database_path.parent / NOMADNET_BROWSER_STATE_FILENAME
+            )
+
         self.engine_supervisor = EngineSupervisor(self.config, self._handle_engine_event)
 
     def start(self) -> None:
@@ -484,7 +495,25 @@ class ControllerApp:
             forwarded_proto=forwarded_proto,
         )
 
+    def get_component_status(self) -> dict[str, object]:
+        return {
+            "client_enabled": self.config.client_enabled,
+            "client_store_loaded": self.client_store is not None,
+            "nomadnet_enabled": self.config.nomadnet_enabled,
+            "nomadnet_browser_store_loaded": self.nomadnet_browser_store is not None,
+        }
+
     def list_clients(self) -> dict[str, object]:
+        if self.client_store is None:
+            return {
+                "clients_dir": str(self.config.clients_dir),
+                "clients": [],
+                "schema": {
+                    "runtime_modes": [],
+                    "subdirectories": [],
+                },
+            }
+
         return self.client_store.to_dict()
 
     def list_announces(
