@@ -768,6 +768,7 @@ class ControllerHttpServer:
                         forwarded_proto=self._trusted_forwarded_proto(),
                     ),
                     "config": app.config.to_dict(),
+                    "components": app.get_component_status(),
                     "clients": app.list_clients(),
                     "announces": app.state.snapshot_announces(limit=500),
                     "logs": app.state.snapshot_logs(),
