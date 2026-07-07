@@ -370,14 +370,39 @@ const rows = {
   ],
 };
 
+function getVisibleTabs() {
+  const config = currentStatus?.config || {};
+
+  return tabs.filter((tab) => {
+    if (tab === "Client") {
+      return Boolean(config.client_enabled);
+    }
+
+    if (tab === "NomadNet") {
+      return Boolean(config.nomadnet_enabled);
+    }
+
+    return true;
+  });
+}
+
 function renderNav(active) {
   renderToolboxState();
+
+  const visibleTabs = getVisibleTabs();
+
+  if (!visibleTabs.includes(active)) {
+    renderSidebarContacts("");
+    window.setTimeout(() => render("Interfaces"), 0);
+    return;
+  }
+
   renderSidebarContacts(active);
 
   const nav = document.querySelector("nav");
   nav.innerHTML = "";
 
-  for (const tab of tabs) {
+  for (const tab of visibleTabs) {
     const button = document.createElement("button");
     button.textContent = tab;
     button.className = tab === active ? "active" : "";
