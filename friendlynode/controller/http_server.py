@@ -440,8 +440,37 @@ class ControllerHttpServer:
                         return
                     raise
 
+            def _reject_disabled_component(self, path: str) -> bool:
+                if path.startswith("/api/nomadnet/") and not app.config.nomadnet_enabled:
+                    self._send_json(
+                        {
+                            "error": "nomadnet_disabled",
+                            "message": "NomadNet component is disabled",
+                        },
+                        HTTPStatus.SERVICE_UNAVAILABLE,
+                    )
+                    return True
+
+                if (
+                        path == "/api/clients"
+                        or path.startswith("/api/clients/")
+                ) and not app.config.client_enabled:
+                    self._send_json(
+                        {
+                            "error": "client_disabled",
+                            "message": "Client component is disabled",
+                        },
+                        HTTPStatus.SERVICE_UNAVAILABLE,
+                    )
+                    return True
+
+                return False
+
             def do_GET(self) -> None:
                 parsed = urlparse(self.path)
+
+                if self._reject_disabled_component(parsed.path):
+                    return
 
                 if parsed.path == "/api/status":
                     self._send_json(self._build_status_response())
@@ -533,6 +562,9 @@ class ControllerHttpServer:
 
             def do_POST(self) -> None:
                 parsed = urlparse(self.path)
+
+                if self._reject_disabled_component(parsed.path):
+                    return
 
                 if parsed.path == "/api/reticulum/restart":
                     self._send_json(
@@ -723,6 +755,10 @@ class ControllerHttpServer:
 
             def do_DELETE(self) -> None:
                 parsed = urlparse(self.path)
+
+                if self._reject_disabled_component(parsed.path):
+                    return
+
                 client_route = self._parse_client_route(parsed.path)
 
                 if client_route is not None:
