@@ -6832,6 +6832,107 @@ function renderRuntimeInterfaceCapabilities(capabilities) {
   return wrapper;
 }
 
+async function waitForFriendlyNodeProcessRestart() {
+  await new Promise((resolve) => window.setTimeout(resolve, 1500));
+
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    try {
+      const response = await fetch("/api/status", {
+        cache: "no-store",
+      });
+
+      if (response.ok) {
+        window.location.reload();
+        return;
+      }
+    } catch (error) {
+      // FriendlyNode is restarting.
+    }
+
+    await new Promise((resolve) => window.setTimeout(resolve, 1000));
+  }
+
+  window.location.reload();
+}
+
+async function setFriendlyNodeModuleFromUi(featureName, enabled, checkbox) {
+  const config = currentStatus?.config || {};
+
+  const payload = {
+    lxmf_enabled: Boolean(config.lxmf_enabled),
+    nomadnet_enabled: Boolean(config.nomadnet_enabled),
+    client_enabled: Boolean(config.client_enabled),
+  };
+
+  payload[featureName] = Boolean(enabled);
+
+  if (featureName === "client_enabled" && enabled) {
+    payload.lxmf_enabled = true;
+  }
+
+  if (featureName === "lxmf_enabled" && !enabled) {
+    payload.client_enabled = false;
+  }
+
+  const previousValue = Boolean(config[featureName]);
+
+  for (const item of document.querySelectorAll(".friendlynode-module-checkbox")) {
+    item.disabled = true;
+  }
+
+  try {
+    const saveResponse = await fetch("/api/config", {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const saveResult = await saveResponse.json().catch(() => ({}));
+
+    if (!saveResponse.ok) {
+      throw new Error(
+        saveResult.message
+        || saveResult.error
+        || `HTTP ${saveResponse.status}`,
+      );
+    }
+
+    if (currentStatus !== null) {
+      currentStatus.config = saveResult;
+    }
+
+    const restartResponse = await fetch("/api/reticulum/restart", {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+      },
+    });
+
+    const restartResult = await restartResponse.json().catch(() => ({}));
+
+    if (!restartResponse.ok) {
+      throw new Error(
+        restartResult.message
+        || restartResult.error
+        || `HTTP ${restartResponse.status}`,
+      );
+    }
+
+    await waitForFriendlyNodeProcessRestart();
+  } catch (error) {
+    checkbox.checked = previousValue;
+
+    for (const item of document.querySelectorAll(".friendlynode-module-checkbox")) {
+      item.disabled = false;
+    }
+
+    window.alert(`Could not change FriendlyNode module: ${error.message}`);
+  }
+}
+
 function renderRuntimeFeatureCapabilities(activeRuntime, features) {
   const wrapper = document.createElement("div");
   wrapper.className = "runtime-feature-capabilities";
@@ -6840,15 +6941,71 @@ function renderRuntimeFeatureCapabilities(activeRuntime, features) {
   title.textContent = "Runtime features";
   wrapper.appendChild(title);
 
-  if (features.length === 0) {
+  const config = currentStatus?.config || {};
+
+  const moduleFeatures = [
+    {
+      name: "lxmf_enabled",
+      label: "LXMF",
+      enabled: Boolean(config.lxmf_enabled),
+      description: "Load the LXMF messaging module. Client requires LXMF.",
+    },
+    {
+      name: "nomadnet_enabled",
+      label: "NomadNet",
+      enabled: Boolean(config.nomadnet_enabled),
+      description: "Enable NomadNet browser, publisher and page functions.",
+    },
+    {
+      name: "client_enabled",
+      label: "Client",
+      enabled: Boolean(config.client_enabled),
+      description: "Enable the messaging client. Enabling Client also enables LXMF.",
+    },
+  ];
+
+  for (const feature of moduleFeatures) {
+    const row = document.createElement("label");
+    row.className = "settings-checkbox-row";
+
+    const label = document.createElement("span");
+    label.textContent = feature.label;
+    row.appendChild(label);
+
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.className = "friendlynode-module-checkbox";
+    checkbox.checked = feature.enabled;
+    checkbox.onchange = () => setFriendlyNodeModuleFromUi(
+      feature.name,
+      checkbox.checked,
+      checkbox,
+    );
+
+    row.appendChild(checkbox);
+    wrapper.appendChild(row);
+
+    const hint = document.createElement("div");
+    hint.className = "settings-hint";
+    hint.textContent = feature.description;
+    wrapper.appendChild(hint);
+  }
+
+  const packageTitle = document.createElement("h4");
+  packageTitle.textContent = "Optional runtime packages";
+  wrapper.appendChild(packageTitle);
+
+  const runtimeFeatures = Array.isArray(features) ? features : [];
+
+  if (runtimeFeatures.length === 0) {
     const empty = document.createElement("div");
     empty.className = "settings-hint";
-    empty.textContent = "No optional runtime features available.";
+    empty.textContent = "No optional runtime packages available.";
     wrapper.appendChild(empty);
     return wrapper;
   }
 
-  for (const feature of features) {
+  for (const feature of runtimeFeatures) {
     const row = document.createElement("label");
     row.className = "settings-checkbox-row";
 
@@ -6868,6 +7025,7 @@ function renderRuntimeFeatureCapabilities(activeRuntime, features) {
       feature.name,
       checkbox.checked,
     );
+
     row.appendChild(checkbox);
     wrapper.appendChild(row);
 

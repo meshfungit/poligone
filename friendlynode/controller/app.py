@@ -26,7 +26,6 @@ MAX_ANNOUNCE_LIMIT = 2000
 NOMADNET_DEFAULT_PATH = "/page/index.mu"
 LXMF_IMPORT_NAME = "LXMF"
 LXMF_PACKAGE_NAME = "lxmf"
-RNS_CONFIG_TRUE_VALUES = frozenset({"yes", "true", "on", "1"})
 RUNTIME_PACKAGE_INSTALL_TIMEOUT_SECONDS = 180
 RUNTIME_INSTALL_OUTPUT_LIMIT = 1400
 ANNOUNCE_TYPE_BY_ASPECT = {
@@ -355,6 +354,16 @@ class ControllerApp:
     def save_app_config(self, payload: dict[str, object]) -> dict[str, object]:
         changed_controller_bind = False
 
+        next_lxmf_enabled = bool(
+            payload.get("lxmf_enabled", self.config.lxmf_enabled)
+        )
+        next_client_enabled = bool(
+            payload.get("client_enabled", self.config.client_enabled)
+        )
+
+        if next_client_enabled and not next_lxmf_enabled:
+            raise ValueError("client_enabled requires lxmf_enabled")
+
         if "controller_host" in payload:
             host = str(payload.get("controller_host") or "").strip()
             if host == "":
@@ -411,6 +420,39 @@ class ControllerApp:
                 str(payload.get("ssh_tunnel_user", self.config.ssh_tunnel_user)),
             )
             self.state.append_log("info", "config", "SSH tunnel endpoint changed")
+
+        feature_settings_changed = False
+
+        if "lxmf_enabled" in payload:
+            value = bool(payload.get("lxmf_enabled"))
+            if self.config.lxmf_enabled != value:
+                self.config.lxmf_enabled = value
+                feature_settings_changed = True
+
+        if "nomadnet_enabled" in payload:
+            value = bool(payload.get("nomadnet_enabled"))
+            if self.config.nomadnet_enabled != value:
+                self.config.nomadnet_enabled = value
+                feature_settings_changed = True
+
+        if "client_enabled" in payload:
+            value = bool(payload.get("client_enabled"))
+            if self.config.client_enabled != value:
+                self.config.client_enabled = value
+                feature_settings_changed = True
+
+        if feature_settings_changed:
+            self.config.save()
+            self.state.append_log(
+                "info",
+                "config",
+                (
+                    "Runtime features changed: "
+                    f"LXMF={self.config.lxmf_enabled}, "
+                    f"NomadNet={self.config.nomadnet_enabled}, "
+                    f"Client={self.config.client_enabled}"
+                ),
+            )
 
         return self.config.to_dict()
 
@@ -684,7 +726,12 @@ class ControllerApp:
         }
 
     def _preflight_runtime_dependencies(self, runtime: RuntimeInfo) -> bool:
-        if not self._reticulum_discovery_enabled():
+        if not self.config.lxmf_enabled:
+            self.state.append_log(
+                "info",
+                "runtime",
+                "LXMF preflight skipped: lxmf_enabled is false",
+            )
             return True
 
         python_path = self._runtime_python_path(runtime)
@@ -693,17 +740,23 @@ class ControllerApp:
             self.state.append_log(
                 "info",
                 "runtime",
-                "LXMF preflight ok: discover_interfaces is enabled and LXMF is installed",
+                "LXMF preflight ok: lxmf_enabled is true and LXMF is installed",
             )
             return True
 
         self.state.append_log(
             "info",
             "runtime",
-            f"LXMF preflight: discover_interfaces is enabled, installing {LXMF_PACKAGE_NAME} into {python_path}",
+            (
+                "LXMF preflight: lxmf_enabled is true, installing "
+                f"{LXMF_PACKAGE_NAME} into {python_path}"
+            ),
         )
 
-        install_result = self._install_python_package(python_path, LXMF_PACKAGE_NAME)
+        install_result = self._install_python_package(
+            python_path,
+            LXMF_PACKAGE_NAME,
+        )
 
         if not install_result["ok"]:
             self.state.append_log(
@@ -726,45 +779,6 @@ class ControllerApp:
             "runtime",
             "LXMF install completed, but import LXMF still fails",
         )
-        return False
-
-    def _reticulum_discovery_enabled(self) -> bool:
-        config_path = self.config.rns_config_dir / "config"
-
-        try:
-            lines = config_path.read_text(encoding="utf-8").splitlines()
-        except FileNotFoundError:
-            return False
-        except OSError as exc:
-            self.state.append_log(
-                "error",
-                "runtime",
-                f"Cannot read Reticulum config for dependency preflight: {type(exc).__name__}: {exc}",
-            )
-            return False
-
-        in_reticulum_section = False
-
-        for raw_line in lines:
-            line = raw_line.split("#", 1)[0].split(";", 1)[0].strip()
-
-            if line == "":
-                continue
-
-            if line.startswith("[") and line.endswith("]"):
-                in_reticulum_section = line == "[reticulum]"
-                continue
-
-            if not in_reticulum_section or "=" not in line:
-                continue
-
-            key, value = line.split("=", 1)
-
-            if key.strip() != "discover_interfaces":
-                continue
-
-            return value.strip().lower() in RNS_CONFIG_TRUE_VALUES
-
         return False
 
     def _runtime_python_path(self, runtime: RuntimeInfo) -> str:
