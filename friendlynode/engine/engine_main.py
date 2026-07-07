@@ -13,6 +13,7 @@ class EngineMain:
             config_dir=self.config.rns_config_dir,
             runtime_source_path=self.config.runtime_source_path,
             bus=self.bus,
+            lxmf_enabled=self.config.lxmf_enabled,
         )
 
     def start(self) -> None:

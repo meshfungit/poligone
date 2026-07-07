@@ -92,10 +92,12 @@ class RnsRuntime:
         config_dir: Path,
         runtime_source_path: Path | None,
         bus: IpcBus,
+        lxmf_enabled: bool = False,
     ) -> None:
         self.config_dir = config_dir
         self.runtime_source_path = runtime_source_path
         self.bus = bus
+        self.lxmf_enabled = lxmf_enabled
 
         self.RNS: ModuleType | type[StubRnsModule] | None = None
         self.LXMF: ModuleType | type[StubLxmfModule] | None = None
@@ -195,6 +197,8 @@ class RnsRuntime:
                 str(self.runtime_source_path) if self.runtime_source_path is not None else None
             ),
             "rns_version": getattr(self.RNS, "__version__", None) if self.RNS is not None else None,
+            "lxmf_enabled": self.lxmf_enabled,
+            "lxmf_loaded": self.LXMF is not None,
             "lxmf_version": getattr(self.LXMF, "__version__", None) if self.LXMF is not None else None,
             "interfaces": self._interface_status(),
             "announce": self.announce_status(),
@@ -602,14 +606,17 @@ class RnsRuntime:
 
     def _load_modules(
         self,
-    ) -> tuple[ModuleType | type[StubRnsModule], ModuleType | type[StubLxmfModule], bool]:
+    ) -> tuple[
+        ModuleType | type[StubRnsModule],
+        ModuleType | type[StubLxmfModule] | None,
+        bool,
+    ]:
         if self.runtime_source_path is not None and self.runtime_source_path.exists():
             runtime_source = str(self.runtime_source_path)
-
             if runtime_source not in sys.path:
                 sys.path.insert(0, runtime_source)
 
-            self._unload_runtime_modules()
+        self._unload_runtime_modules()
 
         try:
             import RNS
@@ -619,6 +626,11 @@ class RnsRuntime:
         except ImportError:
             rns_module = StubRnsModule
             rns_stub = True
+
+        if not self.lxmf_enabled:
+            self.rns_using_stub = rns_stub
+            self.lxmf_using_stub = False
+            return rns_module, None, rns_stub
 
         try:
             import LXMF
@@ -631,7 +643,6 @@ class RnsRuntime:
 
         self.rns_using_stub = rns_stub
         self.lxmf_using_stub = lxmf_stub
-
         return rns_module, lxmf_module, rns_stub or lxmf_stub
 
     def _unload_runtime_modules(self) -> None:
