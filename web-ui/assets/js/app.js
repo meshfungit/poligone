@@ -9,7 +9,10 @@ const FRIENDLYNODE_MODULE_KEYS = Object.freeze([
 
 let runtimeModuleDraft = null;
 let runtimeModuleApplyInFlight = false;
-let engineRestartInFlight = false;
+let lxmfReleaseOverview = null;
+let lxmfReleaseLoadInFlight = false;
+let lxmfReleaseInstallInFlight = false;
+let lxmfReleaseLoadError = "";
 let clientEditorState = null;
 let activeClientId = "";
 let activeContactId = "";
@@ -6700,6 +6703,151 @@ function renderSettings() {
   return wrapper;
 }
 
+async function loadLxmfReleaseOverviewIfNeeded() {
+  if (lxmfReleaseOverview !== null || lxmfReleaseLoadInFlight) {
+    return;
+  }
+
+  lxmfReleaseLoadInFlight = true;
+  lxmfReleaseLoadError = "";
+
+  try {
+    const response = await fetch("/api/runtime/lxmf/releases", {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+      },
+      cache: "no-store",
+    });
+
+    const payload = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      throw new Error(
+        payload.message
+        || payload.error
+        || `HTTP ${response.status}`,
+      );
+    }
+
+    lxmfReleaseOverview = payload;
+  } catch (error) {
+    lxmfReleaseLoadError = error.message || String(error);
+  } finally {
+    lxmfReleaseLoadInFlight = false;
+
+    if (getActiveTab() === "Settings") {
+      render("Settings");
+    }
+  }
+}
+
+function formatLxmfCompatibility(compatibility) {
+  if (compatibility === null || typeof compatibility !== "object") {
+    return "unknown";
+  }
+
+  if (compatibility.compatible === true) {
+    return compatibility.message || "compatible";
+  }
+
+  if (compatibility.compatible === false) {
+    return compatibility.message || "incompatible";
+  }
+
+  return compatibility.message || compatibility.status || "unknown";
+}
+
+function renderLxmfReleaseSettings() {
+  loadLxmfReleaseOverviewIfNeeded();
+
+  const wrapper = document.createElement("div");
+  wrapper.className = "runtime-feature-capabilities";
+
+  const title = document.createElement("h4");
+  title.textContent = "LXMF release";
+  wrapper.appendChild(title);
+
+  const runtimeLxmf = currentStatus?.runtime?.lxmf || {};
+  const overview = lxmfReleaseOverview || {};
+  const lxmf = overview.lxmf || runtimeLxmf;
+  const releases = Array.isArray(overview.releases) ? overview.releases : [];
+
+  const details = document.createElement("div");
+  details.className = "settings-compact-grid";
+  details.appendChild(renderCompactSetting("Installed", lxmf.installed ? (lxmf.release_version || "-") : "not installed"));
+  details.appendChild(renderCompactSetting("Source", lxmf.source_path || "-"));
+  details.appendChild(renderCompactSetting("RNS requirement", lxmf.rns_requirement || "-"));
+  details.appendChild(renderCompactSetting("Compatibility", formatLxmfCompatibility(lxmf.compatibility)));
+  wrapper.appendChild(details);
+
+  if (lxmfReleaseLoadError !== "") {
+    const error = document.createElement("div");
+    error.className = "settings-hint";
+    error.textContent = `LXMF release list failed: ${lxmfReleaseLoadError}`;
+    wrapper.appendChild(error);
+    return wrapper;
+  }
+
+  if (lxmfReleaseLoadInFlight) {
+    const loading = document.createElement("div");
+    loading.className = "settings-hint";
+    loading.textContent = "Loading LXMF releases...";
+    wrapper.appendChild(loading);
+    return wrapper;
+  }
+
+  if (releases.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "settings-hint";
+    empty.textContent = "No LXMF releases available.";
+    wrapper.appendChild(empty);
+    return wrapper;
+  }
+
+  const row = document.createElement("div");
+  row.className = "settings-row";
+
+  const select = document.createElement("select");
+  select.id = "lxmf-release-select";
+
+  for (const release of releases) {
+    const option = document.createElement("option");
+    option.value = release.version;
+    option.textContent = [
+      release.label || release.version,
+      release.version === lxmf.release_version ? "installed" : "",
+      release.recommended ? "recommended" : "",
+      release.source === "local" ? "local" : "",
+    ].filter(Boolean).join(" - ");
+
+    if (release.version === lxmf.release_version) {
+      option.selected = true;
+    }
+
+    select.appendChild(option);
+  }
+
+  const button = document.createElement("button");
+  button.type = "button";
+  button.id = "install-lxmf-release";
+  button.textContent = lxmfReleaseInstallInFlight
+    ? "Installing LXMF..."
+    : "Install LXMF release";
+  button.disabled = lxmfReleaseInstallInFlight;
+  button.onclick = installLxmfReleaseFromUi;
+
+  row.appendChild(select);
+  row.appendChild(button);
+  wrapper.appendChild(row);
+
+  const hint = document.createElement("div");
+  hint.className = "settings-hint";
+  hint.textContent = "LXMF is installed independently from RNS. Incompatible versions are rejected by backend.";
+  wrapper.appendChild(hint);
+
+  return wrapper;
+}
 function renderRuntimeSettings() {
   const runtimeBlock = renderCollapsibleSection("settingsRuntime", "Runtime");
 
@@ -6802,6 +6950,7 @@ function renderRuntimeSettings() {
     runtimeBlock.appendChild(releaseRow);
   }
 
+  runtimeBlock.appendChild(renderLxmfReleaseSettings());
   runtimeBlock.appendChild(renderRuntimeInterfaceCapabilities(capabilities));
   runtimeBlock.appendChild(renderRuntimeFeatureCapabilities(activeRuntime, featureCapabilities));
 
@@ -8042,6 +8191,71 @@ async function installRuntimeReleaseFromUi() {
     if (button !== null) {
       button.disabled = false;
       button.textContent = "Install release";
+    }
+  }
+}
+
+async function installLxmfReleaseFromUi() {
+  const select = document.querySelector("#lxmf-release-select");
+  const button = document.querySelector("#install-lxmf-release");
+
+  if (select === null) {
+    return;
+  }
+
+  if (button !== null) {
+    button.disabled = true;
+    button.textContent = "Installing LXMF...";
+  }
+
+  lxmfReleaseInstallInFlight = true;
+
+  try {
+    const response = await fetch("/api/runtime/lxmf/install", {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        version: select.value,
+      }),
+    });
+
+    const payload = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      throw new Error(
+        payload.message
+        || payload.error
+        || `LXMF install failed: HTTP ${response.status}`,
+      );
+    }
+
+    if (payload.status === "process_restarting") {
+      if (button !== null) {
+        button.textContent = "Restarting process...";
+      }
+
+      lxmfReleaseOverview = null;
+      setEngineRestartInFlight(true);
+      await waitForFriendlyNodeAfterProcessRestart();
+      window.location.reload();
+      return;
+    }
+
+    lxmfReleaseOverview = null;
+    await fetchStatus();
+    render("Settings");
+  } catch (error) {
+    lxmfReleaseInstallInFlight = false;
+    setEngineRestartInFlight(false);
+    appendUiError(error);
+    render("Logs");
+  } finally {
+    if (!engineRestartInFlight && button !== null) {
+      button.disabled = false;
+      button.textContent = "Install LXMF release";
     }
   }
 }

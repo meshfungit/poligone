@@ -1,0 +1,12 @@
+{
+  "description": "Managed LXMF component installed by FriendlyNode.",
+  "kind": "lxmf",
+  "label": "LXMF 1.1.1",
+  "name": "lxmf-1.1.1",
+  "release_version": "1.1.1",
+  "requires_dist": [
+    "rns>=1.4.2"
+  ],
+  "rns_requirement": "rns>=1.4.2",
+  "source_path": "src"
+}
