@@ -86,11 +86,13 @@ class RnsRuntime:
         runtime_source_path: Path | None,
         bus: IpcBus,
         lxmf_enabled: bool = False,
+        lxmf_source_path: Path | None = None,
     ) -> None:
         self.config_dir = config_dir
         self.runtime_source_path = runtime_source_path
         self.bus = bus
         self.lxmf_enabled = lxmf_enabled
+        self.lxmf_source_path = lxmf_source_path
 
         self.RNS: ModuleType | type[StubRnsModule] | None = None
         self.LXMF: ModuleType | type[StubLxmfModule] | None = None
@@ -135,6 +137,11 @@ class RnsRuntime:
                     "runtime_source_path": (
                         str(self.runtime_source_path)
                         if self.runtime_source_path is not None
+                        else None
+                    ),
+                    "lxmf_source_path": (
+                        str(self.lxmf_source_path)
+                        if self.lxmf_source_path is not None
                         else None
                     ),
                 },
@@ -189,9 +196,12 @@ class RnsRuntime:
             "runtime_source_path": (
                 str(self.runtime_source_path) if self.runtime_source_path is not None else None
             ),
+            "lxmf_source_path": (
+                str(self.lxmf_source_path) if self.lxmf_source_path is not None else None
+            ),
             "rns_version": getattr(self.RNS, "__version__", None) if self.RNS is not None else None,
             "lxmf_enabled": self.lxmf_enabled,
-            "lxmf_loaded": self.LXMF is not None,
+            "lxmf_loaded": self.LXMF is not None and not self.lxmf_using_stub,
             "lxmf_version": getattr(self.LXMF, "__version__", None) if self.LXMF is not None else None,
             "interfaces": self._interface_status(),
             "announce": self.announce_status(),
@@ -271,12 +281,12 @@ class RnsRuntime:
         ModuleType | type[StubLxmfModule] | None,
         bool,
     ]:
+        self._unload_runtime_modules()
+
         if self.runtime_source_path is not None and self.runtime_source_path.exists():
             runtime_source = str(self.runtime_source_path)
             if runtime_source not in sys.path:
                 sys.path.insert(0, runtime_source)
-
-        self._unload_runtime_modules()
 
         try:
             import RNS
@@ -291,6 +301,16 @@ class RnsRuntime:
             self.rns_using_stub = rns_stub
             self.lxmf_using_stub = False
             return rns_module, None, rns_stub
+
+        if self.lxmf_source_path is None or not self.lxmf_source_path.exists():
+            self.rns_using_stub = rns_stub
+            self.lxmf_using_stub = True
+            return rns_module, StubLxmfModule, True
+
+        lxmf_source = str(self.lxmf_source_path)
+
+        if lxmf_source not in sys.path:
+            sys.path.insert(0, lxmf_source)
 
         try:
             import LXMF

@@ -28,6 +28,7 @@ class EngineMain:
             runtime_source_path=self.config.runtime_source_path,
             bus=self.bus,
             lxmf_enabled=self.config.lxmf_enabled,
+            lxmf_source_path=self.config.lxmf_source_path,
         )
 
         self.nomadnet_runtime: Any | None = None

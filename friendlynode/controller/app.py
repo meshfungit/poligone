@@ -763,13 +763,23 @@ class ControllerApp:
             )
             return True
 
-        python_path = self._runtime_python_path(runtime)
+        lxmf_status = self.runtime_manager.get_lxmf_status(runtime.release_version)
 
-        if self._python_import_available(python_path, LXMF_IMPORT_NAME):
+        if not bool(lxmf_status.get("installed")):
             self.state.append_log(
-                "info",
+                "warning",
                 "runtime",
-                "LXMF preflight ok: lxmf_enabled is true and LXMF is installed",
+                "LXMF is enabled, but no managed LXMF release is installed; using LXMF stub",
+            )
+            return True
+
+        compatibility = lxmf_status.get("compatibility")
+
+        if isinstance(compatibility, dict) and compatibility.get("compatible") is False:
+            self.state.append_log(
+                "warning",
+                "runtime",
+                str(compatibility.get("message") or "Installed LXMF release is not compatible with active RNS"),
             )
             return True
 
@@ -777,38 +787,12 @@ class ControllerApp:
             "info",
             "runtime",
             (
-                "LXMF preflight: lxmf_enabled is true, installing "
-                f"{LXMF_PACKAGE_NAME} into {python_path}"
+                "LXMF preflight ok: "
+                f"version={lxmf_status.get('release_version')}, "
+                f"source={lxmf_status.get('source_path')}"
             ),
         )
-
-        install_result = self._install_python_package(
-            python_path,
-            LXMF_PACKAGE_NAME,
-        )
-
-        if not install_result["ok"]:
-            self.state.append_log(
-                "error",
-                "runtime",
-                f"LXMF install failed: {install_result['message']}",
-            )
-            return False
-
-        if self._python_import_available(python_path, LXMF_IMPORT_NAME):
-            self.state.append_log(
-                "info",
-                "runtime",
-                "LXMF installed successfully",
-            )
-            return True
-
-        self.state.append_log(
-            "error",
-            "runtime",
-            "LXMF install completed, but import LXMF still fails",
-        )
-        return False
+        return True
 
     def _runtime_python_path(self, runtime: RuntimeInfo) -> str:
         python_path = getattr(runtime, "python_path", None) or self.config.runtime_python
@@ -886,8 +870,15 @@ class ControllerApp:
         if not runtime.enabled:
             raise RuntimeError(f"Runtime is disabled: {runtime.name}")
 
+        lxmf_runtime = self.runtime_manager.get_lxmf_runtime()
+
         self.config.runtime_python = runtime.python_path
         self.config.runtime_source_path = runtime.source_path
+        self.config.lxmf_source_path = (
+            lxmf_runtime.source_path
+            if lxmf_runtime.installed
+            else None
+        )
 
         return runtime
 

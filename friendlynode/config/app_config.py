@@ -50,6 +50,7 @@ class AppConfig:
 
     runtime_python: Path | None = None
     runtime_source_path: Path | None = None
+    lxmf_source_path: Path | None = None
 
     @classmethod
     def load(cls, path: Path = DEFAULT_APP_CONFIG_PATH) -> "AppConfig":
@@ -164,6 +165,9 @@ class AppConfig:
             "runtime_python": str(self.runtime_python) if self.runtime_python is not None else None,
             "runtime_source_path": (
                 str(self.runtime_source_path) if self.runtime_source_path is not None else None
+            ),
+            "lxmf_source_path": (
+                str(self.lxmf_source_path) if self.lxmf_source_path is not None else None
             ),
         }
 
