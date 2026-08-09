@@ -6725,8 +6725,9 @@ function renderRuntimeSettings() {
     ["Active", activeRuntime],
     ["Available", String(availableRuntimes.length)],
     ["Engine", engine.running ? "running" : "stopped"],
-    ["RNS runtime", rns.using_stubs ? "stub" : "native"],
+    ["RNS runtime", rns.rns_using_stub ? "stub" : "native"],
     ["RNS version", rns.rns_version || "-"],
+    ["LXMF runtime", rns.lxmf_enabled ? (rns.lxmf_loaded ? "native" : "stub") : "disabled"],
     ["LXMF version", rns.lxmf_version || "-"],
     ["Python", engineRuntime.python_path || "-"],
     ["Source", engineRuntime.source_path || "-"],
@@ -7730,7 +7731,7 @@ function updateSummaryCards(status) {
   const cards = document.querySelectorAll(".card .value");
 
   if (cards.length >= 1) {
-    cards[0].textContent = rns.using_stubs ? "stub runtime" : "native runtime";
+    cards[0].textContent = rns.rns_using_stub ? "stub runtime" : "native runtime";
   }
 
   rows.Transport = [
@@ -7738,7 +7739,8 @@ function updateSummaryCards(status) {
     ["Controller", status.controller?.running ? "running" : "stopped"],
     ["Engine", engine.running ? "running" : "stopped"],
     ["RNS", rns.running ? "running" : "stopped"],
-    ["Using stubs", String(Boolean(rns.using_stubs))],
+    ["RNS using stub", String(Boolean(rns.rns_using_stub))],
+    ["LXMF using stub", String(Boolean(rns.lxmf_using_stub))],
     ["Active runtime", runtime.active || "-"],
     ["Runtime count", String(availableRuntimes.length)],
     ["Engine runtime name", engineRuntime.name || "-"],

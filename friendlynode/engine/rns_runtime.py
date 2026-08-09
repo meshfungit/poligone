@@ -192,6 +192,8 @@ class RnsRuntime:
         return {
             "running": self.reticulum is not None,
             "using_stubs": self.using_stubs,
+            "rns_using_stub": self.rns_using_stub,
+            "lxmf_using_stub": self.lxmf_using_stub,
             "config_dir": str(self.config_dir),
             "runtime_source_path": (
                 str(self.runtime_source_path) if self.runtime_source_path is not None else None
