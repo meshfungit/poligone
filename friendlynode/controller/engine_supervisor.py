@@ -80,6 +80,7 @@ class EngineSupervisor:
             "runtime": runtime_status,
             "rns": self.engine.rns_runtime.status(),
             "nomadnet": self.engine.nomadnet_status(),
+            "lxmf_client": self.engine.lxmf_client_status(),
         }
 
     def _runtime_status(self) -> dict[str, object]:

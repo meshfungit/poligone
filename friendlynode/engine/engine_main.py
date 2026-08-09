@@ -13,6 +13,9 @@ from friendlynode.engine.rns_runtime import RnsRuntime
 NOMADNET_RUNTIME_MODULE_NAME = (
     "friendlynode.engine.nomadnet_runtime"
 )
+LXMF_CLIENT_RUNTIME_MODULE_NAME = (
+    "friendlynode.engine.lxmf_client_runtime"
+)
 
 
 class EngineMain:
@@ -32,6 +35,7 @@ class EngineMain:
         )
 
         self.nomadnet_runtime: Any | None = None
+        self.lxmf_client_runtime: Any | None = None
 
         if self.config.nomadnet_enabled:
             from friendlynode.engine.nomadnet_runtime import (
@@ -42,11 +46,28 @@ class EngineMain:
                 self.rns_runtime
             )
 
+        if self.config.client_enabled and self.config.lxmf_enabled:
+            from friendlynode.engine.lxmf_client_runtime import (
+                LXMFClientRuntime,
+            )
+
+            self.lxmf_client_runtime = LXMFClientRuntime(
+                self.rns_runtime,
+                self.config.clients_dir,
+            )
+
     def start(self) -> None:
         self.config.ensure_dirs()
         self.rns_runtime.start()
 
+        if self.lxmf_client_runtime is not None:
+            self.lxmf_client_runtime.start()
+
     def stop(self) -> None:
+        if self.lxmf_client_runtime is not None:
+            self.lxmf_client_runtime.stop()
+
+        self.lxmf_client_runtime = None
         self.nomadnet_runtime = None
         self.rns_runtime.stop()
 
@@ -94,6 +115,37 @@ class EngineMain:
                 NOMADNET_RUNTIME_MODULE_NAME in sys.modules
             ),
         }
+
+    def lxmf_client_status(self) -> dict[str, object]:
+        if self.lxmf_client_runtime is None:
+            last_error = ""
+
+            if self.config.client_enabled and not self.config.lxmf_enabled:
+                last_error = "Client requires LXMF runtime"
+
+            return {
+                "enabled": self.config.client_enabled,
+                "loaded": False,
+                "module_imported": LXMF_CLIENT_RUNTIME_MODULE_NAME in sys.modules,
+                "started": False,
+                "ready": False,
+                "client_id": "",
+                "identity_hash": "",
+                "destination_hash": "",
+                "clients_dir": str(self.config.clients_dir),
+                "lxmf_version": None,
+                "last_error": last_error,
+            }
+
+        status = self.lxmf_client_runtime.status()
+        status.update(
+            {
+                "enabled": self.config.client_enabled,
+                "loaded": True,
+                "module_imported": LXMF_CLIENT_RUNTIME_MODULE_NAME in sys.modules,
+            }
+        )
+        return status
 
 
 def main() -> None:
