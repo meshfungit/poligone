@@ -221,6 +221,37 @@ class ControllerApp:
 
         return runtime
 
+    def install_lxmf_release(self, version: str) -> dict[str, object]:
+        self.state.append_log("info", "runtime", f"LXMF install requested: {version}")
+
+        runtime = self._apply_active_runtime()
+
+        if runtime.release_version == "":
+            raise ValueError("A managed Reticulum release must be active before installing LXMF")
+
+        lxmf_runtime = self.runtime_manager.install_lxmf_release(
+            version,
+            rns_version=runtime.release_version,
+        )
+
+        self.config.lxmf_source_path = (
+            lxmf_runtime.source_path
+            if lxmf_runtime.installed
+            else None
+        )
+
+        self.state.append_log(
+            "info",
+            "runtime",
+            (
+                "LXMF runtime installed: "
+                f"name={lxmf_runtime.name}, version={lxmf_runtime.release_version}; "
+                "process restart required"
+            ),
+        )
+
+        return self.runtime_manager.get_lxmf_status(runtime.release_version)
+
     def set_runtime_feature(self, runtime_name: str, feature_name: str, enabled: bool) -> RuntimeInfo:
         self.state.append_log(
             "info",
@@ -243,12 +274,27 @@ class ControllerApp:
             (runtime for runtime in runtimes if runtime.name == active_runtime_name),
             None,
         )
+        active_rns_version = (
+            active_runtime.release_version
+            if active_runtime is not None
+            else ""
+        )
 
         return {
             "active": active_runtime_name,
             "available": [runtime.to_dict() for runtime in runtimes],
             "releases": self.runtime_manager.list_reticulum_releases(),
+            "lxmf": self.runtime_manager.get_lxmf_status(active_rns_version),
             "interface_capabilities": self._build_runtime_interface_capabilities(active_runtime),
+        }
+
+    def get_lxmf_release_overview(self) -> dict[str, object]:
+        runtime = self._apply_active_runtime()
+
+        return {
+            "active_rns_version": runtime.release_version,
+            "lxmf": self.runtime_manager.get_lxmf_status(runtime.release_version),
+            "releases": self.runtime_manager.list_lxmf_releases(),
         }
 
     def get_rns_config(self) -> dict[str, object]:

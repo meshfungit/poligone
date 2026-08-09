@@ -488,6 +488,9 @@ class ControllerHttpServer:
                 if parsed.path == "/api/runtime/releases":
                     self._send_json(app.get_runtime_overview())
                     return
+                if parsed.path == "/api/runtime/lxmf/releases":
+                    self._send_json(app.get_lxmf_release_overview())
+                    return
                 if parsed.path == "/api/rns-config":
                     self._send_json(app.get_rns_config())
                     return
@@ -652,7 +655,6 @@ class ControllerHttpServer:
                             HTTPStatus.BAD_REQUEST,
                         )
                         return
-
                     runtime = app.install_reticulum_release(version)
                     self._send_json(
                         {
@@ -663,7 +665,27 @@ class ControllerHttpServer:
                     )
                     controller_server.request_process_restart()
                     return
+                if parsed.path == "/api/runtime/lxmf/install":
+                    payload = self._read_json_body()
+                    version = payload.get("version")
 
+                    if not isinstance(version, str) or version == "":
+                        self._send_json(
+                            {"error": "bad_request", "message": "LXMF version is required"},
+                            HTTPStatus.BAD_REQUEST,
+                        )
+                        return
+
+                    lxmf_status = app.install_lxmf_release(version)
+                    self._send_json(
+                        {
+                            "status": "process_restarting",
+                            "message": "LXMF installed. FriendlyNode process restart requested.",
+                            "lxmf": lxmf_status,
+                        }
+                    )
+                    controller_server.request_process_restart()
+                    return
                 if parsed.path == "/api/runtime/feature":
                     payload = self._read_json_body()
                     runtime_name = payload.get("runtime")
