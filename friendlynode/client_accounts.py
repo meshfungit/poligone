@@ -18,9 +18,11 @@ CLIENT_STORE_MARKER_FILENAME = ".initialized"
 DEFAULT_CLIENT_ID = "default"
 DEFAULT_CLIENT_NAME = "Default Client"
 DEFAULT_RUNTIME_MODE = "shared"
+LXMF_IDENTITY_FILENAME = "lxmf_identity"
 SUPPORTED_RUNTIME_MODES = ("shared", "isolated")
 CLIENT_SUBDIRECTORIES = (
     "identities",
+    "lxmf-router",
     "config",
     "groups",
     "contacts",
@@ -103,6 +105,26 @@ class ClientAccountStore:
 
         return clients
 
+    def list_enabled_clients(self) -> list[ClientAccount]:
+        return [
+            client
+            for client in self.list_clients()
+            if client.enabled
+        ]
+
+    def identity_path(self, client_id: str) -> Path:
+        return (
+                self._client_path(self._normalise_client_id(client_id))
+                / "identities"
+                / LXMF_IDENTITY_FILENAME
+        )
+
+    def lxmf_router_path(self, client_id: str) -> Path:
+        return (
+                self._client_path(self._normalise_client_id(client_id))
+                / "lxmf-router"
+        )
+
     def build_draft(self) -> ClientAccount:
         client_id = self._next_client_id()
         return self._build_client(
@@ -147,6 +169,31 @@ class ClientAccountStore:
             lxmf_destination_hash=lxmf_destination_hash,
             config_path=Path(str(config_path)) if config_path not in (None, "") else None,
         )
+        self._write_client(client)
+        return client
+
+    def update_client_network_identity(
+            self,
+            client_id: str,
+            identity_hash: str,
+            lxmf_destination_hash: str,
+    ) -> ClientAccount:
+        normalised_id = self._normalise_client_id(client_id)
+        existing = self._load_existing_or_none(normalised_id)
+
+        if existing is None:
+            raise ValueError(f"Client account does not exist: {normalised_id}")
+
+        client = self._build_client(
+            client_id=existing.id,
+            display_name=existing.display_name,
+            enabled=existing.enabled,
+            runtime_mode=existing.runtime_mode,
+            identity_hash=identity_hash.strip().lower(),
+            lxmf_destination_hash=lxmf_destination_hash.strip().lower(),
+            config_path=existing.config_path,
+        )
+
         self._write_client(client)
         return client
 
