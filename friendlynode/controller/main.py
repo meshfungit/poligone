@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
+import threading
 
 from friendlynode.controller.app import ControllerApp
 from friendlynode.controller.http_server import ControllerHttpServer, ControllerPortBindError
@@ -12,9 +13,9 @@ from friendlynode.controller.http_server import ControllerHttpServer, Controller
 def main() -> None:
     app = ControllerApp()
     server: ControllerHttpServer | None = None
+    app_start_thread: threading.Thread | None = None
     app_started = False
     app_stopped = False
-
     try:
         while True:
             server = ControllerHttpServer(
@@ -24,14 +25,19 @@ def main() -> None:
             )
 
             if not app_started:
-                app.start()
+                app_start_thread = threading.Thread(
+                    target=_start_app,
+                    args=(app,),
+                    name="friendlynode-app-start",
+                    daemon=True,
+                )
+                app_start_thread.start()
                 app_started = True
 
             server.serve_forever()
 
             restart_requested = server.restart_requested
             process_restart_requested = server.process_restart_requested
-
             server.close()
             server = None
 
@@ -49,7 +55,6 @@ def main() -> None:
                 )
 
                 os.execv(sys.executable, restart_args)
-
             if not restart_requested:
                 break
 
@@ -63,13 +68,24 @@ def main() -> None:
 
     except KeyboardInterrupt:
         print("FriendlyNode controller stopped by user", flush=True)
-
     finally:
         if server is not None:
             server.close()
 
         if app_started and not app_stopped:
             app.stop()
+
+
+def _start_app(app: ControllerApp) -> None:
+    try:
+        app.start()
+    except Exception as exc:
+        app.state.append_log(
+            "error",
+            "controller",
+            f"controller startup failed: {type(exc).__name__}: {exc}",
+        )
+        raise
 
 
 def _restart_process_args() -> list[str]:

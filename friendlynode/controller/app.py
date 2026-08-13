@@ -26,6 +26,8 @@ LXMF_IMPORT_NAME = "LXMF"
 LXMF_PACKAGE_NAME = "lxmf"
 RUNTIME_PACKAGE_INSTALL_TIMEOUT_SECONDS = 180
 RUNTIME_INSTALL_OUTPUT_LIMIT = 1400
+CLIENT_API_RUNTIME_MODE = "shared"
+CLIENT_API_RUNTIME_MODES = (CLIENT_API_RUNTIME_MODE,)
 ANNOUNCE_TYPE_BY_ASPECT = {
     "lxmf.delivery": "identity",
     "lxmf.propagation": "lxmf.propagation",
@@ -102,12 +104,15 @@ class ControllerApp:
         self.runtime_manager = RuntimeManager()
 
         self.client_store: Any | None = None
+        self.client_contact_store: Any | None = None
         self.nomadnet_browser_store: Any | None = None
 
         if self.config.client_enabled:
-            from friendlynode.client_accounts import ClientAccountStore
+            from friendlynode.client_contacts import ClientContactStore
+            from friendlynode.local_identities import LocalIdentityStore
 
-            self.client_store = ClientAccountStore(self.config.clients_dir)
+            self.client_store = LocalIdentityStore(self.config.local_identities_dir)
+            self.client_contact_store = ClientContactStore(self.config.local_identities_dir)
 
         if self.config.nomadnet_enabled:
             from friendlynode.nomadnet_browser_store import NOMADNET_BROWSER_STATE_FILENAME, NomadNetBrowserStore
@@ -545,22 +550,43 @@ class ControllerApp:
         return {
             "client_enabled": self.config.client_enabled,
             "client_store_loaded": self.client_store is not None,
+            "client_contact_store_loaded": self.client_contact_store is not None,
             "nomadnet_enabled": self.config.nomadnet_enabled,
             "nomadnet_browser_store_loaded": self.nomadnet_browser_store is not None,
         }
 
     def list_clients(self) -> dict[str, object]:
-        if self.client_store is None:
+        if self.client_store is None or self.client_contact_store is None:
             return {
-                "clients_dir": str(self.config.clients_dir),
+                "clients_dir": str(self.config.local_identities_dir),
+                "identities_dir": str(self.config.local_identities_dir),
                 "clients": [],
                 "schema": {
-                    "runtime_modes": [],
+                    "runtime_modes": list(CLIENT_API_RUNTIME_MODES),
                     "subdirectories": [],
                 },
             }
 
-        return self.client_store.to_dict()
+        identities = [
+            self._client_api_identity_payload(identity, include_conversations=True)
+            for identity in self.client_store.list_identities()
+        ]
+        return {
+            "clients_dir": str(self.config.local_identities_dir),
+            "identities_dir": str(self.config.local_identities_dir),
+            "clients": identities,
+            "schema": {
+                "runtime_modes": list(CLIENT_API_RUNTIME_MODES),
+                "subdirectories": list(self.client_store.to_dict()["schema"]["subdirectories"]),
+            },
+        }
+
+    def _client_api_identity_payload(self, identity: object, *, include_conversations: bool) -> dict[str, object]:
+        payload = identity.to_dict()
+        payload["runtime_mode"] = CLIENT_API_RUNTIME_MODE
+        if include_conversations and self.client_contact_store is not None:
+            payload["conversations"] = self.client_contact_store.list_conversations(payload["id"])
+        return payload
 
     def list_announces(
         self,
@@ -739,43 +765,44 @@ class ControllerApp:
         return result
 
     def build_client_draft(self) -> dict[str, object]:
-        return self.client_store.build_draft().to_dict()
+        identity = self.client_store.build_draft()
+        return self._client_api_identity_payload(identity, include_conversations=False)
 
     def save_client(self, payload: dict[str, object]) -> dict[str, object]:
-        client = self.client_store.save_client(payload)
-        self.state.append_log("info", "client", f"Client saved: {client.id}")
-        return client.to_dict()
+        identity = self.client_store.save_identity(payload)
+        self.state.append_log("info", "client", f"Local identity saved: {identity.id}")
+        return self._client_api_identity_payload(identity, include_conversations=True)
 
     def remove_client(self, client_id: str) -> dict[str, object]:
-        self.client_store.remove_client(client_id)
-        self.state.append_log("info", "client", f"Client removed: {client_id}")
-        return self.client_store.to_dict()
+        self.client_store.remove_identity(client_id)
+        self.state.append_log("info", "client", f"Local identity removed: {client_id}")
+        return self.list_clients()
 
     def list_client_conversations(self, client_id: str) -> dict[str, object]:
         return {
             "client_id": client_id,
-            "conversations": self.client_store.list_conversations(client_id),
+            "conversations": self.client_contact_store.list_conversations(client_id),
         }
 
     def list_client_messages(self, client_id: str, contact_id: str) -> dict[str, object]:
         return {
             "client_id": client_id,
             "contact_id": contact_id,
-            "messages": self.client_store.list_messages(client_id, contact_id),
+            "messages": self.client_contact_store.list_messages(client_id, contact_id),
         }
 
     def clear_client_messages(self, client_id: str, contact_id: str) -> dict[str, object]:
-        result = self.client_store.clear_messages(client_id, contact_id)
+        result = self.client_contact_store.clear_messages(client_id, contact_id)
         self.state.append_log("info", "client", f"Messages cleared: {client_id}/{contact_id}")
         return result
 
     def save_client_contact(self, client_id: str, payload: dict[str, object]) -> dict[str, object]:
-        contact = self.client_store.save_contact(client_id, payload)
+        contact = self.client_contact_store.save_contact(client_id, payload)
         self.state.append_log("info", "client", f"Contact saved: {client_id}/{contact['id']}")
         return {
             "client_id": client_id,
             "contact": contact,
-            "conversations": self.client_store.list_conversations(client_id),
+            "conversations": self.client_contact_store.list_conversations(client_id),
         }
 
     def send_client_message(
@@ -785,19 +812,19 @@ class ControllerApp:
         payload: dict[str, object],
     ) -> dict[str, object]:
         content = str(payload.get("content") or "")
-        message = self.client_store.add_outbound_message(client_id, contact_id, content)
+        message = self.client_contact_store.add_outbound_message(client_id, contact_id, content)
         self.state.append_log("info", "client", f"Message queued: {client_id}/{contact_id}")
         return {
             "client_id": client_id,
             "contact_id": contact_id,
             "message": message,
-            "messages": self.client_store.list_messages(client_id, contact_id),
+            "messages": self.client_contact_store.list_messages(client_id, contact_id),
         }
 
     def export_client_contact(self, client_id: str, contact_id: str) -> dict[str, object]:
         return {
             "client_id": client_id,
-            "contact": self.client_store.export_contact(client_id, contact_id),
+            "contact": self.client_contact_store.export_contact(client_id, contact_id),
         }
 
     def _preflight_runtime_dependencies(self, runtime: RuntimeInfo) -> bool:
