@@ -14,6 +14,7 @@ from friendlynode.config.defaults import (
     DEFAULT_APP_CONFIG_PATH,
     DEFAULT_CLIENT_ENABLED,
     DEFAULT_CLIENTS_DIR,
+    DEFAULT_LOCAL_IDENTITIES_DIR,
     DEFAULT_CONTROLLER_HOST,
     DEFAULT_CONTROLLER_PORT,
     DEFAULT_DATABASE_PATH,
@@ -47,6 +48,7 @@ class AppConfig:
     database_path: Path = DEFAULT_DATABASE_PATH
     nomadnet_pages_dir: Path = DEFAULT_NOMADNET_PAGES_DIR
     clients_dir: Path = DEFAULT_CLIENTS_DIR
+    local_identities_dir: Path = DEFAULT_LOCAL_IDENTITIES_DIR
 
     runtime_python: Path | None = None
     runtime_source_path: Path | None = None
@@ -79,6 +81,11 @@ class AppConfig:
         config.rns_config_dir = config._read_path(raw, "rns_config_dir", config.rns_config_dir)
         config.database_path = config._read_path(raw, "database_path", config.database_path)
         config.clients_dir = config._read_path(raw, "clients_dir", config.clients_dir)
+        config.local_identities_dir = config._read_path(
+            raw,
+            "local_identities_dir",
+            config.local_identities_dir,
+        )
         config.nomadnet_pages_dir = config._read_path(
             raw,
             "nomadnet_pages_dir",
@@ -110,6 +117,7 @@ class AppConfig:
             "database_path": str(self.database_path),
             "nomadnet_pages_dir": str(self.nomadnet_pages_dir),
             "clients_dir": str(self.clients_dir),
+            "local_identities_dir": str(self.local_identities_dir),
         }
 
         self.app_config_path.write_text(
@@ -144,6 +152,7 @@ class AppConfig:
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         self.nomadnet_pages_dir.mkdir(parents=True, exist_ok=True)
         self.clients_dir.mkdir(parents=True, exist_ok=True)
+        self.local_identities_dir.mkdir(parents=True, exist_ok=True)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -162,6 +171,7 @@ class AppConfig:
             "database_path": str(self.database_path),
             "nomadnet_pages_dir": str(self.nomadnet_pages_dir),
             "clients_dir": str(self.clients_dir),
+            "local_identities_dir": str(self.local_identities_dir),
             "runtime_python": str(self.runtime_python) if self.runtime_python is not None else None,
             "runtime_source_path": (
                 str(self.runtime_source_path) if self.runtime_source_path is not None else None

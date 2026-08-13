@@ -53,7 +53,7 @@ class EngineMain:
 
             self.lxmf_client_runtime = LXMFClientRuntime(
                 self.rns_runtime,
-                self.config.clients_dir,
+                self.config.local_identities_dir,
             )
 
     def start(self) -> None:
