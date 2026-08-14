@@ -170,7 +170,7 @@ class ControllerApp:
             )
             return
 
-        self.engine_supervisor.restart()
+        self.engine_supervisor.restart_reticulum()
         self.state.append_log("info", "controller", "Reticulum restart completed")
 
     def make_announce(self, payload: dict[str, object]) -> dict[str, object]:

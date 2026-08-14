@@ -22,6 +22,7 @@ class EngineSupervisor:
     def start(self) -> None:
         if self.engine is None:
             self.engine = EngineMain(self.config)
+
             if self.event_sink is not None:
                 self.engine.bus.subscribe(self.event_sink)
 
@@ -35,6 +36,40 @@ class EngineSupervisor:
     def restart(self) -> None:
         self.stop()
         self.start()
+
+    def restart_reticulum(self) -> None:
+        if self.engine is None:
+            raise RuntimeError("Engine is not running")
+
+        running_identity_ids = self.engine.running_lxmf_identity_ids()
+        self.engine.stop()
+        self.engine = EngineMain(self.config)
+
+        if self.event_sink is not None:
+            self.engine.bus.subscribe(self.event_sink)
+
+        self.engine.start(start_lxmf_workers=False)
+
+        for identity_id in running_identity_ids:
+            self.engine.start_lxmf_worker(identity_id)
+
+    def start_lxmf_worker(self, identity_id: str) -> dict[str, object]:
+        if self.engine is None:
+            raise RuntimeError("Engine is not running")
+
+        return self.engine.start_lxmf_worker(identity_id)
+
+    def stop_lxmf_worker(self, identity_id: str) -> None:
+        if self.engine is None:
+            return
+
+        self.engine.stop_lxmf_worker(identity_id)
+
+    def restart_lxmf_worker(self, identity_id: str) -> dict[str, object]:
+        if self.engine is None:
+            raise RuntimeError("Engine is not running")
+
+        return self.engine.restart_lxmf_worker(identity_id)
 
     def make_announce(
         self,
@@ -51,14 +86,15 @@ class EngineSupervisor:
         )
 
     def fetch_nomadnet_page(
-            self,
-            destination_hash: str,
-            path: str,
-            discovery_hints: dict[str, object] | None = None,
-            request_data: dict[str, object] | None = None,
+        self,
+        destination_hash: str,
+        path: str,
+        discovery_hints: dict[str, object] | None = None,
+        request_data: dict[str, object] | None = None,
     ) -> dict[str, object]:
         if self.engine is None:
             raise RuntimeError("Engine is not running")
+
         return self.engine.fetch_nomadnet_page(
             destination_hash,
             path,
