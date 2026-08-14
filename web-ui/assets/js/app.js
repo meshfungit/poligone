@@ -3976,6 +3976,23 @@ function openAnnounceNomadnetPage(announce) {
   fetchNomadNetPage(nomadnetBrowserState.destination_hash, nomadnetBrowserState.path);
 }
 
+function getClientConversations(client) {
+  let conversations = Array.isArray(client?.conversations) ? client.conversations : [];
+
+  if (transientConversation !== null && transientConversation.client_id === client?.id) {
+    const transientContactId = transientConversation.contact?.id || "";
+    const hasContact = conversations.some(
+      (conversation) => conversation.contact?.id === transientContactId
+    );
+
+    if (transientContactId !== "" && !hasContact) {
+      conversations = [...conversations, transientConversation];
+    }
+  }
+
+  return conversations;
+}
+
 function renderClientContactsPanel(clients) {
   const block = renderCollapsibleSection("clientAccounts", "Contacts");
 
@@ -3985,33 +4002,60 @@ function renderClientContactsPanel(clients) {
   const addButton = document.createElement("button");
   addButton.type = "button";
   addButton.textContent = "Add Contact";
-  addButton.onclick = openNewClientEditor;
+  addButton.title = "Add a contact from received announces";
+  addButton.disabled = clients.length === 0;
+  addButton.onclick = () => render("Announces");
   actionRow.appendChild(addButton);
   block.appendChild(actionRow);
 
-  const accountList = document.createElement("div");
-  accountList.className = "client-accounts-list";
+  const contactList = document.createElement("div");
+  contactList.className = "client-accounts-list";
 
   if (clients.length === 0) {
     const empty = document.createElement("div");
     empty.className = "settings-hint";
-    empty.textContent = "No client accounts loaded";
-    accountList.appendChild(empty);
+    empty.textContent = "No local identities loaded";
+    contactList.appendChild(empty);
+    block.appendChild(contactList);
+    return block;
   }
 
-  for (const client of clients) {
+  const activeClient = selectActiveClient(clients);
+  const conversations = getClientConversations(activeClient);
+  const activeConversation = selectActiveConversation(conversations);
+  const selectedContactId = activeConversation?.contact?.id || "";
+
+  if (conversations.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "settings-hint";
+    empty.textContent = "No contacts for this identity";
+    contactList.appendChild(empty);
+  }
+
+  for (const conversation of conversations) {
+    const contact = conversation?.contact;
+
+    if (contact === null || contact === undefined) {
+      continue;
+    }
+
     const card = document.createElement("div");
     card.className = "client-account-card";
     card.tabIndex = 0;
     card.setAttribute("role", "button");
-    card.onclick = () => openClientConversations(client);
+
+    if (contact.id === selectedContactId) {
+      card.setAttribute("aria-current", "true");
+    }
+
+    card.onclick = () => openClientContact(activeClient, contact);
     card.onkeydown = (event) => {
       if (event.key !== "Enter" && event.key !== " ") {
         return;
       }
 
       event.preventDefault();
-      openClientConversations(client);
+      openClientContact(activeClient, contact);
     };
 
     const summary = document.createElement("div");
@@ -4020,15 +4064,20 @@ function renderClientContactsPanel(clients) {
     const summaryText = document.createElement("div");
     summaryText.className = "client-account-summary-text";
 
-    const accountName = document.createElement("div");
-    accountName.className = "client-account-name";
-    accountName.textContent = client.display_name || client.id || "-";
-    summaryText.appendChild(accountName);
+    const contactName = document.createElement("div");
+    contactName.className = "client-account-name";
+    contactName.textContent = contact.name || contact.id || "-";
+    summaryText.appendChild(contactName);
 
-    const accountLxmf = document.createElement("div");
-    accountLxmf.className = "client-account-lxmf";
-    accountLxmf.textContent = client.lxmf_destination_hash || "LXMF destination not created";
-    summaryText.appendChild(accountLxmf);
+    const contactPreview = document.createElement("div");
+    contactPreview.className = "client-account-lxmf";
+    contactPreview.textContent = (
+      conversation.last_message
+      || contact.lxmf_address
+      || contact.destination_hash
+      || "No messages"
+    );
+    summaryText.appendChild(contactPreview);
     summary.appendChild(summaryText);
 
     const menuButton = document.createElement("button");
@@ -4039,38 +4088,26 @@ function renderClientContactsPanel(clients) {
     menuButton.textContent = "...";
     menuButton.onclick = (event) => {
       const rect = menuButton.getBoundingClientRect();
-      clientAccountMenuState = {
-        client,
-        x: rect.left,
-        y: rect.bottom + 6,
-      };
       event.stopPropagation();
-      render("Client");
+      openContactMenu(contact, rect.left, rect.bottom + 6);
     };
     summary.appendChild(menuButton);
+
     card.appendChild(summary);
-
-    if (expandedClientDetails.has(client.id)) {
-      const fields = document.createElement("div");
-      fields.className = "client-account-fields";
-
-      for (const [label, value] of [
-      ["Identity", client.identity_hash || "-"],
-      ["LXMF destination", client.lxmf_destination_hash || "-"],
-      ["Runtime", client.runtime_mode || "-"],
-      ["Enabled", client.enabled ? "yes" : "no"],
-      ]) {
-        fields.appendChild(renderClientAccountField(label, value));
-      }
-
-      card.appendChild(fields);
-    }
-
-    accountList.appendChild(card);
+    contactList.appendChild(card);
   }
 
-  block.appendChild(accountList);
+  block.appendChild(contactList);
   return block;
+}
+
+function openClientContact(client, contact) {
+  activeClientId = client.id || "";
+  activeContactId = contact.id || "";
+  contactMenuState = null;
+  clientAccountMenuState = null;
+  collapsedPanels.conversations = false;
+  render("Client");
 }
 
 function openClientConversations(client) {
@@ -4155,32 +4192,19 @@ function renderClientChat(clients) {
 
   const hint = document.createElement("div");
   hint.className = "settings-hint";
-  hint.textContent = "Client accounts are separate from transport settings. LXMF startup is not wired yet.";
+  hint.textContent = "Local identities are separate from contacts. Message transport is not wired yet.";
   section.appendChild(hint);
 
   if (clients.length === 0) {
     const empty = document.createElement("div");
     empty.className = "settings-hint";
-    empty.textContent = "Create a client account to load conversations.";
+    empty.textContent = "Create a local identity to load conversations.";
     section.appendChild(empty);
     return section;
   }
 
   const activeClient = selectActiveClient(clients);
-  let conversations = Array.isArray(activeClient.conversations)
-    ? activeClient.conversations
-    : [];
-
-  if (transientConversation !== null && transientConversation.client_id === activeClient.id) {
-    const hasContact = conversations.some(
-      (conversation) => conversation.contact?.id === transientConversation.contact.id
-    );
-
-    if (!hasContact) {
-      conversations = [...conversations, transientConversation];
-    }
-  }
-
+  const conversations = getClientConversations(activeClient);
   const activeConversation = selectActiveConversation(conversations);
   const activeContact = activeConversation?.contact || null;
   const messages = Array.isArray(activeConversation?.messages)
@@ -4191,6 +4215,8 @@ function renderClientChat(clients) {
   accountRow.className = "settings-row client-chat-account-row";
 
   const accountSelect = document.createElement("select");
+  accountSelect.title = "Local identity";
+  accountSelect.setAttribute("aria-label", "Local identity");
 
   for (const client of clients) {
     const option = document.createElement("option");
@@ -4207,15 +4233,42 @@ function renderClientChat(clients) {
   accountSelect.onchange = () => {
     activeClientId = accountSelect.value;
     activeContactId = "";
+    transientConversation = null;
     render("Client");
   };
   accountRow.appendChild(accountSelect);
+
+  const addIdentityButton = document.createElement("button");
+  addIdentityButton.type = "button";
+  addIdentityButton.textContent = "+";
+  addIdentityButton.title = "Create local identity";
+  addIdentityButton.setAttribute("aria-label", "Create local identity");
+  addIdentityButton.onclick = openNewClientEditor;
+  accountRow.appendChild(addIdentityButton);
+
+  const identityMenuButton = document.createElement("button");
+  identityMenuButton.type = "button";
+  identityMenuButton.textContent = "...";
+  identityMenuButton.title = "Local identity actions";
+  identityMenuButton.setAttribute("aria-label", "Local identity actions");
+  identityMenuButton.onclick = () => {
+    const rect = identityMenuButton.getBoundingClientRect();
+    clientAccountMenuState = {
+      client: activeClient,
+      x: rect.left,
+      y: rect.bottom + 6,
+    };
+    render("Client");
+  };
+  accountRow.appendChild(identityMenuButton);
+
   section.appendChild(accountRow);
 
   const layout = document.createElement("div");
   layout.className = "client-chat";
   layout.appendChild(renderMessageThread(activeContact, messages));
   section.appendChild(layout);
+
   return section;
 }
 
