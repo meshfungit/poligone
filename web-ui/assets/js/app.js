@@ -3534,8 +3534,6 @@ function requestAnnounceRefresh(onChange) {
   startAnnounceUpdates(true);
 }
 
-function startAnnounceUpdates(force) {
-
 function startClientUpdates() {
   if (!Boolean(currentStatus?.config?.client_enabled)) {
     if (clientStream !== null) {
