@@ -773,7 +773,41 @@ class ControllerApp:
         self.state.append_log("info", "client", f"Local identity saved: {identity.id}")
         return self._client_api_identity_payload(identity, include_conversations=True)
 
+    def generate_client_identity(self, client_id: str) -> dict[str, object]:
+        self.engine_supervisor.generate_lxmf_identity(client_id)
+        identity = self._find_client_identity(client_id)
+        self.state.append_log("info", "client", f"Local identity generated: {identity.id}")
+        return self._client_api_identity_payload(identity, include_conversations=True)
+
+    def start_client_lxmf(self, client_id: str) -> dict[str, object]:
+        status = self.engine_supervisor.start_lxmf_worker(client_id)
+        self.state.append_log("info", "client", f"LXMF worker start requested: {client_id}")
+        return status
+
+    def stop_client_lxmf(self, client_id: str) -> dict[str, object]:
+        self.engine_supervisor.stop_lxmf_worker(client_id)
+        self.state.append_log("info", "client", f"LXMF worker stopped: {client_id}")
+        return {
+            "identity_id": client_id,
+            "running": False,
+            "ready": False,
+            "state": "stopped",
+        }
+
+    def restart_client_lxmf(self, client_id: str) -> dict[str, object]:
+        status = self.engine_supervisor.restart_lxmf_worker(client_id)
+        self.state.append_log("info", "client", f"LXMF worker restart requested: {client_id}")
+        return status
+
+    def _find_client_identity(self, client_id: str) -> object:
+        for identity in self.client_store.list_identities():
+            if identity.id == client_id:
+                return identity
+
+        raise ValueError(f"Local identity does not exist: {client_id}")
+
     def remove_client(self, client_id: str) -> dict[str, object]:
+        self.engine_supervisor.stop_lxmf_worker(client_id)
         self.client_store.remove_identity(client_id)
         self.state.append_log("info", "client", f"Local identity removed: {client_id}")
         return self.list_clients()

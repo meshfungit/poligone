@@ -72,6 +72,7 @@ let symbolPaletteSpacerHeight = 0;
 let messageEditorSelection = null;
 let showMessageUnprintable = false;
 let interfaceStatusRefreshInFlight = false;
+let engineRestartInFlight = false;
 let announceStream = null;
 let announceQueryKey = "";
 let announceFetchInFlight = false;
@@ -4118,6 +4119,51 @@ function openClientConversations(client) {
   render("Client");
 }
 
+function getClientLxmfWorker(clientId) {
+  const workers = Array.isArray(currentStatus?.engine?.lxmf_client?.workers)
+    ? currentStatus.engine.lxmf_client.workers
+    : [];
+
+  return workers.find((worker) => worker.identity_id === clientId) || null;
+}
+
+async function controlClientLxmf(client, action) {
+  const clientId = client?.id || "";
+
+  if (clientId === "") {
+    return;
+  }
+
+  clientAccountMenuState = null;
+
+  try {
+    const response = await fetch(
+      `/api/clients/${encodeURIComponent(clientId)}/lxmf/${encodeURIComponent(action)}`,
+      {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+        },
+      }
+    );
+
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(
+        payload.message
+        || payload.error
+        || `LXMF ${action} failed: HTTP ${response.status}`
+      );
+    }
+
+    await fetchStatus();
+    render("Client");
+  } catch (error) {
+    appendUiError(error);
+    render("Logs");
+  }
+}
+
 function renderClientAccountMenu() {
   const overlay = document.createElement("div");
   overlay.className = "contact-menu-dismiss";
@@ -4135,8 +4181,9 @@ function renderClientAccountMenu() {
   };
 
   const client = clientAccountMenuState.client;
-
-  for (const [label, action] of [
+  const worker = getClientLxmfWorker(client.id || "");
+  const workerRunning = Boolean(worker?.running);
+  const actions = [
     ["Edit", () => {
       clientAccountMenuState = null;
       openClientEditor(client);
@@ -4145,6 +4192,16 @@ function renderClientAccountMenu() {
       clientAccountMenuState = null;
       removeClient(client);
     }],
+  ];
+
+  if (workerRunning) {
+    actions.push(["Stop LXMF", () => controlClientLxmf(client, "stop")]);
+    actions.push(["Restart LXMF", () => controlClientLxmf(client, "restart")]);
+  } else {
+    actions.push(["Start LXMF", () => controlClientLxmf(client, "start")]);
+  }
+
+  actions.push(
     ["Make Annonce", () => makeClientAnnounce(client)],
     [expandedClientDetails.has(client.id) ? "Hide details" : "Show details", () => {
       if (expandedClientDetails.has(client.id)) {
@@ -4152,12 +4209,13 @@ function renderClientAccountMenu() {
       } else {
         expandedClientDetails.add(client.id);
       }
-
       clientAccountMenuState = null;
       render("Client");
     }],
     ["Share", () => shareClientAccount(client)],
-  ]) {
+  );
+
+  for (const [label, action] of actions) {
     const button = document.createElement("button");
     button.type = "button";
     button.textContent = label;
@@ -8086,7 +8144,7 @@ async function restartReticulum() {
 
   if (button !== null) {
     button.disabled = true;
-    button.textContent = "Restarting process...";
+    button.textContent = "Restarting Reticulum...";
   }
 
   setEngineRestartInFlight(true);
@@ -8424,6 +8482,60 @@ async function saveClientFromEditor() {
     }
 
     clientEditorState = null;
+    await fetchStatus();
+    render("Client");
+  } catch (error) {
+    appendUiError(error);
+    render("Logs");
+  }
+}
+
+async function generateClientIdentityFromEditor() {
+  if (clientEditorState === null) {
+    return;
+  }
+
+  try {
+    const saveResponse = await fetch("/api/clients", {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(clientEditorState),
+    });
+
+    if (!saveResponse.ok) {
+      throw new Error(`Client save before identity generation failed: HTTP ${saveResponse.status}`);
+    }
+
+    const savedClient = await saveResponse.json();
+    const clientId = savedClient.id || clientEditorState.id || "";
+
+    if (clientId === "") {
+      throw new Error("Local identity id is empty after save");
+    }
+
+    const generateResponse = await fetch(
+      `/api/clients/${encodeURIComponent(clientId)}/generate`,
+      {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+        },
+      }
+    );
+
+    if (!generateResponse.ok) {
+      const payload = await generateResponse.json().catch(() => ({}));
+      throw new Error(
+        payload.message
+        || payload.error
+        || `Identity generation failed: HTTP ${generateResponse.status}`
+      );
+    }
+
+    clientEditorState = await generateResponse.json();
     await fetchStatus();
     render("Client");
   } catch (error) {
@@ -8802,14 +8914,13 @@ function renderClientEditor() {
   dialog.className = "client-editor";
 
   const title = document.createElement("h2");
-  title.textContent = "Client editor";
+  title.textContent = "Local identity editor";
   dialog.appendChild(title);
-
   dialog.appendChild(
     renderClientEditorField("Display name", "display_name", "text")
   );
   dialog.appendChild(
-    renderClientEditorField("Client id", "id", "text", true)
+    renderClientEditorField("Local identity id", "id", "text", true)
   );
   dialog.appendChild(
     renderClientEditorField("Identity hash", "identity_hash", "text", true)
@@ -8817,51 +8928,6 @@ function renderClientEditor() {
   dialog.appendChild(
     renderClientEditorField("LXMF destination hash", "lxmf_destination_hash", "text", true)
   );
-
-  const runtimeField = document.createElement("label");
-  runtimeField.className = "rns-field";
-
-  const runtimeLabel = document.createElement("span");
-  runtimeLabel.textContent = "Runtime mode";
-  runtimeField.appendChild(runtimeLabel);
-
-  const runtimeSelect = document.createElement("select");
-  const runtimeModes = currentStatus?.clients?.schema?.runtime_modes || ["shared", "isolated"];
-
-  for (const mode of runtimeModes) {
-    const option = document.createElement("option");
-    option.value = mode;
-    option.textContent = mode;
-
-    if (clientEditorState.runtime_mode === mode) {
-      option.selected = true;
-    }
-
-    runtimeSelect.appendChild(option);
-  }
-
-  runtimeSelect.onchange = () => {
-    clientEditorState.runtime_mode = runtimeSelect.value;
-  };
-  runtimeField.appendChild(runtimeSelect);
-  dialog.appendChild(runtimeField);
-
-  const enabledField = document.createElement("label");
-  enabledField.className = "rns-boolean-line";
-
-  const enabledLabel = document.createElement("span");
-  enabledLabel.textContent = "Enable client";
-  enabledField.appendChild(enabledLabel);
-
-  const enabledInput = document.createElement("input");
-  enabledInput.type = "checkbox";
-  enabledInput.checked = Boolean(clientEditorState.enabled);
-  enabledInput.onchange = () => {
-    clientEditorState.enabled = enabledInput.checked;
-  };
-  enabledField.appendChild(enabledInput);
-  dialog.appendChild(enabledField);
-
   dialog.appendChild(
     renderClientEditorField("External config path", "config_path", "text")
   );
@@ -8874,6 +8940,13 @@ function renderClientEditor() {
   saveButton.textContent = "Save";
   saveButton.onclick = saveClientFromEditor;
   actions.appendChild(saveButton);
+
+  const generateButton = document.createElement("button");
+  generateButton.type = "button";
+  generateButton.textContent = "Generate identity";
+  generateButton.title = "Save this local identity and generate or load its RNS key material";
+  generateButton.onclick = generateClientIdentityFromEditor;
+  actions.appendChild(generateButton);
 
   const cancelButton = document.createElement("button");
   cancelButton.type = "button";

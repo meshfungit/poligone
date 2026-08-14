@@ -153,19 +153,6 @@ class RnsRuntime:
         self._stop_announce_monitor()
 
         if self.RNS is not None and getattr(self.RNS, "__version__", None) != STUB_RNS_VERSION:
-            transport = getattr(self.RNS, "Transport", None)
-
-            detach_interfaces = getattr(transport, "detach_interfaces", None)
-            if callable(detach_interfaces):
-                try:
-                    detach_interfaces()
-                    print("[friendlynode] Reticulum stop: interfaces detached", flush=True)
-                except Exception as exc:
-                    print(
-                        f"[friendlynode] Reticulum stop: detach_interfaces failed: {type(exc).__name__}: {exc}",
-                        flush=True,
-                    )
-
             reticulum_class = getattr(self.RNS, "Reticulum", None)
             exit_handler = getattr(reticulum_class, "exit_handler", None)
             if callable(exit_handler):

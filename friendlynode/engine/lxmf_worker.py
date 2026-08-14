@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import signal
+import socket
 import sys
 import threading
 from pathlib import Path
@@ -13,7 +14,13 @@ from typing import Any
 from friendlynode.local_identities import LocalIdentity, LocalIdentityStore
 
 DEFAULT_SOURCE_PATH = ""
+DEFAULT_CONTROL_HOST = "127.0.0.1"
 WORKER_CONTROL_STOP_COMMAND = "stop"
+WORKER_CONTROL_STATUS_COMMAND = "status"
+WORKER_CONTROL_READY_RESPONSE = "ready"
+WORKER_CONTROL_STARTING_RESPONSE = "starting"
+WORKER_CONTROL_ACCEPT_TIMEOUT_SECONDS = 0.5
+WORKER_CONTROL_RECEIVE_SIZE = 64
 WORKER_CONTROL_THREAD_NAME = "friendlynode-lxmf-control"
 WORKER_WAIT_INTERVAL_SECONDS = 1.0
 
@@ -78,6 +85,7 @@ class LxmfWorkerRuntime:
         if destination_hash == "":
             raise RuntimeError("Could not determine LXMF delivery destination hash")
 
+        self._validate_network_identity(local_identity, identity_hash, destination_hash)
         self.identity_store.update_network_identity(local_identity.id, identity_hash, destination_hash)
 
         print(
@@ -89,19 +97,6 @@ class LxmfWorkerRuntime:
     def stop(self) -> None:
         if self.RNS is None:
             return
-
-        transport = getattr(self.RNS, "Transport", None)
-        detach_interfaces = getattr(transport, "detach_interfaces", None)
-
-        if callable(detach_interfaces):
-            try:
-                detach_interfaces()
-            except Exception as exc:
-                print(
-                    f"[friendlynode-lxmf:{self.identity_id}] detach failed: "
-                    f"{type(exc).__name__}: {exc}",
-                    flush=True,
-                )
 
         reticulum_class = getattr(self.RNS, "Reticulum", None)
         exit_handler = getattr(reticulum_class, "exit_handler", None)
@@ -155,12 +150,34 @@ class LxmfWorkerRuntime:
 
             return identity
 
+        if local_identity.identity_hash != "" or local_identity.lxmf_destination_hash != "":
+            raise RuntimeError(
+                f"RNS identity key file is missing for {local_identity.id}; "
+                "refusing to replace an existing network identity"
+            )
+
         identity = self.RNS.Identity()
 
         if not identity.to_file(str(identity_path)):
             raise RuntimeError(f"Could not save RNS identity to {identity_path}")
 
         return identity
+
+    def _validate_network_identity(
+        self,
+        local_identity: LocalIdentity,
+        identity_hash: str,
+        destination_hash: str,
+    ) -> None:
+        if local_identity.identity_hash not in ("", identity_hash):
+            raise RuntimeError(
+                f"Stored identity hash does not match the RNS identity key for {local_identity.id}"
+            )
+
+        if local_identity.lxmf_destination_hash not in ("", destination_hash):
+            raise RuntimeError(
+                f"Stored LXMF destination hash does not match the RNS identity key for {local_identity.id}"
+            )
 
     def _receive_message(self, message: object) -> None:
         self.received_messages += 1
@@ -178,6 +195,7 @@ class LxmfWorkerRuntime:
 def main() -> None:
     args = _parse_args()
     stop_event = threading.Event()
+    ready_event = threading.Event()
     runtime = LxmfWorkerRuntime(
         identity_id=args.identity_id,
         identities_dir=Path(args.identities_dir),
@@ -188,7 +206,7 @@ def main() -> None:
 
     control_thread = threading.Thread(
         target=_control_loop,
-        args=(stop_event,),
+        args=(stop_event, ready_event, args.control_host, args.control_port),
         name=WORKER_CONTROL_THREAD_NAME,
         daemon=True,
     )
@@ -197,12 +215,14 @@ def main() -> None:
 
     try:
         runtime.start()
+        ready_event.set()
 
         while not stop_event.wait(WORKER_WAIT_INTERVAL_SECONDS):
             pass
     except KeyboardInterrupt:
         stop_event.set()
     finally:
+        ready_event.clear()
         runtime.stop()
 
 
@@ -213,17 +233,44 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--rns-config-dir", required=True)
     parser.add_argument("--rns-source-path", default=DEFAULT_SOURCE_PATH)
     parser.add_argument("--lxmf-source-path", default=DEFAULT_SOURCE_PATH)
+    parser.add_argument("--control-host", default=DEFAULT_CONTROL_HOST)
+    parser.add_argument("--control-port", required=True, type=int)
     return parser.parse_args()
 
 
-def _control_loop(stop_event: threading.Event) -> None:
-    try:
-        for line in sys.stdin:
-            if line.strip().lower() == WORKER_CONTROL_STOP_COMMAND:
-                stop_event.set()
-                return
-    finally:
-        stop_event.set()
+def _control_loop(
+    stop_event: threading.Event,
+    ready_event: threading.Event,
+    control_host: str,
+    control_port: int,
+) -> None:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
+        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server.bind((control_host, control_port))
+        server.listen()
+        server.settimeout(WORKER_CONTROL_ACCEPT_TIMEOUT_SECONDS)
+
+        while not stop_event.is_set():
+            try:
+                connection, _ = server.accept()
+            except TimeoutError:
+                continue
+            except OSError:
+                if stop_event.is_set():
+                    return
+                raise
+
+            with connection:
+                command = connection.recv(WORKER_CONTROL_RECEIVE_SIZE).decode("utf-8", errors="replace").strip().lower()
+
+                if command == WORKER_CONTROL_STOP_COMMAND:
+                    stop_event.set()
+                    connection.sendall(b"stopping\n")
+                    return
+
+                if command == WORKER_CONTROL_STATUS_COMMAND:
+                    response = WORKER_CONTROL_READY_RESPONSE if ready_event.is_set() else WORKER_CONTROL_STARTING_RESPONSE
+                    connection.sendall(f"{response}\n".encode("utf-8"))
 
 
 def _install_signal_handlers(stop_event: threading.Event) -> None:

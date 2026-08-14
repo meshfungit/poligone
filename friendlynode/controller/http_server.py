@@ -570,13 +570,8 @@ class ControllerHttpServer:
                     return
 
                 if parsed.path == "/api/reticulum/restart":
-                    self._send_json(
-                        {
-                            "status": "process_restarting",
-                            "message": "Reticulum cannot be safely restarted in-process; restarting FriendlyNode process.",
-                        }
-                    )
-                    controller_server.request_process_restart()
+                    app.restart_reticulum()
+                    self._send_json(self._build_status_response())
                     return
 
                 if parsed.path == "/api/reticulum/announce":
@@ -759,6 +754,22 @@ class ControllerHttpServer:
                 client_route = self._parse_client_route(parsed.path)
                 if client_route is not None:
                     client_id, action, contact_id = client_route
+
+                    if action == "generate":
+                        self._send_json(app.generate_client_identity(client_id))
+                        return
+
+                    if action == "lxmf_start":
+                        self._send_json(app.start_client_lxmf(client_id))
+                        return
+
+                    if action == "lxmf_stop":
+                        self._send_json(app.stop_client_lxmf(client_id))
+                        return
+
+                    if action == "lxmf_restart":
+                        self._send_json(app.restart_client_lxmf(client_id))
+                        return
 
                     if action == "contacts":
                         payload = self._read_json_body()
@@ -1044,6 +1055,15 @@ class ControllerHttpServer:
 
                     if parts[3] == "contacts":
                         return client_id, "contacts", None
+
+                    if parts[3] == "generate":
+                        return client_id, "generate", None
+
+                if len(parts) == 5 and parts[0:2] == ["api", "clients"] and parts[3] == "lxmf":
+                    client_id = parts[2]
+
+                    if parts[4] in ("start", "stop", "restart"):
+                        return client_id, f"lxmf_{parts[4]}", None
 
                 if len(parts) == 6 and parts[0:2] == ["api", "clients"]:
                     client_id = parts[2]

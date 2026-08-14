@@ -82,6 +82,12 @@ class EngineMain:
 
         return self.lxmf_process_manager.start(identity_id)
 
+    def generate_lxmf_identity(self, identity_id: str) -> dict[str, object]:
+        if self.lxmf_process_manager is None:
+            raise RuntimeError("LXMF process manager is disabled")
+
+        return self.lxmf_process_manager.generate_identity(identity_id)
+
     def stop_lxmf_worker(self, identity_id: str) -> None:
         if self.lxmf_process_manager is None:
             return

@@ -59,6 +59,12 @@ class EngineSupervisor:
 
         return self.engine.start_lxmf_worker(identity_id)
 
+    def generate_lxmf_identity(self, identity_id: str) -> dict[str, object]:
+        if self.engine is None:
+            raise RuntimeError("Engine is not running")
+
+        return self.engine.generate_lxmf_identity(identity_id)
+
     def stop_lxmf_worker(self, identity_id: str) -> None:
         if self.engine is None:
             return
