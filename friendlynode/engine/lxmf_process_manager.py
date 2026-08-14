@@ -2,18 +2,23 @@
 
 from __future__ import annotations
 
+import json
 import os
 import socket
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 from friendlynode.config.app_config import AppConfig
+from friendlynode.engine.events import EngineEvent
 from friendlynode.local_identities import LocalIdentity, LocalIdentityStore
 
 LXMF_WORKER_MODULE = "friendlynode.engine.lxmf_worker"
+LXMF_WORKER_EVENT_PREFIX = "FN_LXMF_EVENT "
 LXMF_IDENTITY_GENERATOR_MODULE = "friendlynode.engine.lxmf_identity_generator"
 DEFAULT_CONTROL_HOST = "127.0.0.1"
 LXMF_WORKER_STOP_COMMAND = b"stop\n"
@@ -29,20 +34,23 @@ LXMF_WORKER_STOP_TIMEOUT_SECONDS = 5.0
 LXMF_WORKER_TERMINATE_TIMEOUT_SECONDS = 2.0
 LXMF_IDENTITY_GENERATE_TIMEOUT_SECONDS = 15.0
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+LxmfEventSink = Callable[[EngineEvent], None]
 
 
 @dataclass(slots=True)
 class LxmfWorkerProcess:
     identity_id: str
-    process: subprocess.Popen[bytes]
+    process: subprocess.Popen[str]
     started_at: float
     control_host: str
     control_port: int
+    output_thread: threading.Thread | None = None
 
 
 class LxmfProcessManager:
-    def __init__(self, config: AppConfig) -> None:
+    def __init__(self, config: AppConfig, event_sink: LxmfEventSink | None = None) -> None:
         self.config = config
+        self.event_sink = event_sink
         self.identity_store = LocalIdentityStore(config.local_identities_dir)
         self._workers: dict[str, LxmfWorkerProcess] = {}
 
@@ -64,6 +72,12 @@ class LxmfProcessManager:
             cwd=str(PROJECT_ROOT),
             env=self._build_environment(),
             stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
         )
         worker = LxmfWorkerProcess(
             identity_id=identity.id,
@@ -73,6 +87,13 @@ class LxmfProcessManager:
             control_port=control_port,
         )
         self._workers[identity.id] = worker
+        worker.output_thread = threading.Thread(
+            target=self._read_worker_output,
+            args=(worker,),
+            name=f"friendlynode-lxmf-output-{identity.id}",
+            daemon=True,
+        )
+        worker.output_thread.start()
         return self._worker_status(worker)
 
     def stop(self, identity_id: str) -> None:
@@ -242,6 +263,40 @@ class LxmfProcessManager:
                 else f"LXMF worker exited with code {exit_code}"
             ),
         }
+
+    def _read_worker_output(self, worker: LxmfWorkerProcess) -> None:
+        stream = worker.process.stdout
+
+        if stream is None:
+            return
+
+        for line in stream:
+            if line.startswith(LXMF_WORKER_EVENT_PREFIX):
+                self._handle_worker_event(worker, line[len(LXMF_WORKER_EVENT_PREFIX):].strip())
+                continue
+
+            print(line, end="", flush=True)
+
+    def _handle_worker_event(self, worker: LxmfWorkerProcess, raw_event: str) -> None:
+        if self.event_sink is None:
+            return
+
+        try:
+            event_data = json.loads(raw_event)
+            topic = str(event_data.get("topic") or "").strip()
+            payload = event_data.get("payload")
+
+            if topic == "" or not isinstance(payload, dict):
+                raise ValueError("Invalid LXMF worker event")
+
+            payload.setdefault("identity_id", worker.identity_id)
+            self.event_sink(EngineEvent(topic, payload))
+        except Exception as exc:
+            print(
+                f"[friendlynode-lxmf:{worker.identity_id}] event decode failed: "
+                f"{type(exc).__name__}: {exc}",
+                flush=True,
+            )
 
     def _allocate_control_port(self, control_host: str) -> int:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import signal
 import socket
 import sys
@@ -26,6 +27,7 @@ WORKER_CONTROL_STARTING_RESPONSE = "starting"
 WORKER_CONTROL_ACCEPT_TIMEOUT_SECONDS = 0.5
 WORKER_CONTROL_RECEIVE_SIZE = 64
 WORKER_CONTROL_THREAD_NAME = "friendlynode-lxmf-control"
+WORKER_EVENT_PREFIX = "FN_LXMF_EVENT "
 WORKER_WAIT_INTERVAL_SECONDS = 1.0
 
 
@@ -239,6 +241,31 @@ class LxmfWorkerRuntime:
 
     def _receive_message(self, message: object) -> None:
         self.received_messages += 1
+        content_getter = getattr(message, "content_as_string", None)
+        title_getter = getattr(message, "title_as_string", None)
+        payload = {
+            "identity_id": self.identity_id,
+            "message_id": self._hex_value(getattr(message, "hash", b"")),
+            "source_hash": self._hex_value(getattr(message, "source_hash", b"")),
+            "destination_hash": self._hex_value(getattr(message, "destination_hash", b"")),
+            "timestamp": getattr(message, "timestamp", None),
+            "title": str(title_getter() or "") if callable(title_getter) else "",
+            "content": str(content_getter() or "") if callable(content_getter) else "",
+            "signature_validated": bool(getattr(message, "signature_validated", False)),
+            "transport_encryption": str(getattr(message, "transport_encryption", "") or ""),
+        }
+        print(
+            WORKER_EVENT_PREFIX + json.dumps(
+                {"topic": "lxmf.message_received", "payload": payload},
+                separators=(",", ":"),
+            ),
+            flush=True,
+        )
+        print(
+            f"[friendlynode-lxmf:{self.identity_id}] message received "
+            f"source={payload['source_hash']} id={payload['message_id']}",
+            flush=True,
+        )
 
     def _hex_value(self, value: object) -> str:
         if isinstance(value, bytes):

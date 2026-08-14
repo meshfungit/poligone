@@ -112,6 +112,80 @@ class ClientContactStore:
         )
         return contact
 
+    def find_contact_by_lxmf_address(self, identity_id: str, address: str) -> dict[str, object] | None:
+        target = self._normalise_lxmf_address(address)
+
+        if target == "":
+            return None
+
+        contacts_dir = self._identity_path(identity_id) / "contacts"
+
+        for contact_path in sorted(contacts_dir.glob("*.json")):
+            contact = json.loads(contact_path.read_text(encoding="utf-8"))
+            candidates = (
+                contact.get("lxmf_address"),
+                contact.get("destination_hash"),
+            )
+
+            if any(self._normalise_lxmf_address(candidate) == target for candidate in candidates):
+                return contact
+
+        return None
+
+    def ensure_inbound_contact(self, identity_id: str, source_hash: str) -> dict[str, object]:
+        existing = self.find_contact_by_lxmf_address(identity_id, source_hash)
+
+        if existing is not None:
+            return existing
+
+        clean_hash = self._normalise_lxmf_address(source_hash)
+        return self.save_contact(
+            identity_id,
+            {
+                "id": f"lxmf-{clean_hash}",
+                "name": f"Unknown {clean_hash[:8]}",
+                "destination_hash": clean_hash,
+                "lxmf_address": clean_hash,
+                "path_status": "message_received",
+            },
+        )
+
+    def add_inbound_message(
+        self,
+        identity_id: str,
+        contact_id: str,
+        payload: dict[str, object],
+    ) -> dict[str, object]:
+        content = str(payload.get("content") or "")
+        incoming_id = str(payload.get("message_id") or "").strip().lower()
+        message_id = f"inbound-{incoming_id}" if incoming_id != "" else f"inbound-{secrets.token_hex(8)}"
+        messages = self.list_messages(identity_id, contact_id)
+
+        for message in messages:
+            if str(message.get("id") or "") == message_id:
+                return message
+
+        created_at = self._timestamp_to_iso(payload.get("timestamp"))
+        message = {
+            "id": message_id,
+            "direction": "inbound",
+            "content": content,
+            "created_at": created_at,
+            "source_hash": str(payload.get("source_hash") or ""),
+            "destination_hash": str(payload.get("destination_hash") or ""),
+            "title": str(payload.get("title") or ""),
+            "signature_validated": bool(payload.get("signature_validated")),
+            "transport_encryption": str(payload.get("transport_encryption") or ""),
+        }
+        messages.append(message)
+        messages_path = self._messages_path(identity_id, contact_id)
+        messages_path.parent.mkdir(parents=True, exist_ok=True)
+        messages_path.write_text(
+            json.dumps(messages, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        return message
+
     def add_outbound_message(self, identity_id: str, contact_id: str, content: str) -> dict[str, object]:
         text = content.strip()
 
@@ -181,6 +255,22 @@ class ClientContactStore:
             raise ValueError("Id cannot be empty")
 
         return item_id
+
+    def _normalise_lxmf_address(self, value: object) -> str:
+        text = str(value or "").strip().lower()
+
+        if text.startswith("lxmf://"):
+            text = text[7:]
+
+        return text
+
+    def _timestamp_to_iso(self, value: object) -> str:
+        try:
+            timestamp = float(value)
+        except (TypeError, ValueError):
+            return datetime.now(UTC).isoformat(timespec="seconds")
+
+        return datetime.fromtimestamp(timestamp, UTC).isoformat(timespec="seconds")
 
     def _default_display_name(self, item_id: str) -> str:
         return item_id.replace("-", " ").title()

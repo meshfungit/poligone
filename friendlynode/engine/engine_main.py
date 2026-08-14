@@ -53,7 +53,8 @@ class EngineMain:
             )
 
             self.lxmf_process_manager = LxmfProcessManager(
-                self.config
+                self.config,
+                event_sink=self.bus.publish,
             )
 
     def start(self, start_lxmf_workers: bool = True) -> None:

@@ -1019,6 +1019,37 @@ class ControllerApp:
                     "announce",
                     f"Failed to record announce: {type(exc).__name__}: {exc}",
                 )
+            return
+
+        if event.topic == "lxmf.message_received":
+            self._handle_lxmf_message_received(event.payload)
+
+    def _handle_lxmf_message_received(self, payload: dict[str, Any]) -> None:
+        if self.client_contact_store is None:
+            return
+
+        identity_id = str(payload.get("identity_id") or "").strip()
+        source_hash = str(payload.get("source_hash") or "").strip().lower()
+
+        if identity_id == "" or source_hash == "":
+            self.state.append_log("error", "client", "Incomplete inbound LXMF message metadata")
+            return
+
+        try:
+            contact = self.client_contact_store.ensure_inbound_contact(identity_id, source_hash)
+            contact_id = str(contact.get("id") or "")
+            message = self.client_contact_store.add_inbound_message(identity_id, contact_id, payload)
+            self.state.append_log(
+                "info",
+                "client",
+                f"LXMF message received: {identity_id}/{contact_id}/{message.get('id')}",
+            )
+        except Exception as exc:
+            self.state.append_log(
+                "error",
+                "client",
+                f"Failed to store inbound LXMF message: {type(exc).__name__}: {exc}",
+            )
 
     def _build_announce_record(self, payload: dict[str, Any]) -> dict[str, object]:
         aspect = str(payload.get("aspect") or "")

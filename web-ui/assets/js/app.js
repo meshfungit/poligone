@@ -8983,6 +8983,26 @@ function renderClientEditor() {
   return overlay;
 }
 
+function renderClientEditorField(labelText, key, type = "text", readonly = false) {
+  const field = document.createElement("label");
+  field.className = "rns-field";
+  const label = document.createElement("span");
+  label.textContent = labelText;
+  field.appendChild(label);
+
+  const input = document.createElement("input");
+  input.type = type;
+  input.value = clientEditorState?.[key] === undefined || clientEditorState?.[key] === null
+    ? ""
+    : String(clientEditorState[key]);
+  input.readOnly = readonly;
+  input.oninput = () => {
+    clientEditorState[key] = input.value;
+  };
+  field.appendChild(input);
+  return field;
+}
+
 function renderClientEditorCheckbox(labelText, key) {
   const field = document.createElement("label");
   field.className = "rns-field";
