@@ -10,6 +10,13 @@ from pathlib import Path
 
 from friendlynode.config.defaults import DEFAULT_LOCAL_IDENTITIES_DIR
 
+OUTBOUND_MESSAGE_MUTABLE_FIELDS = frozenset({
+    "state",
+    "lxmf_message_id",
+    "destination_hash",
+    "error",
+})
+
 TEST_CONTACT_ID = "test-contact-9f3a"
 TEST_CONTACT_RECORD: dict[str, object] = {
     "id": TEST_CONTACT_ID,

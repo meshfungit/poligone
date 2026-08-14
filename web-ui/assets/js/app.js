@@ -5482,13 +5482,20 @@ function serializeMessageEditor(input) {
     return getMessagePlainText(input);
   }
 
+  let previousAlignment = "a";
+
   for (const line of lineNodes) {
+    const alignment = getMessageLineAlignment(line);
+    const alignmentPrefix = alignment === previousAlignment ? "" : `\`${alignment}`;
+
     if (line.classList.contains("micron-divider")) {
-      lines.push(line.dataset.micronSource || "-");
+      lines.push(`${alignmentPrefix}${line.dataset.micronSource || "-"}`);
+      previousAlignment = alignment;
       continue;
     }
 
-    lines.push(`${serializeMessageLinePrefix(line)}${serializeMessageInlineNode(line)}`);
+    lines.push(`${alignmentPrefix}${serializeMessageLinePrefix(line)}${serializeMessageInlineNode(line)}`);
+    previousAlignment = alignment;
   }
 
   return lines.join("\n");
@@ -5497,23 +5504,21 @@ function serializeMessageEditor(input) {
 function serializeMessageLinePrefix(line) {
   let prefix = "";
 
-  if (line.classList.contains("micron-align-c")) {
-    prefix += "`c";
-  }
-
-  if (line.classList.contains("micron-align-r")) {
-    prefix += "`r";
-  }
-
-  if (line.classList.contains("micron-align-a")) {
-    prefix += "`a";
-  }
-
   if (line.classList.contains("micron-heading")) {
     prefix += ">";
   }
 
   return prefix;
+}
+
+function getMessageLineAlignment(line) {
+  for (const alignment of ["c", "l", "r", "a"]) {
+    if (line.classList.contains(`micron-align-${alignment}`)) {
+      return alignment;
+    }
+  }
+
+  return "a";
 }
 
 function serializeMessageInlineNode(root) {
