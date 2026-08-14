@@ -856,8 +856,65 @@ class ControllerApp:
         payload: dict[str, object],
     ) -> dict[str, object]:
         content = str(payload.get("content") or "")
+        contact = self.client_contact_store.export_contact(client_id, contact_id)
+
+        if len(contact) == 0:
+            raise ValueError(f"Contact does not exist: {client_id}/{contact_id}")
+
+        destination_hash = self._client_contact_destination_hash(contact)
+
+        if destination_hash == "":
+            raise ValueError(f"Contact has no LXMF destination: {client_id}/{contact_id}")
+
         message = self.client_contact_store.add_outbound_message(client_id, contact_id, content)
-        self.state.append_log("info", "client", f"Message queued: {client_id}/{contact_id}")
+        local_message_id = str(message.get("id") or "")
+        self.state.notify_client_change()
+
+        try:
+            result = self.engine_supervisor.send_lxmf_message(
+                client_id,
+                destination_hash,
+                content,
+                local_message_id=local_message_id,
+                contact_id=contact_id,
+            )
+            message = self.client_contact_store.update_outbound_message(
+                client_id,
+                contact_id,
+                local_message_id,
+                {
+                    "state": "queued",
+                    "lxmf_message_id": str(result.get("message_id") or ""),
+                    "destination_hash": destination_hash,
+                    "error": "",
+                },
+                expected_state="queueing",
+            ) or message
+            self.state.append_log(
+                "info",
+                "client",
+                f"LXMF message queued: {client_id}/{contact_id}/{result.get('message_id')}",
+            )
+        except Exception as exc:
+            message = self.client_contact_store.update_outbound_message(
+                client_id,
+                contact_id,
+                local_message_id,
+                {
+                    "state": "failed",
+                    "destination_hash": destination_hash,
+                    "error": f"{type(exc).__name__}: {exc}",
+                },
+                expected_state="queueing",
+            ) or message
+            self.state.append_log(
+                "error",
+                "client",
+                f"LXMF message queue failed: {client_id}/{contact_id}: {type(exc).__name__}: {exc}",
+            )
+            self.state.notify_client_change()
+            raise
+
         self.state.notify_client_change()
         return {
             "client_id": client_id,
@@ -865,6 +922,19 @@ class ControllerApp:
             "message": message,
             "messages": self.client_contact_store.list_messages(client_id, contact_id),
         }
+
+    def _client_contact_destination_hash(self, contact: dict[str, object]) -> str:
+        destination_hash = str(contact.get("destination_hash") or "").strip().lower()
+
+        if destination_hash != "":
+            return destination_hash
+
+        lxmf_address = str(contact.get("lxmf_address") or "").strip().lower()
+
+        if lxmf_address.startswith("lxmf://"):
+            return lxmf_address[len("lxmf://"):]
+
+        return lxmf_address
 
     def export_client_contact(self, client_id: str, contact_id: str) -> dict[str, object]:
         return {
@@ -1035,6 +1105,50 @@ class ControllerApp:
 
         if event.topic == "lxmf.message_received":
             self._handle_lxmf_message_received(event.payload)
+            return
+
+        if event.topic in ("lxmf.message_delivered", "lxmf.message_failed"):
+            self._handle_lxmf_outbound_state(event.topic, event.payload)
+
+    def _handle_lxmf_outbound_state(self, topic: str, payload: dict[str, Any]) -> None:
+        if self.client_contact_store is None:
+            return
+
+        identity_id = str(payload.get("identity_id") or "").strip()
+        contact_id = str(payload.get("contact_id") or "").strip()
+        local_message_id = str(payload.get("local_message_id") or "").strip()
+
+        if identity_id == "" or contact_id == "" or local_message_id == "":
+            self.state.append_log("error", "client", "Incomplete outbound LXMF state metadata")
+            return
+
+        state = "delivered" if topic == "lxmf.message_delivered" else "failed"
+        message = self.client_contact_store.update_outbound_message(
+            identity_id,
+            contact_id,
+            local_message_id,
+            {
+                "state": state,
+                "lxmf_message_id": str(payload.get("message_id") or ""),
+                "destination_hash": str(payload.get("destination_hash") or ""),
+                "error": "" if state == "delivered" else "LXMF delivery failed",
+            },
+        )
+
+        if message is None:
+            self.state.append_log(
+                "error",
+                "client",
+                f"Outbound LXMF state references unknown message: {identity_id}/{contact_id}/{local_message_id}",
+            )
+            return
+
+        self.state.append_log(
+            "info" if state == "delivered" else "error",
+            "client",
+            f"LXMF message {state}: {identity_id}/{contact_id}/{payload.get('message_id')}",
+        )
+        self.state.notify_client_change()
 
     def _handle_lxmf_message_received(self, payload: dict[str, Any]) -> None:
         if self.client_contact_store is None:

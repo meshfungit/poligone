@@ -107,6 +107,29 @@ class EngineMain:
 
         return self.lxmf_process_manager.announce(identity_id)
 
+    def send_lxmf_message(
+        self,
+        identity_id: str,
+        destination_hash: str,
+        content: str,
+        *,
+        local_message_id: str,
+        contact_id: str,
+        title: str = "",
+    ) -> dict[str, object]:
+        if self.lxmf_process_manager is None:
+            raise RuntimeError("LXMF process manager is disabled")
+
+        return self.lxmf_process_manager.send_message(
+            identity_id,
+            destination_hash,
+            content,
+            local_message_id=local_message_id,
+            contact_id=contact_id,
+            title=title,
+        )
+
+
     def make_announce(
         self,
         *,

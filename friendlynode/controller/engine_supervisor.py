@@ -83,6 +83,29 @@ class EngineSupervisor:
 
         return self.engine.announce_lxmf_worker(identity_id)
 
+    def send_lxmf_message(
+        self,
+        identity_id: str,
+        destination_hash: str,
+        content: str,
+        *,
+        local_message_id: str,
+        contact_id: str,
+        title: str = "",
+    ) -> dict[str, object]:
+        if self.engine is None:
+            raise RuntimeError("Engine is not running")
+
+        return self.engine.send_lxmf_message(
+            identity_id,
+            destination_hash,
+            content,
+            local_message_id=local_message_id,
+            contact_id=contact_id,
+            title=title,
+        )
+
+
     def make_announce(
         self,
         *,

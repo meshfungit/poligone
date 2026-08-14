@@ -24,12 +24,14 @@ DEFAULT_CONTROL_HOST = "127.0.0.1"
 LXMF_WORKER_STOP_COMMAND = b"stop\n"
 LXMF_WORKER_STATUS_COMMAND = b"status\n"
 LXMF_WORKER_ANNOUNCE_COMMAND = b"announce\n"
+LXMF_WORKER_SEND_COMMAND = "send"
 LXMF_WORKER_READY_RESPONSE = "ready"
 LXMF_WORKER_ANNOUNCED_RESPONSE = "announced"
 LXMF_WORKER_CONTROL_CONNECT_TIMEOUT_SECONDS = 0.25
 LXMF_WORKER_CONTROL_RETRY_SECONDS = 0.1
 LXMF_WORKER_CONTROL_REQUEST_TIMEOUT_SECONDS = 1.0
-LXMF_WORKER_CONTROL_RECEIVE_SIZE = 64
+LXMF_WORKER_SEND_TIMEOUT_SECONDS = 7.0
+LXMF_WORKER_CONTROL_RECEIVE_SIZE = 4096
 LXMF_WORKER_STOP_TIMEOUT_SECONDS = 5.0
 LXMF_WORKER_TERMINATE_TIMEOUT_SECONDS = 2.0
 LXMF_IDENTITY_GENERATE_TIMEOUT_SECONDS = 15.0
@@ -141,6 +143,37 @@ class LxmfProcessManager:
             "announced": True,
             "destination_hash": identity.lxmf_destination_hash,
         }
+
+    def send_message(
+        self,
+        identity_id: str,
+        destination_hash: str,
+        content: str,
+        *,
+        local_message_id: str,
+        contact_id: str,
+        title: str = "",
+    ) -> dict[str, object]:
+        worker = self._workers.get(identity_id)
+
+        if worker is None or worker.process.poll() is not None:
+            raise RuntimeError(f"LXMF worker is not running: {identity_id}")
+
+        request = {
+            "command": LXMF_WORKER_SEND_COMMAND,
+            "destination_hash": destination_hash,
+            "content": content,
+            "title": title,
+            "local_message_id": local_message_id,
+            "contact_id": contact_id,
+        }
+        response = self._send_control_json(worker, request, timeout=LXMF_WORKER_SEND_TIMEOUT_SECONDS)
+
+        if response.get("status") != "queued":
+            message = str(response.get("message") or response.get("error") or "unknown LXMF worker error")
+            raise RuntimeError(f"LXMF send failed for {identity_id}: {message}")
+
+        return response
 
     def stop_all(self) -> None:
         for identity_id in list(self._workers):
@@ -320,6 +353,30 @@ class LxmfProcessManager:
             return "starting"
 
         return response or "starting"
+
+    def _send_control_json(
+        self,
+        worker: LxmfWorkerProcess,
+        payload: dict[str, object],
+        *,
+        timeout: float,
+    ) -> dict[str, object]:
+        request = (json.dumps(payload, separators=(",", ":")) + "\n").encode("utf-8")
+
+        with socket.create_connection(
+            (worker.control_host, worker.control_port),
+            timeout=LXMF_WORKER_CONTROL_CONNECT_TIMEOUT_SECONDS,
+        ) as connection:
+            connection.settimeout(timeout)
+            connection.sendall(request)
+            response = connection.recv(LXMF_WORKER_CONTROL_RECEIVE_SIZE)
+
+        decoded = json.loads(response.decode("utf-8", errors="strict").strip())
+
+        if not isinstance(decoded, dict):
+            raise RuntimeError("LXMF worker returned an invalid response")
+
+        return decoded
 
     def _send_control_command(self, worker: LxmfWorkerProcess, command: bytes) -> str:
         with socket.create_connection(

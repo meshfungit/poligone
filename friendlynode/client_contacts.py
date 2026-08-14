@@ -198,16 +198,42 @@ class ClientContactStore:
             "direction": "outbound",
             "content": text,
             "created_at": datetime.now(UTC).isoformat(timespec="seconds"),
+            "state": "queueing",
+            "lxmf_message_id": "",
+            "destination_hash": "",
+            "error": "",
         }
         messages.append(message)
-
-        messages_path = self._messages_path(identity_id, contact_id)
-        messages_path.parent.mkdir(parents=True, exist_ok=True)
-        messages_path.write_text(
-            json.dumps(messages, indent=2, sort_keys=True),
-            encoding="utf-8",
-        )
+        self._write_messages(identity_id, contact_id, messages)
         return message
+
+    def update_outbound_message(
+        self,
+        identity_id: str,
+        contact_id: str,
+        message_id: str,
+        updates: dict[str, object],
+        *,
+        expected_state: str | None = None,
+    ) -> dict[str, object] | None:
+        messages = self.list_messages(identity_id, contact_id)
+
+        for message in messages:
+            if str(message.get("id") or "") != message_id:
+                continue
+            if message.get("direction") != "outbound":
+                return None
+            if expected_state is not None and str(message.get("state") or "") != expected_state:
+                return message
+
+            for key, value in updates.items():
+                if key in OUTBOUND_MESSAGE_MUTABLE_FIELDS:
+                    message[key] = value
+
+            self._write_messages(identity_id, contact_id, messages)
+            return message
+
+        return None
 
     def export_contact(self, identity_id: str, contact_id: str) -> dict[str, object]:
         contact_path = self._contact_path(identity_id, contact_id)
@@ -225,6 +251,14 @@ class ClientContactStore:
 
     def _messages_path(self, identity_id: str, contact_id: str) -> Path:
         return self._identity_path(identity_id) / "conversations" / self._normalise_id(contact_id) / "messages.json"
+
+    def _write_messages(self, identity_id: str, contact_id: str, messages: list[dict[str, object]]) -> None:
+        messages_path = self._messages_path(identity_id, contact_id)
+        messages_path.parent.mkdir(parents=True, exist_ok=True)
+        messages_path.write_text(
+            json.dumps(messages, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
 
     def _ensure_sample_conversation(self, identity_path: Path) -> None:
         if not identity_path.exists():

@@ -20,15 +20,19 @@ DEFAULT_CONTROL_HOST = "127.0.0.1"
 WORKER_CONTROL_STOP_COMMAND = "stop"
 WORKER_CONTROL_STATUS_COMMAND = "status"
 WORKER_CONTROL_ANNOUNCE_COMMAND = "announce"
+WORKER_CONTROL_SEND_COMMAND = "send"
 WORKER_CONTROL_ANNOUNCED_RESPONSE = "announced"
 WORKER_CONTROL_NOT_READY_RESPONSE = "not_ready"
 WORKER_CONTROL_READY_RESPONSE = "ready"
 WORKER_CONTROL_STARTING_RESPONSE = "starting"
 WORKER_CONTROL_ACCEPT_TIMEOUT_SECONDS = 0.5
-WORKER_CONTROL_RECEIVE_SIZE = 64
+WORKER_CONTROL_RECEIVE_CHUNK_SIZE = 4096
+WORKER_CONTROL_MAX_REQUEST_BYTES = 1024 * 1024
 WORKER_CONTROL_THREAD_NAME = "friendlynode-lxmf-control"
 WORKER_EVENT_PREFIX = "FN_LXMF_EVENT "
 WORKER_WAIT_INTERVAL_SECONDS = 1.0
+OUTBOUND_IDENTITY_LOOKUP_TIMEOUT_SECONDS = 5.0
+OUTBOUND_IDENTITY_LOOKUP_POLL_SECONDS = 0.1
 
 
 class LxmfWorkerRuntime:
@@ -117,6 +121,84 @@ class LxmfWorkerRuntime:
                 flush=True,
             )
             return destination_hash
+
+    def send_message(
+        self,
+        destination_hash: str,
+        content: str,
+        *,
+        title: str = "",
+        local_message_id: str = "",
+        contact_id: str = "",
+    ) -> dict[str, object]:
+        if self.router is None or self.delivery_destination is None or self.RNS is None or self.LXMF is None:
+            raise RuntimeError("LXMF worker is not ready")
+
+        clean_destination_hash = destination_hash.strip().lower()
+        destination_hash_bytes = bytes.fromhex(clean_destination_hash)
+        expected_length = self.RNS.Identity.TRUNCATED_HASHLENGTH // 8
+
+        if len(destination_hash_bytes) != expected_length:
+            raise ValueError(f"Invalid LXMF destination hash length: {clean_destination_hash}")
+
+        recipient_identity = self.RNS.Identity.recall(destination_hash_bytes)
+
+        if recipient_identity is None:
+            self.RNS.Transport.request_path(destination_hash_bytes)
+            deadline = time.monotonic() + OUTBOUND_IDENTITY_LOOKUP_TIMEOUT_SECONDS
+
+            while recipient_identity is None and time.monotonic() < deadline:
+                time.sleep(OUTBOUND_IDENTITY_LOOKUP_POLL_SECONDS)
+                recipient_identity = self.RNS.Identity.recall(destination_hash_bytes)
+
+        if recipient_identity is None:
+            raise RuntimeError(f"Destination identity is not available after path lookup: {clean_destination_hash}")
+
+        destination = self.RNS.Destination(
+            recipient_identity,
+            self.RNS.Destination.OUT,
+            self.RNS.Destination.SINGLE,
+            "lxmf",
+            "delivery",
+        )
+        message = self.LXMF.LXMessage(
+            destination,
+            self.delivery_destination,
+            content,
+            title,
+            desired_method=self.LXMF.LXMessage.DIRECT,
+            include_ticket=True,
+        )
+        message.register_delivery_callback(
+            lambda delivered_message: self._outbound_delivered(
+                delivered_message,
+                local_message_id=local_message_id,
+                contact_id=contact_id,
+            )
+        )
+        message.register_failed_callback(
+            lambda failed_message: self._outbound_failed(
+                failed_message,
+                local_message_id=local_message_id,
+                contact_id=contact_id,
+            )
+        )
+        self.router.handle_outbound(message)
+
+        message_id = self._hex_value(getattr(message, "hash", b""))
+        print(
+            f"[friendlynode-lxmf:{self.identity_id}] message queued "
+            f"destination={clean_destination_hash} id={message_id}",
+            flush=True,
+        )
+        return {
+            "status": "queued",
+            "identity_id": self.identity_id,
+            "contact_id": contact_id,
+            "local_message_id": local_message_id,
+            "message_id": message_id,
+            "destination_hash": clean_destination_hash,
+        }
 
     def process_periodic_tasks(self) -> None:
         try:
@@ -254,16 +336,64 @@ class LxmfWorkerRuntime:
             "signature_validated": bool(getattr(message, "signature_validated", False)),
             "transport_encryption": str(getattr(message, "transport_encryption", "") or ""),
         }
-        print(
-            WORKER_EVENT_PREFIX + json.dumps(
-                {"topic": "lxmf.message_received", "payload": payload},
-                separators=(",", ":"),
-            ),
-            flush=True,
-        )
+        self._emit_worker_event("lxmf.message_received", payload)
         print(
             f"[friendlynode-lxmf:{self.identity_id}] message received "
             f"source={payload['source_hash']} id={payload['message_id']}",
+            flush=True,
+        )
+
+    def _outbound_delivered(self, message: object, *, local_message_id: str, contact_id: str) -> None:
+        payload = self._outbound_event_payload(
+            message,
+            local_message_id=local_message_id,
+            contact_id=contact_id,
+            state="delivered",
+        )
+        self._emit_worker_event("lxmf.message_delivered", payload)
+        print(
+            f"[friendlynode-lxmf:{self.identity_id}] message delivered "
+            f"destination={payload['destination_hash']} id={payload['message_id']}",
+            flush=True,
+        )
+
+    def _outbound_failed(self, message: object, *, local_message_id: str, contact_id: str) -> None:
+        payload = self._outbound_event_payload(
+            message,
+            local_message_id=local_message_id,
+            contact_id=contact_id,
+            state="failed",
+        )
+        self._emit_worker_event("lxmf.message_failed", payload)
+        print(
+            f"[friendlynode-lxmf:{self.identity_id}] message failed "
+            f"destination={payload['destination_hash']} id={payload['message_id']}",
+            flush=True,
+        )
+
+    def _outbound_event_payload(
+        self,
+        message: object,
+        *,
+        local_message_id: str,
+        contact_id: str,
+        state: str,
+    ) -> dict[str, object]:
+        return {
+            "identity_id": self.identity_id,
+            "contact_id": contact_id,
+            "local_message_id": local_message_id,
+            "message_id": self._hex_value(getattr(message, "hash", b"")),
+            "destination_hash": self._hex_value(getattr(message, "destination_hash", b"")),
+            "state": state,
+        }
+
+    def _emit_worker_event(self, topic: str, payload: dict[str, object]) -> None:
+        print(
+            WORKER_EVENT_PREFIX + json.dumps(
+                {"topic": topic, "payload": payload},
+                separators=(",", ":"),
+            ),
             flush=True,
         )
 
@@ -347,7 +477,8 @@ def _control_loop(
                 raise
 
             with connection:
-                command = connection.recv(WORKER_CONTROL_RECEIVE_SIZE).decode("utf-8", errors="replace").strip().lower()
+                raw_request = _receive_control_request(connection)
+                command = raw_request.strip().lower()
 
                 if command == WORKER_CONTROL_STOP_COMMAND:
                     stop_event.set()
@@ -376,6 +507,63 @@ def _control_loop(
                         continue
 
                     connection.sendall(f"{WORKER_CONTROL_ANNOUNCED_RESPONSE}\n".encode("utf-8"))
+                    continue
+
+                try:
+                    request = json.loads(raw_request)
+                except (TypeError, ValueError):
+                    connection.sendall(b'{"status":"error","error":"invalid_request"}\n')
+                    continue
+
+                if not isinstance(request, dict) or str(request.get("command") or "") != WORKER_CONTROL_SEND_COMMAND:
+                    connection.sendall(b'{"status":"error","error":"unknown_command"}\n')
+                    continue
+
+                if not ready_event.is_set():
+                    connection.sendall(b'{"status":"error","error":"not_ready"}\n')
+                    continue
+
+                try:
+                    result = runtime.send_message(
+                        str(request.get("destination_hash") or ""),
+                        str(request.get("content") or ""),
+                        title=str(request.get("title") or ""),
+                        local_message_id=str(request.get("local_message_id") or ""),
+                        contact_id=str(request.get("contact_id") or ""),
+                    )
+                    connection.sendall((json.dumps(result, separators=(",", ":")) + "\n").encode("utf-8"))
+                except Exception as exc:
+                    print(
+                        f"[friendlynode-lxmf:{runtime.identity_id}] outbound send failed: "
+                        f"{type(exc).__name__}: {exc}",
+                        flush=True,
+                    )
+                    response = {
+                        "status": "error",
+                        "error": type(exc).__name__,
+                        "message": str(exc),
+                    }
+                    connection.sendall((json.dumps(response, separators=(",", ":")) + "\n").encode("utf-8"))
+
+
+def _receive_control_request(connection: socket.socket) -> str:
+    received = bytearray()
+
+    while len(received) < WORKER_CONTROL_MAX_REQUEST_BYTES:
+        chunk = connection.recv(WORKER_CONTROL_RECEIVE_CHUNK_SIZE)
+
+        if not chunk:
+            break
+
+        received.extend(chunk)
+
+        if b"\n" in chunk:
+            break
+
+    if len(received) >= WORKER_CONTROL_MAX_REQUEST_BYTES:
+        raise ValueError("LXMF worker control request is too large")
+
+    return bytes(received).decode("utf-8", errors="strict").strip()
 
 
 def _install_signal_handlers(stop_event: threading.Event) -> None:
