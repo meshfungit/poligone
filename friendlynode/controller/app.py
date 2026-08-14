@@ -799,6 +799,11 @@ class ControllerApp:
         self.state.append_log("info", "client", f"LXMF worker restart requested: {client_id}")
         return status
 
+    def announce_client_lxmf(self, client_id: str) -> dict[str, object]:
+        result = self.engine_supervisor.announce_lxmf_worker(client_id)
+        self.state.append_log("info", "client", f"LXMF announce sent: {client_id}")
+        return result
+
     def _find_client_identity(self, client_id: str) -> object:
         for identity in self.client_store.list_identities():
             if identity.id == client_id:

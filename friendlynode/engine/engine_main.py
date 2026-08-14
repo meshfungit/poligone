@@ -100,6 +100,12 @@ class EngineMain:
 
         return self.lxmf_process_manager.restart(identity_id)
 
+    def announce_lxmf_worker(self, identity_id: str) -> dict[str, object]:
+        if self.lxmf_process_manager is None:
+            raise RuntimeError("LXMF process manager is disabled")
+
+        return self.lxmf_process_manager.announce(identity_id)
+
     def make_announce(
         self,
         *,

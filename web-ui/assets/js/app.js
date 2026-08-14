@@ -4179,7 +4179,6 @@ function renderClientAccountMenu() {
   menu.onclick = (event) => {
     event.stopPropagation();
   };
-
   const client = clientAccountMenuState.client;
   const worker = getClientLxmfWorker(client.id || "");
   const workerRunning = Boolean(worker?.running);
@@ -4193,16 +4192,13 @@ function renderClientAccountMenu() {
       removeClient(client);
     }],
   ];
-
   if (workerRunning) {
     actions.push(["Stop LXMF", () => controlClientLxmf(client, "stop")]);
     actions.push(["Restart LXMF", () => controlClientLxmf(client, "restart")]);
   } else {
     actions.push(["Start LXMF", () => controlClientLxmf(client, "start")]);
   }
-
   actions.push(
-    ["Make Annonce", () => makeClientAnnounce(client)],
     [expandedClientDetails.has(client.id) ? "Hide details" : "Show details", () => {
       if (expandedClientDetails.has(client.id)) {
         expandedClientDetails.delete(client.id);
@@ -4214,7 +4210,6 @@ function renderClientAccountMenu() {
     }],
     ["Share", () => shareClientAccount(client)],
   );
-
   for (const [label, action] of actions) {
     const button = document.createElement("button");
     button.type = "button";
@@ -8596,29 +8591,31 @@ async function shareClientAccount(client) {
 }
 
 async function makeClientAnnounce(client) {
-  clientAccountMenuState = null;
+  const clientId = client?.id || "";
 
+  if (clientId === "") {
+    return;
+  }
+
+  clientAccountMenuState = null;
   try {
-    const response = await fetch("/api/reticulum/announce", {
-      method: "POST",
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        target: "client",
-        client_id: client.id || "",
-      }),
-    });
+    const response = await fetch(
+      `/api/clients/${encodeURIComponent(clientId)}/lxmf/announce`,
+      {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+        },
+      }
+    );
 
     if (!response.ok) {
-      throw new Error(`Client announce failed: HTTP ${response.status}`);
-    }
-
-    const payload = await response.json();
-
-    if (payload.status === "unsupported") {
-      throw new Error(payload.message || "Client announce is not wired yet.");
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(
+        payload.message
+        || payload.error
+        || `LXMF announce failed: HTTP ${response.status}`
+      );
     }
 
     await fetchStatus();
@@ -8912,7 +8909,6 @@ function renderClientEditor() {
 
   const dialog = document.createElement("section");
   dialog.className = "client-editor";
-
   const title = document.createElement("h2");
   title.textContent = "Local identity editor";
   dialog.appendChild(title);
@@ -8932,6 +8928,20 @@ function renderClientEditor() {
     renderClientEditorField("External config path", "config_path", "text")
   );
 
+  const announceTitle = document.createElement("h3");
+  announceTitle.textContent = "LXMF announce";
+  dialog.appendChild(announceTitle);
+  dialog.appendChild(
+    renderClientEditorCheckbox("Auto announce", "lxmf_auto_announce")
+  );
+  dialog.appendChild(
+    renderClientEditorField(
+      "Announce interval (seconds)",
+      "lxmf_announce_interval_seconds",
+      "number"
+    )
+  );
+
   const actions = document.createElement("div");
   actions.className = "settings-row client-editor-actions";
 
@@ -8948,6 +8958,17 @@ function renderClientEditor() {
   generateButton.onclick = generateClientIdentityFromEditor;
   actions.appendChild(generateButton);
 
+  const worker = getClientLxmfWorker(clientEditorState?.id || "");
+  const announceButton = document.createElement("button");
+  announceButton.type = "button";
+  announceButton.textContent = "Announce now";
+  announceButton.title = Boolean(worker?.ready)
+    ? "Send an LXMF delivery announce for this identity"
+    : "Start this identity's LXMF worker before announcing";
+  announceButton.disabled = !Boolean(worker?.ready);
+  announceButton.onclick = () => makeClientAnnounce(clientEditorState);
+  actions.appendChild(announceButton);
+
   const cancelButton = document.createElement("button");
   cancelButton.type = "button";
   cancelButton.textContent = "Cancel";
@@ -8962,22 +8983,18 @@ function renderClientEditor() {
   return overlay;
 }
 
-function renderClientEditorField(labelText, key, type = "text", readonly = false) {
+function renderClientEditorCheckbox(labelText, key) {
   const field = document.createElement("label");
   field.className = "rns-field";
-
   const label = document.createElement("span");
   label.textContent = labelText;
   field.appendChild(label);
 
   const input = document.createElement("input");
-  input.type = type;
-  input.value = clientEditorState?.[key] === undefined || clientEditorState?.[key] === null
-    ? ""
-    : String(clientEditorState[key]);
-  input.readOnly = readonly;
-  input.oninput = () => {
-    clientEditorState[key] = input.value;
+  input.type = "checkbox";
+  input.checked = Boolean(clientEditorState?.[key]);
+  input.onchange = () => {
+    clientEditorState[key] = input.checked;
   };
   field.appendChild(input);
   return field;

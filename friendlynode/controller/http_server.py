@@ -771,6 +771,10 @@ class ControllerHttpServer:
                         self._send_json(app.restart_client_lxmf(client_id))
                         return
 
+                    if action == "lxmf_announce":
+                        self._send_json(app.announce_client_lxmf(client_id))
+                        return
+
                     if action == "contacts":
                         payload = self._read_json_body()
                         self._send_json(app.save_client_contact(client_id, payload))
@@ -1062,7 +1066,7 @@ class ControllerHttpServer:
                 if len(parts) == 5 and parts[0:2] == ["api", "clients"] and parts[3] == "lxmf":
                     client_id = parts[2]
 
-                    if parts[4] in ("start", "stop", "restart"):
+                    if parts[4] in ("start", "stop", "restart", "announce"):
                         return client_id, f"lxmf_{parts[4]}", None
 
                 if len(parts) == 6 and parts[0:2] == ["api", "clients"]:

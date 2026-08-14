@@ -18,7 +18,9 @@ LXMF_IDENTITY_GENERATOR_MODULE = "friendlynode.engine.lxmf_identity_generator"
 DEFAULT_CONTROL_HOST = "127.0.0.1"
 LXMF_WORKER_STOP_COMMAND = b"stop\n"
 LXMF_WORKER_STATUS_COMMAND = b"status\n"
+LXMF_WORKER_ANNOUNCE_COMMAND = b"announce\n"
 LXMF_WORKER_READY_RESPONSE = "ready"
+LXMF_WORKER_ANNOUNCED_RESPONSE = "announced"
 LXMF_WORKER_CONTROL_CONNECT_TIMEOUT_SECONDS = 0.25
 LXMF_WORKER_CONTROL_RETRY_SECONDS = 0.1
 LXMF_WORKER_CONTROL_REQUEST_TIMEOUT_SECONDS = 1.0
@@ -100,6 +102,24 @@ class LxmfProcessManager:
     def restart(self, identity_id: str) -> dict[str, object]:
         self.stop(identity_id)
         return self.start(identity_id)
+
+    def announce(self, identity_id: str) -> dict[str, object]:
+        worker = self._workers.get(identity_id)
+
+        if worker is None or worker.process.poll() is not None:
+            raise RuntimeError(f"LXMF worker is not running: {identity_id}")
+
+        response = self._send_control_command(worker, LXMF_WORKER_ANNOUNCE_COMMAND)
+
+        if response != LXMF_WORKER_ANNOUNCED_RESPONSE:
+            raise RuntimeError(f"LXMF announce failed for {identity_id}: {response or 'no response'}")
+
+        identity = self._get_identity(identity_id)
+        return {
+            "identity_id": identity_id,
+            "announced": True,
+            "destination_hash": identity.lxmf_destination_hash,
+        }
 
     def stop_all(self) -> None:
         for identity_id in list(self._workers):

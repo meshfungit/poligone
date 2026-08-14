@@ -77,6 +77,12 @@ class EngineSupervisor:
 
         return self.engine.restart_lxmf_worker(identity_id)
 
+    def announce_lxmf_worker(self, identity_id: str) -> dict[str, object]:
+        if self.engine is None:
+            raise RuntimeError("Engine is not running")
+
+        return self.engine.announce_lxmf_worker(identity_id)
+
     def make_announce(
         self,
         *,

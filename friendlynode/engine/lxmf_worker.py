@@ -7,6 +7,7 @@ import signal
 import socket
 import sys
 import threading
+import time
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -17,6 +18,9 @@ DEFAULT_SOURCE_PATH = ""
 DEFAULT_CONTROL_HOST = "127.0.0.1"
 WORKER_CONTROL_STOP_COMMAND = "stop"
 WORKER_CONTROL_STATUS_COMMAND = "status"
+WORKER_CONTROL_ANNOUNCE_COMMAND = "announce"
+WORKER_CONTROL_ANNOUNCED_RESPONSE = "announced"
+WORKER_CONTROL_NOT_READY_RESPONSE = "not_ready"
 WORKER_CONTROL_READY_RESPONSE = "ready"
 WORKER_CONTROL_STARTING_RESPONSE = "starting"
 WORKER_CONTROL_ACCEPT_TIMEOUT_SECONDS = 0.5
@@ -47,6 +51,10 @@ class LxmfWorkerRuntime:
         self.delivery_destination: Any | None = None
         self.rns_identity: Any | None = None
         self.received_messages = 0
+        self._announce_lock = threading.Lock()
+        self._auto_announce_enabled = False
+        self._auto_announce_interval_seconds: int | None = None
+        self._next_auto_announce_at: float | None = None
 
     def start(self) -> None:
         self._configure_module_paths()
@@ -93,6 +101,56 @@ class LxmfWorkerRuntime:
             f"identity={identity_hash} destination={destination_hash}",
             flush=True,
         )
+
+    def announce(self, source: str = "manual") -> str:
+        if self.router is None or self.delivery_destination is None:
+            raise RuntimeError("LXMF worker is not ready")
+
+        with self._announce_lock:
+            destination_hash = self._hex_value(getattr(self.delivery_destination, "hash", b""))
+            self.router.announce(self.delivery_destination.hash)
+            print(
+                f"[friendlynode-lxmf:{self.identity_id}] announce sent "
+                f"destination={destination_hash} source={source}",
+                flush=True,
+            )
+            return destination_hash
+
+    def process_periodic_tasks(self) -> None:
+        try:
+            local_identity = self._get_identity()
+        except Exception as exc:
+            print(
+                f"[friendlynode-lxmf:{self.identity_id}] announce settings read failed: "
+                f"{type(exc).__name__}: {exc}",
+                flush=True,
+            )
+            return
+
+        if not local_identity.lxmf_auto_announce:
+            self._auto_announce_enabled = False
+            self._auto_announce_interval_seconds = None
+            self._next_auto_announce_at = None
+            return
+
+        now = time.monotonic()
+        interval_seconds = local_identity.lxmf_announce_interval_seconds
+
+        if not self._auto_announce_enabled:
+            self.announce(source="auto")
+            self._auto_announce_enabled = True
+            self._auto_announce_interval_seconds = interval_seconds
+            self._next_auto_announce_at = now + interval_seconds
+            return
+
+        if self._auto_announce_interval_seconds != interval_seconds:
+            self._auto_announce_interval_seconds = interval_seconds
+            self._next_auto_announce_at = now + interval_seconds
+            return
+
+        if self._next_auto_announce_at is not None and now >= self._next_auto_announce_at:
+            self.announce(source="auto")
+            self._next_auto_announce_at = now + interval_seconds
 
     def stop(self) -> None:
         if self.RNS is None:
@@ -206,7 +264,7 @@ def main() -> None:
 
     control_thread = threading.Thread(
         target=_control_loop,
-        args=(stop_event, ready_event, args.control_host, args.control_port),
+        args=(runtime, stop_event, ready_event, args.control_host, args.control_port),
         name=WORKER_CONTROL_THREAD_NAME,
         daemon=True,
     )
@@ -218,7 +276,7 @@ def main() -> None:
         ready_event.set()
 
         while not stop_event.wait(WORKER_WAIT_INTERVAL_SECONDS):
-            pass
+            runtime.process_periodic_tasks()
     except KeyboardInterrupt:
         stop_event.set()
     finally:
@@ -239,6 +297,7 @@ def _parse_args() -> argparse.Namespace:
 
 
 def _control_loop(
+    runtime: LxmfWorkerRuntime,
     stop_event: threading.Event,
     ready_event: threading.Event,
     control_host: str,
@@ -271,6 +330,25 @@ def _control_loop(
                 if command == WORKER_CONTROL_STATUS_COMMAND:
                     response = WORKER_CONTROL_READY_RESPONSE if ready_event.is_set() else WORKER_CONTROL_STARTING_RESPONSE
                     connection.sendall(f"{response}\n".encode("utf-8"))
+                    continue
+
+                if command == WORKER_CONTROL_ANNOUNCE_COMMAND:
+                    if not ready_event.is_set():
+                        connection.sendall(f"{WORKER_CONTROL_NOT_READY_RESPONSE}\n".encode("utf-8"))
+                        continue
+
+                    try:
+                        runtime.announce(source="manual")
+                    except Exception as exc:
+                        print(
+                            f"[friendlynode-lxmf:{runtime.identity_id}] manual announce failed: "
+                            f"{type(exc).__name__}: {exc}",
+                            flush=True,
+                        )
+                        connection.sendall(b"error\n")
+                        continue
+
+                    connection.sendall(f"{WORKER_CONTROL_ANNOUNCED_RESPONSE}\n".encode("utf-8"))
 
 
 def _install_signal_handlers(stop_event: threading.Event) -> None:

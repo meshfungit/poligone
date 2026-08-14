@@ -14,6 +14,9 @@ LOCAL_IDENTITY_STORE_MARKER_FILENAME = ".initialized"
 DEFAULT_LOCAL_IDENTITY_ID = "default"
 DEFAULT_LOCAL_IDENTITY_NAME = "Anonymous User"
 DEFAULT_LOCAL_IDENTITY_ENABLED = True
+DEFAULT_LXMF_AUTO_ANNOUNCE = False
+DEFAULT_LXMF_ANNOUNCE_INTERVAL_SECONDS = 3600
+MIN_LXMF_ANNOUNCE_INTERVAL_SECONDS = 10
 RNS_IDENTITY_FILENAME = "rns_identity"
 LOCAL_IDENTITY_SUBDIRECTORIES = (
     "contacts",
@@ -31,6 +34,8 @@ class LocalIdentity:
     enabled: bool
     identity_hash: str
     lxmf_destination_hash: str
+    lxmf_auto_announce: bool
+    lxmf_announce_interval_seconds: int
     path: Path
     config_path: Path | None = None
 
@@ -41,6 +46,8 @@ class LocalIdentity:
             "enabled": self.enabled,
             "identity_hash": self.identity_hash,
             "lxmf_destination_hash": self.lxmf_destination_hash,
+            "lxmf_auto_announce": self.lxmf_auto_announce,
+            "lxmf_announce_interval_seconds": self.lxmf_announce_interval_seconds,
             "path": str(self.path),
             "config_path": str(self.config_path) if self.config_path is not None else None,
             "directories": {
@@ -85,6 +92,8 @@ class LocalIdentityStore:
             enabled=False,
             identity_hash="",
             lxmf_destination_hash="",
+            lxmf_auto_announce=DEFAULT_LXMF_AUTO_ANNOUNCE,
+            lxmf_announce_interval_seconds=DEFAULT_LXMF_ANNOUNCE_INTERVAL_SECONDS,
         )
 
     def save_identity(self, payload: dict[str, object]) -> LocalIdentity:
@@ -103,6 +112,22 @@ class LocalIdentityStore:
             identity_hash=existing.identity_hash if existing is not None else "",
             lxmf_destination_hash=(
                 existing.lxmf_destination_hash if existing is not None else ""
+            ),
+            lxmf_auto_announce=bool(
+                payload.get(
+                    "lxmf_auto_announce",
+                    existing.lxmf_auto_announce if existing is not None else DEFAULT_LXMF_AUTO_ANNOUNCE,
+                )
+            ),
+            lxmf_announce_interval_seconds=self._normalise_lxmf_announce_interval(
+                payload.get(
+                    "lxmf_announce_interval_seconds",
+                    (
+                        existing.lxmf_announce_interval_seconds
+                        if existing is not None
+                        else DEFAULT_LXMF_ANNOUNCE_INTERVAL_SECONDS
+                    ),
+                )
             ),
             config_path=Path(str(config_path)) if config_path not in (None, "") else None,
         )
@@ -127,6 +152,8 @@ class LocalIdentityStore:
             enabled=existing.enabled,
             identity_hash=identity_hash.strip().lower(),
             lxmf_destination_hash=lxmf_destination_hash.strip().lower(),
+            lxmf_auto_announce=existing.lxmf_auto_announce,
+            lxmf_announce_interval_seconds=existing.lxmf_announce_interval_seconds,
             config_path=existing.config_path,
         )
         self._write_identity(identity)
@@ -192,6 +219,8 @@ class LocalIdentityStore:
                 enabled=DEFAULT_LOCAL_IDENTITY_ENABLED,
                 identity_hash="",
                 lxmf_destination_hash="",
+                lxmf_auto_announce=DEFAULT_LXMF_AUTO_ANNOUNCE,
+                lxmf_announce_interval_seconds=DEFAULT_LXMF_ANNOUNCE_INTERVAL_SECONDS,
             )
         )
         marker_path.write_text("ok\n", encoding="utf-8")
@@ -213,6 +242,10 @@ class LocalIdentityStore:
             enabled=bool(raw.get("enabled", False)),
             identity_hash=str(raw.get("identity_hash") or ""),
             lxmf_destination_hash=str(raw.get("lxmf_destination_hash") or ""),
+            lxmf_auto_announce=bool(raw.get("lxmf_auto_announce", DEFAULT_LXMF_AUTO_ANNOUNCE)),
+            lxmf_announce_interval_seconds=self._normalise_lxmf_announce_interval(
+                raw.get("lxmf_announce_interval_seconds", DEFAULT_LXMF_ANNOUNCE_INTERVAL_SECONDS)
+            ),
             config_path=(
                 Path(str(external_config_path))
                 if external_config_path not in (None, "")
@@ -232,6 +265,8 @@ class LocalIdentityStore:
             "enabled": identity.enabled,
             "identity_hash": identity.identity_hash,
             "lxmf_destination_hash": identity.lxmf_destination_hash,
+            "lxmf_auto_announce": identity.lxmf_auto_announce,
+            "lxmf_announce_interval_seconds": identity.lxmf_announce_interval_seconds,
             "config_path": str(identity.config_path) if identity.config_path is not None else "",
         }
         (identity.path / LOCAL_IDENTITY_CONFIG_FILENAME).write_text(
@@ -246,6 +281,8 @@ class LocalIdentityStore:
         enabled: bool,
         identity_hash: str,
         lxmf_destination_hash: str,
+        lxmf_auto_announce: bool,
+        lxmf_announce_interval_seconds: int,
         config_path: Path | None = None,
     ) -> LocalIdentity:
         return LocalIdentity(
@@ -254,9 +291,19 @@ class LocalIdentityStore:
             enabled=enabled,
             identity_hash=identity_hash,
             lxmf_destination_hash=lxmf_destination_hash,
+            lxmf_auto_announce=lxmf_auto_announce,
+            lxmf_announce_interval_seconds=lxmf_announce_interval_seconds,
             path=self._identity_path(identity_id),
             config_path=config_path,
         )
+
+    def _normalise_lxmf_announce_interval(self, raw_value: object) -> int:
+        try:
+            interval_seconds = int(raw_value)
+        except (TypeError, ValueError):
+            interval_seconds = DEFAULT_LXMF_ANNOUNCE_INTERVAL_SECONDS
+
+        return max(MIN_LXMF_ANNOUNCE_INTERVAL_SECONDS, interval_seconds)
 
     def _next_identity_id(self) -> str:
         index = 1
