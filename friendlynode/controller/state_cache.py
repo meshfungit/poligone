@@ -22,11 +22,14 @@ class StateCache:
     logs: list[dict[str, Any]] = field(default_factory=list)
     log_sequence: int = 0
     announce_sequence: int = 0
+    client_change_sequence: int = 0
     _lock: threading.RLock = field(default_factory=threading.RLock)
     _announce_condition: threading.Condition = field(init=False)
+    _client_change_condition: threading.Condition = field(init=False)
 
     def __post_init__(self) -> None:
         self._announce_condition = threading.Condition(self._lock)
+        self._client_change_condition = threading.Condition(self._lock)
 
     def append_log(self, level: str, source: str, message: str) -> None:
         with self._lock:
@@ -51,6 +54,24 @@ class StateCache:
 
         with self._lock:
             return list(self.logs[-limit:])
+
+    def notify_client_change(self) -> int:
+        with self._client_change_condition:
+            self.client_change_sequence += 1
+            self._client_change_condition.notify_all()
+            return self.client_change_sequence
+
+    def snapshot_client_change_id(self) -> int:
+        with self._lock:
+            return self.client_change_sequence
+
+    def wait_for_client_change(self, *, after_id: int, timeout: float) -> int:
+        with self._client_change_condition:
+            self._client_change_condition.wait_for(
+                lambda: self.client_change_sequence > after_id,
+                timeout=timeout,
+            )
+            return self.client_change_sequence
 
     def append_announce(self, record: dict[str, Any]) -> dict[str, Any]:
         with self._announce_condition:

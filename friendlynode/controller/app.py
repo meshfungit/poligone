@@ -771,12 +771,14 @@ class ControllerApp:
     def save_client(self, payload: dict[str, object]) -> dict[str, object]:
         identity = self.client_store.save_identity(payload)
         self.state.append_log("info", "client", f"Local identity saved: {identity.id}")
+        self.state.notify_client_change()
         return self._client_api_identity_payload(identity, include_conversations=True)
 
     def generate_client_identity(self, client_id: str) -> dict[str, object]:
         self.engine_supervisor.generate_lxmf_identity(client_id)
         identity = self._find_client_identity(client_id)
         self.state.append_log("info", "client", f"Local identity generated: {identity.id}")
+        self.state.notify_client_change()
         return self._client_api_identity_payload(identity, include_conversations=True)
 
     def start_client_lxmf(self, client_id: str) -> dict[str, object]:
@@ -815,6 +817,7 @@ class ControllerApp:
         self.engine_supervisor.stop_lxmf_worker(client_id)
         self.client_store.remove_identity(client_id)
         self.state.append_log("info", "client", f"Local identity removed: {client_id}")
+        self.state.notify_client_change()
         return self.list_clients()
 
     def list_client_conversations(self, client_id: str) -> dict[str, object]:
@@ -833,11 +836,13 @@ class ControllerApp:
     def clear_client_messages(self, client_id: str, contact_id: str) -> dict[str, object]:
         result = self.client_contact_store.clear_messages(client_id, contact_id)
         self.state.append_log("info", "client", f"Messages cleared: {client_id}/{contact_id}")
+        self.state.notify_client_change()
         return result
 
     def save_client_contact(self, client_id: str, payload: dict[str, object]) -> dict[str, object]:
         contact = self.client_contact_store.save_contact(client_id, payload)
         self.state.append_log("info", "client", f"Contact saved: {client_id}/{contact['id']}")
+        self.state.notify_client_change()
         return {
             "client_id": client_id,
             "contact": contact,
@@ -853,6 +858,7 @@ class ControllerApp:
         content = str(payload.get("content") or "")
         message = self.client_contact_store.add_outbound_message(client_id, contact_id, content)
         self.state.append_log("info", "client", f"Message queued: {client_id}/{contact_id}")
+        self.state.notify_client_change()
         return {
             "client_id": client_id,
             "contact_id": contact_id,
@@ -994,6 +1000,12 @@ class ControllerApp:
 
         return runtime
 
+    def client_change_id(self) -> int:
+        return self.state.snapshot_client_change_id()
+
+    def wait_for_client_change(self, *, after_id: int, timeout: float) -> int:
+        return self.state.wait_for_client_change(after_id=after_id, timeout=timeout)
+
     def wait_for_announces(
         self,
         *,
@@ -1044,6 +1056,7 @@ class ControllerApp:
                 "client",
                 f"LXMF message received: {identity_id}/{contact_id}/{message.get('id')}",
             )
+            self.state.notify_client_change()
         except Exception as exc:
             self.state.append_log(
                 "error",

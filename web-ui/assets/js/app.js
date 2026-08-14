@@ -74,6 +74,8 @@ let showMessageUnprintable = false;
 let interfaceStatusRefreshInFlight = false;
 let engineRestartInFlight = false;
 let announceStream = null;
+let clientStream = null;
+let clientRefreshInFlight = false;
 let announceQueryKey = "";
 let announceFetchInFlight = false;
 const announceFilters = {
@@ -3530,6 +3532,154 @@ function requestAnnounceRefresh(onChange) {
   }
 
   startAnnounceUpdates(true);
+}
+
+function startAnnounceUpdates(force) {
+
+function startClientUpdates() {
+  if (!Boolean(currentStatus?.config?.client_enabled)) {
+    if (clientStream !== null) {
+      clientStream.close();
+      clientStream = null;
+    }
+    return;
+  }
+
+  if (typeof EventSource !== "function") {
+    return;
+  }
+
+  if (clientStream !== null) {
+    clientStream.close();
+  }
+
+  clientStream = new EventSource("/api/clients/stream");
+
+  clientStream.addEventListener("ready", () => {
+    refreshClientDataFromStream();
+  });
+
+  clientStream.addEventListener("client-change", () => {
+    refreshClientDataFromStream();
+  });
+
+  clientStream.onerror = () => {
+    // EventSource reconnects automatically. The next "ready" event
+    // refreshes the complete client snapshot, so no message can be missed.
+  };
+}
+
+async function refreshClientDataFromStream() {
+  if (clientRefreshInFlight) {
+    return;
+  }
+
+  clientRefreshInFlight = true;
+
+  try {
+    const response = await fetch("/api/clients", {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+      },
+      cache: "no-store",
+    });
+
+    if (!response.ok) {
+      throw new Error(`Client refresh failed: HTTP ${response.status}`);
+    }
+
+    const clients = await response.json();
+
+    if (currentStatus === null) {
+      currentStatus = {};
+    }
+
+    currentStatus.clients = clients;
+
+    if (getActiveTab() === "Client") {
+      refreshVisibleClientData();
+    }
+  } catch (error) {
+    appendUiError(error);
+  } finally {
+    clientRefreshInFlight = false;
+  }
+}
+
+function refreshVisibleClientData() {
+  renderSidebarContacts("Client");
+
+  const clientsData = currentStatus?.clients || {};
+  const clients = Array.isArray(clientsData.clients) ? clientsData.clients : [];
+
+  if (clients.length === 0) {
+    render("Client");
+    return;
+  }
+
+  const activeClient = selectActiveClient(clients);
+  const conversations = getClientConversations(activeClient);
+  const previousContactId = activeContactId;
+  const activeConversation = selectActiveConversation(conversations);
+  const currentContactId = activeConversation?.contact?.id || "";
+
+  if (previousContactId !== currentContactId) {
+    render("Client");
+    return;
+  }
+
+  const list = document.querySelector(".client-thread-panel .message-list");
+
+  if (list === null) {
+    render("Client");
+    return;
+  }
+
+  const messages = Array.isArray(activeConversation?.messages)
+    ? activeConversation.messages
+    : [];
+
+  refreshMessageList(list, messages);
+}
+
+function refreshMessageList(list, messages) {
+  const stickToBottom = isMessageListAtBottom(list);
+  const previousScrollTop = list.scrollTop;
+
+  list.replaceChildren();
+
+  if (messages.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "settings-hint";
+    empty.textContent = "No messages";
+    list.appendChild(empty);
+  }
+
+  for (const message of messages) {
+    const bubble = document.createElement("div");
+    bubble.className = message.direction === "outbound"
+      ? "message-bubble outbound"
+      : "message-bubble inbound";
+    bubble.appendChild(renderMicronContent(message.content || ""));
+    list.appendChild(bubble);
+  }
+
+  window.setTimeout(() => {
+    if (stickToBottom) {
+      list.scrollTop = list.scrollHeight;
+    } else {
+      list.scrollTop = previousScrollTop;
+    }
+  }, 0);
+}
+
+function isMessageListAtBottom(list) {
+  if (list.scrollHeight <= list.clientHeight) {
+    return true;
+  }
+
+  return list.scrollHeight - list.scrollTop - list.clientHeight < 12;
 }
 
 function startAnnounceUpdates(force) {
@@ -9040,6 +9190,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
   fetchStatus()
     .then(() => {
+      startClientUpdates();
+
       if (!Boolean(currentStatus?.config?.nomadnet_enabled)) {
         return;
       }

@@ -545,6 +545,10 @@ class ControllerHttpServer:
                 if parsed.path == "/api/clients":
                     self._send_json(app.list_clients())
                     return
+
+                if parsed.path == "/api/clients/stream":
+                    self._serve_client_stream()
+                    return
                 client_route = self._parse_client_route(parsed.path)
                 if client_route is not None:
                     client_id, action, contact_id = client_route
@@ -1013,6 +1017,37 @@ class ControllerHttpServer:
                                 pass
 
                             self._write_sse_event("announce", record)
+                except (BrokenPipeError, ConnectionResetError, OSError):
+                    return
+
+            def _serve_client_stream(self) -> None:
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+                self.send_header("Cache-Control", "no-cache")
+                self.send_header("Connection", "keep-alive")
+                self.end_headers()
+
+                last_id = app.client_change_id()
+
+                try:
+                    self._write_sse_event("ready", {"change_id": last_id})
+
+                    while not controller_server.restart_requested:
+                        change_id = app.wait_for_client_change(
+                            after_id=last_id,
+                            timeout=15,
+                        )
+
+                        if change_id <= last_id:
+                            self.wfile.write(b": keepalive\n\n")
+                            self.wfile.flush()
+                            continue
+
+                        last_id = change_id
+                        self._write_sse_event(
+                            "client-change",
+                            {"change_id": last_id},
+                        )
                 except (BrokenPipeError, ConnectionResetError, OSError):
                     return
 
