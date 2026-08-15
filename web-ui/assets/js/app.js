@@ -4773,11 +4773,6 @@ async function repeatStoredMessage() {
   }
 }
 
-  const state = { ...messageMenuState };
-  messageMenuState = null;
-  await sendStoredMessage(state.clientId, state.contactId, state.message?.content || "");
-}
-
 function renderForwardMessageModal() {
   const overlay = document.createElement("div");
   overlay.className = "client-editor-overlay";
