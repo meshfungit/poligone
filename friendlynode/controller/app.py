@@ -28,6 +28,8 @@ RUNTIME_PACKAGE_INSTALL_TIMEOUT_SECONDS = 180
 RUNTIME_INSTALL_OUTPUT_LIMIT = 1400
 CLIENT_API_RUNTIME_MODE = "shared"
 CLIENT_API_RUNTIME_MODES = (CLIENT_API_RUNTIME_MODE,)
+LXMF_ORPHANED_ON_START_ERROR = "FriendlyNode restarted before LXMF delivery completed"
+LXMF_WORKER_EXITED_ERROR = "LXMF worker ended before delivery completed"
 ANNOUNCE_TYPE_BY_ASPECT = {
     "lxmf.delivery": "identity",
     "lxmf.propagation": "lxmf.propagation",
@@ -127,6 +129,20 @@ class ControllerApp:
         self.config.ensure_dirs()
         self.state.append_log("info", "controller", "controller start requested")
 
+        if self.client_contact_store is not None:
+            failed_count = self.client_contact_store.fail_pending_outbound_messages(
+                None,
+                LXMF_ORPHANED_ON_START_ERROR,
+            )
+
+            if failed_count > 0:
+                self.state.append_log(
+                    "warning",
+                    "client",
+                    f"Marked {failed_count} orphaned outbound LXMF message(s) as failed",
+                )
+                self.state.notify_client_change()
+
         runtime = self._apply_active_runtime()
         self.state.append_log(
             "info",
@@ -145,7 +161,6 @@ class ControllerApp:
 
         self.engine_supervisor.start()
         self.state.append_log("info", "controller", "controller started")
-
     def stop(self) -> None:
         self.state.append_log("info", "controller", "controller stop requested")
         self.engine_supervisor.stop()
@@ -1112,6 +1127,36 @@ class ControllerApp:
 
         if event.topic in ("lxmf.message_delivered", "lxmf.message_failed"):
             self._handle_lxmf_outbound_state(event.topic, event.payload)
+            return
+
+        if event.topic == "lxmf.worker_exited":
+            self._handle_lxmf_worker_exited(event.payload)
+    def _handle_lxmf_worker_exited(self, payload: dict[str, Any]) -> None:
+        if self.client_contact_store is None:
+            return
+
+        identity_id = str(payload.get("identity_id") or "").strip()
+
+        if identity_id == "":
+            return
+
+        failed_count = self.client_contact_store.fail_pending_outbound_messages(
+            identity_id,
+            LXMF_WORKER_EXITED_ERROR,
+        )
+
+        if failed_count == 0:
+            return
+
+        self.state.append_log(
+            "warning",
+            "client",
+            (
+                f"LXMF worker exited for {identity_id}; "
+                f"marked {failed_count} pending message(s) as failed"
+            ),
+        )
+        self.state.notify_client_change()
 
     def _handle_lxmf_outbound_state(self, topic: str, payload: dict[str, Any]) -> None:
         if self.client_contact_store is None:

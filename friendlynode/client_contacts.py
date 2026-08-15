@@ -14,6 +14,11 @@ MESSAGE_STATE_SENDING = "sending"
 MESSAGE_STATE_DELIVERED = "delivered"
 MESSAGE_STATE_FAILED = "failed"
 MESSAGE_STATE_RECEIVED = "received"
+MESSAGE_PENDING_STATES = frozenset({
+    "sending",
+    "queueing",
+    "queued",
+})
 
 OUTBOUND_MESSAGE_MUTABLE_FIELDS = frozenset({
     "state",
@@ -89,8 +94,11 @@ class ClientContactStore:
         if not isinstance(raw, list):
             return []
 
-        return [message for message in raw if isinstance(message, dict)]
-
+        return [
+            self._normalise_message_record(message)
+            for message in raw
+            if isinstance(message, dict)
+        ]
     def clear_messages(self, identity_id: str, contact_id: str) -> dict[str, object]:
         messages_path = self._messages_path(identity_id, contact_id)
         messages_path.parent.mkdir(parents=True, exist_ok=True)
@@ -270,6 +278,55 @@ class ClientContactStore:
             return message
 
         return None
+    def fail_pending_outbound_messages(
+        self,
+        identity_id: str | None,
+        error: str,
+    ) -> int:
+        identity_paths = self._pending_identity_paths(identity_id)
+        failed_count = 0
+        state_datetime = self._now_iso()
+
+        for identity_path in identity_paths:
+            conversations_dir = identity_path / "conversations"
+
+            if not conversations_dir.exists():
+                continue
+
+            for messages_path in sorted(conversations_dir.glob("*/messages.json")):
+                raw = json.loads(messages_path.read_text(encoding="utf-8"))
+
+                if not isinstance(raw, list):
+                    continue
+
+                changed = False
+                messages: list[dict[str, object]] = []
+
+                for raw_message in raw:
+                    if not isinstance(raw_message, dict):
+                        continue
+
+                    message = self._normalise_message_record(raw_message)
+                    direction = str(message.get("direction") or "")
+                    state = str(message.get("state") or "").lower()
+
+                    if direction == "outbound" and state in MESSAGE_PENDING_STATES:
+                        message["state"] = MESSAGE_STATE_FAILED
+                        message["state_datetime"] = state_datetime
+                        message["error"] = error
+                        failed_count += 1
+                        changed = True
+
+                    messages.append(message)
+
+                if changed:
+                    messages_path.write_text(
+                        json.dumps(messages, indent=2, sort_keys=True),
+                        encoding="utf-8",
+                    )
+
+        return failed_count
+
     def export_contact(self, identity_id: str, contact_id: str) -> dict[str, object]:
         contact_path = self._contact_path(identity_id, contact_id)
 
@@ -315,6 +372,32 @@ class ClientContactStore:
                 json.dumps(TEST_MESSAGES, indent=2, sort_keys=True),
                 encoding="utf-8",
             )
+
+    def _normalise_message_record(self, message: dict[str, object]) -> dict[str, object]:
+        normalised = dict(message)
+        direction = str(normalised.get("direction") or "")
+        state = str(normalised.get("state") or "").strip().lower()
+
+        if direction == "inbound" and state == "":
+            normalised["state"] = MESSAGE_STATE_RECEIVED
+        elif direction == "outbound" and state in ("queueing", "queued"):
+            normalised["state"] = MESSAGE_STATE_SENDING
+
+        return normalised
+
+    def _pending_identity_paths(self, identity_id: str | None) -> list[Path]:
+        if identity_id is not None:
+            identity_path = self._identity_path(identity_id)
+            return [identity_path] if identity_path.exists() else []
+
+        if not self.identities_dir.exists():
+            return []
+
+        return [
+            path
+            for path in sorted(self.identities_dir.iterdir())
+            if path.is_dir()
+        ]
 
     def _normalise_id(self, raw_id: object) -> str:
         item_id = str(raw_id or "").strip().lower()

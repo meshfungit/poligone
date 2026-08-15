@@ -120,6 +120,9 @@ class LxmfProcessManager:
                     process.kill()
                     process.wait()
 
+        if worker.output_thread is not None and worker.output_thread is not threading.current_thread():
+            worker.output_thread.join(timeout=LXMF_WORKER_TERMINATE_TIMEOUT_SECONDS)
+
         self._workers.pop(identity_id, None)
 
     def restart(self, identity_id: str) -> dict[str, object]:
@@ -310,6 +313,18 @@ class LxmfProcessManager:
 
             print(line, end="", flush=True)
 
+        exit_code = worker.process.wait()
+
+        if self.event_sink is not None:
+            self.event_sink(
+                EngineEvent(
+                    "lxmf.worker_exited",
+                    {
+                        "identity_id": worker.identity_id,
+                        "exit_code": exit_code,
+                    },
+                )
+            )
     def _handle_worker_event(self, worker: LxmfWorkerProcess, raw_event: str) -> None:
         if self.event_sink is None:
             return
