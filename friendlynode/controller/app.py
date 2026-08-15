@@ -876,19 +876,45 @@ class ControllerApp:
         payload: dict[str, object],
     ) -> dict[str, object]:
         content = str(payload.get("content") or "")
-        contact = self.client_contact_store.export_contact(client_id, contact_id)
-
-        if len(contact) == 0:
-            raise ValueError(f"Contact does not exist: {client_id}/{contact_id}")
-
-        destination_hash = self._client_contact_destination_hash(contact)
-
-        if destination_hash == "":
-            raise ValueError(f"Contact has no LXMF destination: {client_id}/{contact_id}")
-
+        contact, destination_hash = self._client_outbound_target(client_id, contact_id)
         message = self.client_contact_store.add_outbound_message(client_id, contact_id, content)
-        local_message_id = str(message.get("id") or "")
         self.state.notify_client_change()
+        return self._queue_client_outbound_message(
+            client_id,
+            contact_id,
+            message,
+            destination_hash,
+        )
+
+    def repeat_client_message(
+        self,
+        client_id: str,
+        contact_id: str,
+        message_id: str,
+    ) -> dict[str, object]:
+        _, destination_hash = self._client_outbound_target(client_id, contact_id)
+        message = self.client_contact_store.prepare_outbound_retry(
+            client_id,
+            contact_id,
+            message_id,
+        )
+        self.state.notify_client_change()
+        return self._queue_client_outbound_message(
+            client_id,
+            contact_id,
+            message,
+            destination_hash,
+        )
+
+    def _queue_client_outbound_message(
+        self,
+        client_id: str,
+        contact_id: str,
+        message: dict[str, object],
+        destination_hash: str,
+    ) -> dict[str, object]:
+        local_message_id = str(message.get("id") or "")
+        content = str(message.get("content") or "")
 
         try:
             result = self.engine_supervisor.send_lxmf_message(
@@ -941,6 +967,23 @@ class ControllerApp:
             "message": message,
             "messages": self.client_contact_store.list_messages(client_id, contact_id),
         }
+
+    def _client_outbound_target(
+        self,
+        client_id: str,
+        contact_id: str,
+    ) -> tuple[dict[str, object], str]:
+        contact = self.client_contact_store.export_contact(client_id, contact_id)
+
+        if len(contact) == 0:
+            raise ValueError(f"Contact does not exist: {client_id}/{contact_id}")
+
+        destination_hash = self._client_contact_destination_hash(contact)
+
+        if destination_hash == "":
+            raise ValueError(f"Contact has no LXMF destination: {client_id}/{contact_id}")
+
+        return contact, destination_hash
     def _client_contact_destination_hash(self, contact: dict[str, object]) -> str:
         destination_hash = str(contact.get("destination_hash") or "").strip().lower()
 

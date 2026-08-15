@@ -755,6 +755,15 @@ class ControllerHttpServer:
                     self._send_json(app.save_client(payload))
                     return
 
+                message_action_route = self._parse_client_message_action_route(parsed.path)
+
+                if message_action_route is not None:
+                    client_id, contact_id, message_id, action = message_action_route
+
+                    if action == "repeat":
+                        self._send_json(app.repeat_client_message(client_id, contact_id, message_id))
+                        return
+
                 client_route = self._parse_client_route(parsed.path)
                 if client_route is not None:
                     client_id, action, contact_id = client_route
@@ -1088,6 +1097,23 @@ class ControllerHttpServer:
                     return int(params.get(key, [default])[0])
                 except (TypeError, ValueError):
                     return default
+
+            def _parse_client_message_action_route(
+                self,
+                path: str,
+            ) -> tuple[str, str, str, str] | None:
+                parts = [unquote(part) for part in path.strip("/").split("/")]
+
+                if (
+                    len(parts) == 8
+                    and parts[0:2] == ["api", "clients"]
+                    and parts[3] == "conversations"
+                    and parts[5] == "messages"
+                    and parts[7] == "repeat"
+                ):
+                    return parts[2], parts[4], parts[6], parts[7]
+
+                return None
 
             def _parse_client_message_route(self, path: str) -> tuple[str, str, str] | None:
                 parts = [unquote(part) for part in path.strip("/").split("/")]

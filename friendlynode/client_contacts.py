@@ -23,6 +23,7 @@ MESSAGE_PENDING_STATES = frozenset({
 OUTBOUND_MESSAGE_MUTABLE_FIELDS = frozenset({
     "state",
     "state_datetime",
+    "delivery_attempts",
     "lxmf_message_id",
     "destination_hash",
     "error",
@@ -237,6 +238,7 @@ class ClientContactStore:
             "created_at": created_at,
             "state": MESSAGE_STATE_SENDING,
             "state_datetime": created_at,
+            "delivery_attempts": 1,
             "lxmf_message_id": "",
             "destination_hash": "",
             "error": "",
@@ -255,7 +257,7 @@ class ClientContactStore:
     ) -> dict[str, object] | None:
         messages = self.list_messages(identity_id, contact_id)
 
-        for message in messages:
+        for index, message in enumerate(messages):
             if str(message.get("id") or "") != message_id:
                 continue
             if message.get("direction") != "outbound":
@@ -274,10 +276,54 @@ class ClientContactStore:
                 message["state"] = requested_state
                 message["state_datetime"] = self._now_iso()
 
+            delivery_attempts = self._normalise_delivery_attempts(message.get("delivery_attempts"))
+
+            if (
+                requested_state == MESSAGE_STATE_DELIVERED
+                and previous_state != MESSAGE_STATE_DELIVERED
+                and delivery_attempts > 1
+            ):
+                messages.append(messages.pop(index))
+
             self._write_messages(identity_id, contact_id, messages)
             return message
 
         return None
+    def prepare_outbound_retry(
+        self,
+        identity_id: str,
+        contact_id: str,
+        message_id: str,
+    ) -> dict[str, object]:
+        messages = self.list_messages(identity_id, contact_id)
+
+        for message in messages:
+            if str(message.get("id") or "") != message_id:
+                continue
+
+            if str(message.get("direction") or "") != "outbound":
+                raise ValueError("Only outbound messages can be repeated")
+
+            state = str(message.get("state") or "").strip().lower()
+
+            if state in MESSAGE_PENDING_STATES:
+                raise ValueError("Message is already sending")
+
+            content = str(message.get("content") or "").strip()
+
+            if content == "":
+                raise ValueError("Message content cannot be empty")
+
+            message["state"] = MESSAGE_STATE_SENDING
+            message["state_datetime"] = self._now_iso()
+            message["delivery_attempts"] = self._normalise_delivery_attempts(message.get("delivery_attempts")) + 1
+            message["lxmf_message_id"] = ""
+            message["error"] = ""
+            self._write_messages(identity_id, contact_id, messages)
+            return message
+
+        raise ValueError(f"Message does not exist: {message_id}")
+
     def fail_pending_outbound_messages(
         self,
         identity_id: str | None,
@@ -380,10 +426,22 @@ class ClientContactStore:
 
         if direction == "inbound" and state == "":
             normalised["state"] = MESSAGE_STATE_RECEIVED
-        elif direction == "outbound" and state in ("queueing", "queued"):
-            normalised["state"] = MESSAGE_STATE_SENDING
+        elif direction == "outbound":
+            if state in ("queueing", "queued"):
+                normalised["state"] = MESSAGE_STATE_SENDING
+
+            normalised["delivery_attempts"] = self._normalise_delivery_attempts(
+                normalised.get("delivery_attempts")
+            )
 
         return normalised
+    def _normalise_delivery_attempts(self, value: object) -> int:
+        try:
+            attempts = int(value)
+        except (TypeError, ValueError):
+            return 1
+
+        return max(1, attempts)
 
     def _pending_identity_paths(self, identity_id: str | None) -> list[Path]:
         if identity_id is not None:

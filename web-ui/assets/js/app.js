@@ -8,6 +8,7 @@ const FRIENDLYNODE_MODULE_KEYS = Object.freeze([
 ]);
 
 const MESSAGE_MENU_GAP_PX = 6;
+const MESSAGE_MENU_VIEWPORT_MARGIN_PX = 12;
 
 let runtimeModuleDraft = null;
 let runtimeModuleApplyInFlight = false;
@@ -4572,8 +4573,9 @@ function renderMessageItem(message) {
       clientId: activeClientId,
       contactId: activeContactId,
       message: { ...message },
-      x: rect.left,
-      y: rect.bottom + MESSAGE_MENU_GAP_PX,
+      anchorTop: rect.top,
+      anchorRight: rect.right,
+      anchorBottom: rect.bottom,
     };
     render("Client");
   };
@@ -4631,41 +4633,145 @@ function renderMessageMenu() {
 
   const menu = document.createElement("div");
   menu.className = "contact-menu message-menu";
-  menu.style.left = `${messageMenuState.x}px`;
-  menu.style.top = `${messageMenuState.y}px`;
+  menu.style.left = "0px";
+  menu.style.top = "0px";
+  menu.style.visibility = "hidden";
   menu.onclick = (event) => event.stopPropagation();
 
+  const message = messageMenuState.message || {};
+  const direction = String(message.direction || "");
+  const state = String(message.state || "").toLowerCase();
+  const repeatDisabled = direction === "outbound"
+    && (state === "sending" || state === "queueing" || state === "queued");
+
   const actions = [
-    ["Repeat", repeatStoredMessage],
-    ["Forward", () => {
-      forwardMessageState = { ...messageMenuState };
-      messageMenuState = null;
-      render("Client");
-    }],
-    ["Properties", () => {
-      messagePropertiesState = { ...messageMenuState.message };
-      messageMenuState = null;
-      render("Client");
-    }],
-    ["Delete", deleteStoredMessage],
+    {
+      label: "Repeat",
+      action: repeatStoredMessage,
+      disabled: repeatDisabled,
+    },
+    {
+      label: "Forward",
+      action: () => {
+        forwardMessageState = { ...messageMenuState };
+        messageMenuState = null;
+        render("Client");
+      },
+      disabled: false,
+    },
+    {
+      label: "Properties",
+      action: () => {
+        messagePropertiesState = { ...messageMenuState.message };
+        messageMenuState = null;
+        render("Client");
+      },
+      disabled: false,
+    },
+    {
+      label: "Delete",
+      action: deleteStoredMessage,
+      disabled: false,
+    },
   ];
 
-  for (const [label, action] of actions) {
+  for (const item of actions) {
     const button = document.createElement("button");
     button.type = "button";
-    button.textContent = label;
-    button.onclick = action;
+    button.textContent = item.label;
+    button.disabled = item.disabled;
+    button.onclick = item.action;
     menu.appendChild(button);
   }
 
   overlay.appendChild(menu);
+  window.setTimeout(() => positionMessageMenu(menu), 0);
   return overlay;
+}
+
+function positionMessageMenu(menu) {
+  if (messageMenuState === null || !menu.isConnected) {
+    return;
+  }
+
+  const menuRect = menu.getBoundingClientRect();
+  const maxLeft = Math.max(
+    MESSAGE_MENU_VIEWPORT_MARGIN_PX,
+    window.innerWidth - menuRect.width - MESSAGE_MENU_VIEWPORT_MARGIN_PX
+  );
+  const desiredLeft = messageMenuState.anchorRight - menuRect.width;
+  const left = Math.max(
+    MESSAGE_MENU_VIEWPORT_MARGIN_PX,
+    Math.min(desiredLeft, maxLeft)
+  );
+
+  const belowTop = messageMenuState.anchorBottom + MESSAGE_MENU_GAP_PX;
+  const aboveTop = messageMenuState.anchorTop - menuRect.height - MESSAGE_MENU_GAP_PX;
+  const maxTop = Math.max(
+    MESSAGE_MENU_VIEWPORT_MARGIN_PX,
+    window.innerHeight - menuRect.height - MESSAGE_MENU_VIEWPORT_MARGIN_PX
+  );
+  let top = belowTop;
+
+  if (
+    belowTop + menuRect.height > window.innerHeight - MESSAGE_MENU_VIEWPORT_MARGIN_PX
+    && aboveTop >= MESSAGE_MENU_VIEWPORT_MARGIN_PX
+  ) {
+    top = aboveTop;
+  }
+
+  top = Math.max(
+    MESSAGE_MENU_VIEWPORT_MARGIN_PX,
+    Math.min(top, maxTop)
+  );
+
+  menu.style.left = `${left}px`;
+  menu.style.top = `${top}px`;
+  menu.style.visibility = "visible";
 }
 
 async function repeatStoredMessage() {
   if (messageMenuState === null) {
     return;
   }
+
+  const state = { ...messageMenuState };
+  const message = state.message || {};
+  const messageId = String(message.id || "");
+  const direction = String(message.direction || "");
+  messageMenuState = null;
+
+  if (direction !== "outbound") {
+    await sendStoredMessage(state.clientId, state.contactId, message.content || "");
+    return;
+  }
+
+  if (messageId === "") {
+    return;
+  }
+
+  try {
+    const response = await fetch(
+      `/api/clients/${encodeURIComponent(state.clientId)}/conversations/${encodeURIComponent(state.contactId)}/messages/${encodeURIComponent(messageId)}/repeat`,
+      {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+        },
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(`Repeat message failed: HTTP ${response.status}`);
+    }
+
+    await refreshClientDataFromStream();
+    render("Client");
+  } catch (error) {
+    appendUiError(error);
+    render("Logs");
+  }
+}
 
   const state = { ...messageMenuState };
   messageMenuState = null;
@@ -4827,6 +4933,7 @@ function renderMessagePropertiesModal() {
     ["State", messagePropertiesState.state],
     ["State datetime", messagePropertiesState.state_datetime],
     ["Created at", messagePropertiesState.created_at],
+    ["Delivery attempts", messagePropertiesState.delivery_attempts],
     ["LXMF message id", messagePropertiesState.lxmf_message_id],
     ["Source hash", messagePropertiesState.source_hash],
     ["Destination hash", messagePropertiesState.destination_hash],
