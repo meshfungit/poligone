@@ -1903,6 +1903,75 @@ tr:last-child td { border-bottom: 0; }
   border-color: #1f7a55;
 }
 
+.message-entry {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.message-entry.outbound {
+  justify-content: flex-end;
+}
+
+.message-entry.inbound {
+  justify-content: flex-start;
+}
+
+.message-body {
+  width: fit-content;
+  max-width: min(70%, 520px);
+  min-width: 0;
+}
+
+.message-entry .message-bubble {
+  max-width: 100%;
+  margin-bottom: 0;
+}
+
+.message-status {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.2;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.message-menu-button {
+  flex: 0 0 auto;
+  width: 34px;
+  min-width: 34px;
+  height: 30px;
+  padding: 2px 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel2);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.message-menu-button:hover {
+  border-color: var(--accent);
+}
+
+.forward-message-contact-list {
+  display: grid;
+  gap: 6px;
+  max-height: min(48vh, 420px);
+  overflow: auto;
+  margin: 10px 0;
+}
+
+.forward-message-contact-list button {
+  width: 100%;
+  text-align: left;
+}
+
+.message-properties-modal {
+  width: min(620px, 100%);
+}
+
 .message-composer {
   position: relative;
   min-height: 62px;
@@ -2312,6 +2381,10 @@ tr:last-child td { border-bottom: 0; }
   .message-bubble {
     max-width: 88%;
   }
+  
+  .message-body {
+    max-width: calc(88% - 40px);
+  }  
 
   .message-composer {
     padding: 8px;

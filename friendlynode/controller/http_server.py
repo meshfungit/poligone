@@ -800,6 +800,13 @@ class ControllerHttpServer:
                 if self._reject_disabled_component(parsed.path):
                     return
 
+                message_route = self._parse_client_message_route(parsed.path)
+
+                if message_route is not None:
+                    client_id, contact_id, message_id = message_route
+                    self._send_json(app.delete_client_message(client_id, contact_id, message_id))
+                    return
+
                 client_route = self._parse_client_route(parsed.path)
 
                 if client_route is not None:
@@ -818,7 +825,6 @@ class ControllerHttpServer:
                     {"error": "not_found", "path": parsed.path},
                     HTTPStatus.NOT_FOUND,
                 )
-
             def log_message(self, fmt: str, *args: Any) -> None:
                 print(f"[http] {self.address_string()} - {fmt % args}")
 
@@ -1083,6 +1089,19 @@ class ControllerHttpServer:
                 except (TypeError, ValueError):
                     return default
 
+            def _parse_client_message_route(self, path: str) -> tuple[str, str, str] | None:
+                parts = [unquote(part) for part in path.strip("/").split("/")]
+
+                if (
+                    len(parts) == 7
+                    and parts[0:2] == ["api", "clients"]
+                    and parts[3] == "conversations"
+                    and parts[5] == "messages"
+                ):
+                    return parts[2], parts[4], parts[6]
+
+                return None
+
             def _parse_client_route(self, path: str) -> tuple[str, str, str | None] | None:
                 parts = [unquote(part) for part in path.strip("/").split("/")]
 
@@ -1115,5 +1134,3 @@ class ControllerHttpServer:
                         return client_id, "messages", contact_id
 
                 return None
-
-        return FriendlyNodeRequestHandler

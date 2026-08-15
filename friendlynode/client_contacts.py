@@ -10,8 +10,14 @@ from pathlib import Path
 
 from friendlynode.config.defaults import DEFAULT_LOCAL_IDENTITIES_DIR
 
+MESSAGE_STATE_SENDING = "sending"
+MESSAGE_STATE_DELIVERED = "delivered"
+MESSAGE_STATE_FAILED = "failed"
+MESSAGE_STATE_RECEIVED = "received"
+
 OUTBOUND_MESSAGE_MUTABLE_FIELDS = frozenset({
     "state",
+    "state_datetime",
     "lxmf_message_id",
     "destination_hash",
     "error",
@@ -95,6 +101,25 @@ class ClientContactStore:
             "messages": [],
         }
 
+    def delete_message(self, identity_id: str, contact_id: str, message_id: str) -> dict[str, object]:
+        target_id = str(message_id).strip()
+
+        if target_id == "":
+            raise ValueError("Message id cannot be empty")
+
+        messages = self.list_messages(identity_id, contact_id)
+        remaining = [message for message in messages if str(message.get("id") or "") != target_id]
+
+        if len(remaining) == len(messages):
+            raise ValueError(f"Message does not exist: {target_id}")
+
+        self._write_messages(identity_id, contact_id, remaining)
+        return {
+            "identity_id": self._normalise_id(identity_id),
+            "contact_id": self._normalise_id(contact_id),
+            "message_id": target_id,
+            "messages": remaining,
+        }
     def save_contact(self, identity_id: str, payload: dict[str, object]) -> dict[str, object]:
         contact_id = self._normalise_id(
             payload.get("id")
@@ -178,6 +203,8 @@ class ClientContactStore:
             "direction": "inbound",
             "content": content,
             "created_at": created_at,
+            "state": MESSAGE_STATE_RECEIVED,
+            "state_datetime": self._now_iso(),
             "source_hash": str(payload.get("source_hash") or ""),
             "destination_hash": str(payload.get("destination_hash") or ""),
             "title": str(payload.get("title") or ""),
@@ -185,14 +212,8 @@ class ClientContactStore:
             "transport_encryption": str(payload.get("transport_encryption") or ""),
         }
         messages.append(message)
-        messages_path = self._messages_path(identity_id, contact_id)
-        messages_path.parent.mkdir(parents=True, exist_ok=True)
-        messages_path.write_text(
-            json.dumps(messages, indent=2, sort_keys=True),
-            encoding="utf-8",
-        )
+        self._write_messages(identity_id, contact_id, messages)
         return message
-
     def add_outbound_message(self, identity_id: str, contact_id: str, content: str) -> dict[str, object]:
         text = content.strip()
 
@@ -200,12 +221,14 @@ class ClientContactStore:
             raise ValueError("Message content cannot be empty")
 
         messages = self.list_messages(identity_id, contact_id)
+        created_at = self._now_iso()
         message = {
             "id": f"outbound-{secrets.token_hex(8)}",
             "direction": "outbound",
             "content": text,
-            "created_at": datetime.now(UTC).isoformat(timespec="seconds"),
-            "state": "queueing",
+            "created_at": created_at,
+            "state": MESSAGE_STATE_SENDING,
+            "state_datetime": created_at,
             "lxmf_message_id": "",
             "destination_hash": "",
             "error": "",
@@ -213,7 +236,6 @@ class ClientContactStore:
         messages.append(message)
         self._write_messages(identity_id, contact_id, messages)
         return message
-
     def update_outbound_message(
         self,
         identity_id: str,
@@ -233,15 +255,21 @@ class ClientContactStore:
             if expected_state is not None and str(message.get("state") or "") != expected_state:
                 return message
 
+            previous_state = str(message.get("state") or "")
+            requested_state = str(updates.get("state") or previous_state)
+
             for key, value in updates.items():
-                if key in OUTBOUND_MESSAGE_MUTABLE_FIELDS:
+                if key in OUTBOUND_MESSAGE_MUTABLE_FIELDS and key not in ("state", "state_datetime"):
                     message[key] = value
+
+            if requested_state != previous_state:
+                message["state"] = requested_state
+                message["state_datetime"] = self._now_iso()
 
             self._write_messages(identity_id, contact_id, messages)
             return message
 
         return None
-
     def export_contact(self, identity_id: str, contact_id: str) -> dict[str, object]:
         contact_path = self._contact_path(identity_id, contact_id)
 
@@ -304,6 +332,9 @@ class ClientContactStore:
             text = text[7:]
 
         return text
+
+    def _now_iso(self) -> str:
+        return datetime.now(UTC).isoformat(timespec="seconds")
 
     def _timestamp_to_iso(self, value: object) -> str:
         try:

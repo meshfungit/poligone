@@ -7,6 +7,8 @@ const FRIENDLYNODE_MODULE_KEYS = Object.freeze([
   "client_enabled",
 ]);
 
+const MESSAGE_MENU_GAP_PX = 6;
+
 let runtimeModuleDraft = null;
 let runtimeModuleApplyInFlight = false;
 let lxmfReleaseOverview = null;
@@ -21,6 +23,9 @@ let clientAccountMenuState = null;
 let contactModalState = null;
 let announceModalState = null;
 let clearMessagesState = null;
+let messageMenuState = null;
+let messagePropertiesState = null;
+let forwardMessageState = null;
 let transientConversation = null;
 let nomadnetBrowserState = null;
 let nomadnetBrowserSettingsModalOpen = false;
@@ -568,7 +573,6 @@ function renderClient() {
   const wrapper = document.createElement("div");
   const clientsData = currentStatus?.clients || {};
   const clients = Array.isArray(clientsData.clients) ? clientsData.clients : [];
-
   const mobileContacts = renderClientContactsPanel(clients);
   mobileContacts.classList.add("mobile-client-contacts");
   wrapper.appendChild(mobileContacts);
@@ -584,6 +588,18 @@ function renderClient() {
 
   if (clientAccountMenuState !== null) {
     wrapper.appendChild(renderClientAccountMenu());
+  }
+
+  if (messageMenuState !== null) {
+    wrapper.appendChild(renderMessageMenu());
+  }
+
+  if (messagePropertiesState !== null) {
+    wrapper.appendChild(renderMessagePropertiesModal());
+  }
+
+  if (forwardMessageState !== null) {
+    wrapper.appendChild(renderForwardMessageModal());
   }
 
   if (contactModalState !== null) {
@@ -3655,12 +3671,7 @@ function refreshMessageList(list, messages) {
   }
 
   for (const message of messages) {
-    const bubble = document.createElement("div");
-    bubble.className = message.direction === "outbound"
-      ? "message-bubble outbound"
-      : "message-bubble inbound";
-    bubble.appendChild(renderMicronContent(message.content || ""));
-    list.appendChild(bubble);
+    list.appendChild(renderMessageItem(message));
   }
 
   window.setTimeout(() => {
@@ -4519,10 +4530,7 @@ function renderMessageThread(contact, messages) {
   }
 
   for (const message of messages) {
-    const bubble = document.createElement("div");
-    bubble.className = message.direction === "outbound" ? "message-bubble outbound" : "message-bubble inbound";
-    bubble.appendChild(renderMicronContent(message.content || ""));
-    list.appendChild(bubble);
+    list.appendChild(renderMessageItem(message));
   }
 
   panel.appendChild(list);
@@ -4534,6 +4542,335 @@ function renderMessageThread(contact, messages) {
 
   scrollMessageListToBottom(list);
   return panel;
+}
+
+function renderMessageItem(message) {
+  const direction = message.direction === "outbound" ? "outbound" : "inbound";
+  const entry = document.createElement("div");
+  entry.className = `message-entry ${direction}`;
+
+  const body = document.createElement("div");
+  body.className = "message-body";
+
+  const bubble = document.createElement("div");
+  bubble.className = `message-bubble ${direction}`;
+  bubble.appendChild(renderMicronContent(message.content || ""));
+  body.appendChild(bubble);
+  body.appendChild(renderMessageStatus(message));
+  entry.appendChild(body);
+
+  const menuButton = document.createElement("button");
+  menuButton.type = "button";
+  menuButton.className = "message-menu-button";
+  menuButton.textContent = "...";
+  menuButton.title = "Message actions";
+  menuButton.setAttribute("aria-label", "Message actions");
+  menuButton.onclick = (event) => {
+    event.stopPropagation();
+    const rect = menuButton.getBoundingClientRect();
+    messageMenuState = {
+      clientId: activeClientId,
+      contactId: activeContactId,
+      message: { ...message },
+      x: rect.left,
+      y: rect.bottom + MESSAGE_MENU_GAP_PX,
+    };
+    render("Client");
+  };
+  entry.appendChild(menuButton);
+  return entry;
+}
+
+function renderMessageStatus(message) {
+  const status = document.createElement("div");
+  status.className = "message-status";
+  status.textContent = `State: ${formatMessageState(message.state)} · ${formatMessageDatetime(message.state_datetime)}`;
+  return status;
+}
+
+function formatMessageState(state) {
+  const value = String(state || "").trim().toLowerCase();
+
+  if (value === "sending" || value === "queueing" || value === "queued") {
+    return "Sending";
+  }
+
+  if (value === "delivered") {
+    return "Delivered";
+  }
+
+  if (value === "failed") {
+    return "Fail";
+  }
+
+  if (value === "received") {
+    return "Received";
+  }
+
+  return value === "" ? "-" : value;
+}
+
+function formatMessageDatetime(value) {
+  const date = new Date(String(value || ""));
+
+  if (Number.isNaN(date.getTime())) {
+    return "-";
+  }
+
+  const pad = (number) => String(number).padStart(2, "0");
+  return `${pad(date.getDate())}.${pad(date.getMonth() + 1)}.${date.getFullYear()} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
+function renderMessageMenu() {
+  const overlay = document.createElement("div");
+  overlay.className = "contact-menu-dismiss";
+  overlay.onclick = () => {
+    messageMenuState = null;
+    render("Client");
+  };
+
+  const menu = document.createElement("div");
+  menu.className = "contact-menu message-menu";
+  menu.style.left = `${messageMenuState.x}px`;
+  menu.style.top = `${messageMenuState.y}px`;
+  menu.onclick = (event) => event.stopPropagation();
+
+  const actions = [
+    ["Repeat", repeatStoredMessage],
+    ["Forward", () => {
+      forwardMessageState = { ...messageMenuState };
+      messageMenuState = null;
+      render("Client");
+    }],
+    ["Properties", () => {
+      messagePropertiesState = { ...messageMenuState.message };
+      messageMenuState = null;
+      render("Client");
+    }],
+    ["Delete", deleteStoredMessage],
+  ];
+
+  for (const [label, action] of actions) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = label;
+    button.onclick = action;
+    menu.appendChild(button);
+  }
+
+  overlay.appendChild(menu);
+  return overlay;
+}
+
+async function repeatStoredMessage() {
+  if (messageMenuState === null) {
+    return;
+  }
+
+  const state = { ...messageMenuState };
+  messageMenuState = null;
+  await sendStoredMessage(state.clientId, state.contactId, state.message?.content || "");
+}
+
+function renderForwardMessageModal() {
+  const overlay = document.createElement("div");
+  overlay.className = "client-editor-overlay";
+
+  const dialog = document.createElement("section");
+  dialog.className = "client-editor forward-message-modal";
+
+  const title = document.createElement("h2");
+  title.textContent = "Forward message";
+  dialog.appendChild(title);
+
+  const clientsData = currentStatus?.clients || {};
+  const clients = Array.isArray(clientsData.clients) ? clientsData.clients : [];
+  const client = clients.find((item) => item.id === forwardMessageState.clientId) || null;
+  const conversations = client === null ? [] : getClientConversations(client);
+
+  const list = document.createElement("div");
+  list.className = "forward-message-contact-list";
+
+  if (conversations.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "settings-hint";
+    empty.textContent = "No contacts";
+    list.appendChild(empty);
+  }
+
+  for (const conversation of conversations) {
+    const contact = conversation?.contact;
+
+    if (contact === null || contact === undefined) {
+      continue;
+    }
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = contact.name || contact.id || "-";
+    button.onclick = () => forwardStoredMessage(contact.id);
+    list.appendChild(button);
+  }
+
+  dialog.appendChild(list);
+
+  const actions = document.createElement("div");
+  actions.className = "settings-row client-editor-actions";
+
+  const cancelButton = document.createElement("button");
+  cancelButton.type = "button";
+  cancelButton.textContent = "Cancel";
+  cancelButton.onclick = () => {
+    forwardMessageState = null;
+    render("Client");
+  };
+  actions.appendChild(cancelButton);
+
+  dialog.appendChild(actions);
+  overlay.appendChild(dialog);
+  return overlay;
+}
+
+async function forwardStoredMessage(contactId) {
+  if (forwardMessageState === null) {
+    return;
+  }
+
+  const state = { ...forwardMessageState };
+  forwardMessageState = null;
+  await sendStoredMessage(state.clientId, contactId, state.message?.content || "");
+}
+
+async function sendStoredMessage(clientId, contactId, content) {
+  const text = String(content || "").trim();
+
+  if (clientId === "" || contactId === "" || text === "") {
+    return;
+  }
+
+  try {
+    const response = await fetch(
+      `/api/clients/${encodeURIComponent(clientId)}/conversations/${encodeURIComponent(contactId)}/messages`,
+      {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ content: text }),
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(`Send message failed: HTTP ${response.status}`);
+    }
+
+    await refreshClientDataFromStream();
+    render("Client");
+  } catch (error) {
+    appendUiError(error);
+    render("Logs");
+  }
+}
+
+async function deleteStoredMessage() {
+  if (messageMenuState === null) {
+    return;
+  }
+
+  const state = { ...messageMenuState };
+  const messageId = String(state.message?.id || "");
+
+  if (messageId === "" || !window.confirm("Delete this local message?")) {
+    return;
+  }
+
+  messageMenuState = null;
+
+  try {
+    const response = await fetch(
+      `/api/clients/${encodeURIComponent(state.clientId)}/conversations/${encodeURIComponent(state.contactId)}/messages/${encodeURIComponent(messageId)}`,
+      {
+        method: "DELETE",
+        headers: {
+          Accept: "application/json",
+        },
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(`Delete message failed: HTTP ${response.status}`);
+    }
+
+    await refreshClientDataFromStream();
+    render("Client");
+  } catch (error) {
+    appendUiError(error);
+    render("Logs");
+  }
+}
+
+function renderMessagePropertiesModal() {
+  const overlay = document.createElement("div");
+  overlay.className = "client-editor-overlay";
+
+  const dialog = document.createElement("section");
+  dialog.className = "client-editor message-properties-modal";
+
+  const title = document.createElement("h2");
+  title.textContent = "Message properties";
+  dialog.appendChild(title);
+
+  const fields = [
+    ["Message id", messagePropertiesState.id],
+    ["Direction", messagePropertiesState.direction],
+    ["State", messagePropertiesState.state],
+    ["State datetime", messagePropertiesState.state_datetime],
+    ["Created at", messagePropertiesState.created_at],
+    ["LXMF message id", messagePropertiesState.lxmf_message_id],
+    ["Source hash", messagePropertiesState.source_hash],
+    ["Destination hash", messagePropertiesState.destination_hash],
+    ["Title", messagePropertiesState.title],
+    ["Signature validated", messagePropertiesState.signature_validated],
+    ["Transport encryption", messagePropertiesState.transport_encryption],
+    ["Error", messagePropertiesState.error],
+  ];
+
+  for (const [labelText, value] of fields) {
+    if (value === undefined || value === null || String(value) === "") {
+      continue;
+    }
+
+    const field = document.createElement("div");
+    field.className = "contact-detail-field";
+
+    const label = document.createElement("div");
+    label.className = "contact-detail-label";
+    label.textContent = labelText;
+    field.appendChild(label);
+
+    const fieldValue = document.createElement("div");
+    fieldValue.className = "contact-detail-value";
+    fieldValue.textContent = String(value);
+    field.appendChild(fieldValue);
+    dialog.appendChild(field);
+  }
+
+  const actions = document.createElement("div");
+  actions.className = "settings-row client-editor-actions";
+
+  const closeButton = document.createElement("button");
+  closeButton.type = "button";
+  closeButton.textContent = "Close";
+  closeButton.onclick = () => {
+    messagePropertiesState = null;
+    render("Client");
+  };
+  actions.appendChild(closeButton);
+
+  dialog.appendChild(actions);
+  overlay.appendChild(dialog);
+  return overlay;
 }
 
 function scrollMessageListToBottom(list) {
@@ -9219,6 +9556,21 @@ document.addEventListener("keydown", (event) => {
 
   if (clientAccountMenuState !== null) {
     clientAccountMenuState = null;
+    render("Client");
+  }
+  
+  if (messageMenuState !== null) {
+    messageMenuState = null;
+    render("Client");
+  }
+
+  if (messagePropertiesState !== null) {
+    messagePropertiesState = null;
+    render("Client");
+  }
+
+  if (forwardMessageState !== null) {
+    forwardMessageState = null;
     render("Client");
   }
 

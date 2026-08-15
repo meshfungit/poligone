@@ -839,6 +839,11 @@ class ControllerApp:
         self.state.notify_client_change()
         return result
 
+    def delete_client_message(self, client_id: str, contact_id: str, message_id: str) -> dict[str, object]:
+        result = self.client_contact_store.delete_message(client_id, contact_id, message_id)
+        self.state.append_log("info", "client", f"Message deleted: {client_id}/{contact_id}/{message_id}")
+        self.state.notify_client_change()
+        return result
     def save_client_contact(self, client_id: str, payload: dict[str, object]) -> dict[str, object]:
         contact = self.client_contact_store.save_contact(client_id, payload)
         self.state.append_log("info", "client", f"Contact saved: {client_id}/{contact['id']}")
@@ -883,12 +888,11 @@ class ControllerApp:
                 contact_id,
                 local_message_id,
                 {
-                    "state": "queued",
                     "lxmf_message_id": str(result.get("message_id") or ""),
                     "destination_hash": destination_hash,
                     "error": "",
                 },
-                expected_state="queueing",
+                expected_state="sending",
             ) or message
             self.state.append_log(
                 "info",
@@ -905,7 +909,7 @@ class ControllerApp:
                     "destination_hash": destination_hash,
                     "error": f"{type(exc).__name__}: {exc}",
                 },
-                expected_state="queueing",
+                expected_state="sending",
             ) or message
             self.state.append_log(
                 "error",
@@ -922,7 +926,6 @@ class ControllerApp:
             "message": message,
             "messages": self.client_contact_store.list_messages(client_id, contact_id),
         }
-
     def _client_contact_destination_hash(self, contact: dict[str, object]) -> str:
         destination_hash = str(contact.get("destination_hash") or "").strip().lower()
 
