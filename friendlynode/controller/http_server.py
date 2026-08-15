@@ -1134,3 +1134,5 @@ class ControllerHttpServer:
                         return client_id, "messages", contact_id
 
                 return None
+
+        return FriendlyNodeRequestHandler
