@@ -542,6 +542,10 @@ class ControllerHttpServer:
                     }
                     self._send_json(app.fetch_nomadnet_page(destination_hash, path, discovery_hints=discovery_hints))
                     return
+                if parsed.path == "/api/propagation/nodes":
+                    self._send_json(app.list_propagation_nodes())
+                    return
+
                 if parsed.path == "/api/clients":
                     self._send_json(app.list_clients())
                     return
@@ -746,6 +750,21 @@ class ControllerHttpServer:
                     self._send_json(app.save_nomadnet_browser_state(payload))
                     return
 
+                if parsed.path == "/api/propagation/nodes":
+                    payload = self._read_json_body()
+                    self._send_json(app.remember_propagation_node(payload))
+                    return
+
+                if parsed.path.startswith("/api/propagation/nodes/"):
+                    destination_hash = unquote(
+                        parsed.path.removeprefix("/api/propagation/nodes/")
+                    )
+                    payload = self._read_json_body()
+                    self._send_json(
+                        app.update_propagation_node(destination_hash, payload)
+                    )
+                    return
+
                 if parsed.path == "/api/clients/draft":
                     self._send_json(app.build_client_draft())
                     return
@@ -807,6 +826,13 @@ class ControllerHttpServer:
                 parsed = urlparse(self.path)
 
                 if self._reject_disabled_component(parsed.path):
+                    return
+
+                if parsed.path.startswith("/api/propagation/nodes/"):
+                    destination_hash = unquote(
+                        parsed.path.removeprefix("/api/propagation/nodes/")
+                    )
+                    self._send_json(app.forget_propagation_node(destination_hash))
                     return
 
                 message_route = self._parse_client_message_route(parsed.path)

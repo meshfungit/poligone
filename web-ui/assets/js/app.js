@@ -1,4 +1,11 @@
 const tabs = ["Client", "Announces", "Peers", "NomadNet", "Interfaces", "Transport", "Logs", "Settings"];
+const TAB_LABELS = Object.freeze({
+  Client: "LXMF Conversations",
+});
+
+function getTabLabel(tab) {
+  return TAB_LABELS[tab] || tab;
+}
 
 let currentStatus = null;
 const FRIENDLYNODE_MODULE_KEYS = Object.freeze([
@@ -21,6 +28,11 @@ let activeClientId = "";
 let activeContactId = "";
 let contactMenuState = null;
 let clientAccountMenuState = null;
+let clientPropertiesMenuState = null;
+let clientPropertiesModalOpen = false;
+let propagationNodePropertiesState = null;
+let propagationNodes = [];
+let propagationNodesLoaded = false;
 let contactModalState = null;
 let announceModalState = null;
 let clearMessagesState = null;
@@ -425,7 +437,8 @@ function renderNav(active) {
 
   for (const tab of visibleTabs) {
     const button = document.createElement("button");
-    button.textContent = tab;
+    button.dataset.tab = tab;
+    button.textContent = getTabLabel(tab);
     button.className = tab === active ? "active" : "";
     button.onclick = () => render(tab);
     nav.appendChild(button);
@@ -468,14 +481,41 @@ function renderClientSummaryState(active) {
 
   actions.innerHTML = "";
   topbar.classList.remove("client-summary-toggle");
+  topbar.classList.toggle("lxmf-conversations-topbar", active === "Client");
+
   if (summary !== null) {
-    summary.classList.toggle("client-summary-collapsed", active === "Client" && collapsedPanels.clientSummary);
+    summary.classList.toggle(
+      "client-summary-collapsed",
+      active === "Client" && collapsedPanels.clientSummary
+    );
   }
+
   topbar.onclick = null;
   topbar.onkeydown = null;
   topbar.removeAttribute("role");
   topbar.removeAttribute("tabindex");
-  title.textContent = active;
+  title.textContent = getTabLabel(active);
+
+  if (active !== "Client") {
+    return;
+  }
+
+  const propertiesButton = document.createElement("button");
+  propertiesButton.type = "button";
+  propertiesButton.className = "lxmf-conversations-properties-button";
+  propertiesButton.textContent = "...";
+  propertiesButton.title = "LXMF Conversations properties";
+  propertiesButton.setAttribute("aria-label", "LXMF Conversations properties");
+  propertiesButton.onclick = (event) => {
+    event.stopPropagation();
+    const rect = propertiesButton.getBoundingClientRect();
+    clientPropertiesMenuState = {
+      x: rect.left,
+      y: rect.bottom + 6,
+    };
+    render("Client");
+  };
+  actions.appendChild(propertiesButton);
 }
 
 function renderSidebarContacts(active) {
@@ -610,8 +650,345 @@ function renderClient() {
   if (clearMessagesState !== null) {
     wrapper.appendChild(renderClearMessagesModal());
   }
+  if (clientPropertiesMenuState !== null) {
+    wrapper.appendChild(renderClientPropertiesMenu());
+  }
 
+  if (clientPropertiesModalOpen) {
+    wrapper.appendChild(renderClientPropertiesModal());
+  }
+
+  if (propagationNodePropertiesState !== null) {
+    wrapper.appendChild(renderPropagationNodePropertiesModal());
+  }
   return wrapper;
+}
+
+function renderClientPropertiesMenu() {
+  const overlay = document.createElement("div");
+  overlay.className = "contact-menu-dismiss";
+  overlay.onclick = () => {
+    clientPropertiesMenuState = null;
+    render("Client");
+  };
+
+  const menu = document.createElement("div");
+  menu.className = "contact-menu lxmf-conversations-properties-menu";
+  menu.style.left = `${clientPropertiesMenuState.x}px`;
+  menu.style.top = `${clientPropertiesMenuState.y}px`;
+  menu.onclick = (event) => event.stopPropagation();
+
+  const propertiesButton = document.createElement("button");
+  propertiesButton.type = "button";
+  propertiesButton.textContent = "Properties";
+  propertiesButton.onclick = async () => {
+    clientPropertiesMenuState = null;
+    clientPropertiesModalOpen = true;
+
+    try {
+      await loadPropagationNodes();
+    } catch (error) {
+      appendUiError(error);
+    }
+
+    render("Client");
+  };
+  menu.appendChild(propertiesButton);
+  overlay.appendChild(menu);
+  return overlay;
+}
+
+function renderClientPropertiesModal() {
+  const overlay = document.createElement("div");
+  overlay.className = "client-editor-overlay";
+
+  const dialog = document.createElement("section");
+  dialog.className = "client-editor lxmf-conversations-properties-modal";
+
+  const title = document.createElement("h2");
+  title.textContent = "Properties";
+  dialog.appendChild(title);
+
+  const propagation = document.createElement("details");
+  propagation.className = "settings-block propagation-properties";
+  propagation.open = true;
+
+  const propagationSummary = document.createElement("summary");
+  propagationSummary.textContent = "Propagation";
+  propagation.appendChild(propagationSummary);
+
+  const hint = document.createElement("div");
+  hint.className = "settings-hint";
+  hint.textContent = "Enabled nodes form an ordered pool. More than one node may be enabled.";
+  propagation.appendChild(hint);
+
+  const list = document.createElement("div");
+  list.className = "propagation-node-list";
+
+  if (!propagationNodesLoaded) {
+    const loading = document.createElement("div");
+    loading.className = "settings-hint";
+    loading.textContent = "Propagation nodes are not loaded";
+    list.appendChild(loading);
+  } else if (propagationNodes.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "settings-hint";
+    empty.textContent = "No remembered propagation nodes";
+    list.appendChild(empty);
+  } else {
+    for (const node of propagationNodes) {
+      list.appendChild(renderPropagationNodeRow(node));
+    }
+  }
+
+  propagation.appendChild(list);
+  dialog.appendChild(propagation);
+
+  const actions = document.createElement("div");
+  actions.className = "settings-row client-editor-actions";
+
+  const closeButton = document.createElement("button");
+  closeButton.type = "button";
+  closeButton.textContent = "Close";
+  closeButton.onclick = () => {
+    clientPropertiesModalOpen = false;
+    propagationNodePropertiesState = null;
+    render("Client");
+  };
+  actions.appendChild(closeButton);
+
+  dialog.appendChild(actions);
+  overlay.appendChild(dialog);
+  return overlay;
+}
+
+function renderPropagationNodeRow(node) {
+  const row = document.createElement("div");
+  row.className = "propagation-node-row";
+
+  const enabledLabel = document.createElement("label");
+  enabledLabel.className = "propagation-node-enabled";
+
+  const checkbox = document.createElement("input");
+  checkbox.type = "checkbox";
+  checkbox.checked = Boolean(node.enabled);
+  checkbox.title = "Use this propagation node";
+  checkbox.onchange = () => setPropagationNodeEnabled(node.destination_hash, checkbox.checked);
+  enabledLabel.appendChild(checkbox);
+  row.appendChild(enabledLabel);
+
+  const summary = document.createElement("div");
+  summary.className = "propagation-node-summary";
+
+  const name = document.createElement("strong");
+  name.textContent = node.name || node.destination_hash;
+  summary.appendChild(name);
+
+  const destination = document.createElement("code");
+  destination.textContent = node.destination_hash || "-";
+  summary.appendChild(destination);
+  row.appendChild(summary);
+
+  const propertiesButton = document.createElement("button");
+  propertiesButton.type = "button";
+  propertiesButton.className = "propagation-node-properties-button";
+  propertiesButton.textContent = "...";
+  propertiesButton.title = "Propagation node properties";
+  propertiesButton.onclick = () => {
+    propagationNodePropertiesState = { ...node };
+    render("Client");
+  };
+  row.appendChild(propertiesButton);
+  return row;
+}
+
+function renderPropagationNodePropertiesModal() {
+  const overlay = document.createElement("div");
+  overlay.className = "client-editor-overlay propagation-node-properties-overlay";
+
+  const dialog = document.createElement("section");
+  dialog.className = "client-editor propagation-node-properties-modal";
+
+  const title = document.createElement("h2");
+  title.textContent = "Propagation node properties";
+  dialog.appendChild(title);
+
+  for (const [labelText, value] of [
+    ["Name", propagationNodePropertiesState.name],
+    ["Destination", propagationNodePropertiesState.destination_hash],
+    ["Identity", propagationNodePropertiesState.identity_hash],
+    ["Enabled", propagationNodePropertiesState.enabled ? "yes" : "no"],
+  ]) {
+    const row = document.createElement("div");
+    row.className = "contact-detail-row";
+
+    const label = document.createElement("div");
+    label.className = "contact-detail-label";
+    label.textContent = labelText;
+    row.appendChild(label);
+
+    const fieldValue = document.createElement("div");
+    fieldValue.className = "contact-detail-value";
+    fieldValue.textContent = value === undefined || value === null || value === ""
+      ? "-"
+      : String(value);
+    row.appendChild(fieldValue);
+    dialog.appendChild(row);
+  }
+
+  const actions = document.createElement("div");
+  actions.className = "settings-row client-editor-actions";
+
+  const forgetButton = document.createElement("button");
+  forgetButton.type = "button";
+  forgetButton.textContent = "Forget";
+  forgetButton.onclick = forgetPropagationNode;
+  actions.appendChild(forgetButton);
+
+  const closeButton = document.createElement("button");
+  closeButton.type = "button";
+  closeButton.textContent = "Close";
+  closeButton.onclick = () => {
+    propagationNodePropertiesState = null;
+    render("Client");
+  };
+  actions.appendChild(closeButton);
+
+  dialog.appendChild(actions);
+  overlay.appendChild(dialog);
+  return overlay;
+}
+
+async function loadPropagationNodes() {
+  const response = await fetch("/api/propagation/nodes", {
+    method: "GET",
+    headers: {
+      Accept: "application/json",
+    },
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    throw new Error(`Propagation nodes request failed: HTTP ${response.status}`);
+  }
+
+  const payload = await response.json();
+  propagationNodes = Array.isArray(payload.nodes) ? payload.nodes : [];
+  propagationNodesLoaded = true;
+  return propagationNodes;
+}
+
+function findRememberedPropagationNode(announce) {
+  const destination = String(announce?.destination_hash || announce?.lxmf || "").toLowerCase();
+
+  if (destination === "") {
+    return null;
+  }
+
+  return propagationNodes.find(
+    (node) => String(node.destination_hash || "").toLowerCase() === destination
+  ) || null;
+}
+
+async function rememberPropagationNode(announce) {
+  const payload = {
+    destination_hash: String(announce?.destination_hash || announce?.lxmf || ""),
+    identity_hash: String(announce?.identity_hash || ""),
+    name: String(announce?.name || ""),
+  };
+
+  try {
+    const response = await fetch("/api/propagation/nodes", {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Remember propagation node failed: HTTP ${response.status}`);
+    }
+
+    const result = await response.json();
+    propagationNodes = Array.isArray(result.nodes) ? result.nodes : propagationNodes;
+    propagationNodesLoaded = true;
+    render("Announces");
+  } catch (error) {
+    appendUiError(error);
+    render("Logs");
+  }
+}
+
+async function setPropagationNodeEnabled(destinationHash, enabled) {
+  try {
+    const response = await fetch(
+      `/api/propagation/nodes/${encodeURIComponent(destinationHash)}`,
+      {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ enabled: Boolean(enabled) }),
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(`Propagation node update failed: HTTP ${response.status}`);
+    }
+
+    const result = await response.json();
+    propagationNodes = Array.isArray(result.nodes) ? result.nodes : propagationNodes;
+    propagationNodesLoaded = true;
+
+    if (propagationNodePropertiesState !== null) {
+      propagationNodePropertiesState = result.node || propagationNodePropertiesState;
+    }
+
+    render("Client");
+  } catch (error) {
+    appendUiError(error);
+    render("Logs");
+  }
+}
+
+async function forgetPropagationNode() {
+  if (propagationNodePropertiesState === null) {
+    return;
+  }
+
+  const node = { ...propagationNodePropertiesState };
+
+  if (!window.confirm(`Forget propagation node ${node.name || node.destination_hash}?`)) {
+    return;
+  }
+
+  try {
+    const response = await fetch(
+      `/api/propagation/nodes/${encodeURIComponent(node.destination_hash)}`,
+      {
+        method: "DELETE",
+        headers: {
+          Accept: "application/json",
+        },
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(`Forget propagation node failed: HTTP ${response.status}`);
+    }
+
+    const result = await response.json();
+    propagationNodes = Array.isArray(result.nodes) ? result.nodes : [];
+    propagationNodesLoaded = true;
+    propagationNodePropertiesState = null;
+    render("Client");
+  } catch (error) {
+    appendUiError(error);
+    render("Logs");
+  }
 }
 
 function renderAnnounces() {
@@ -3960,19 +4337,34 @@ function renderAnnounceModal() {
 
   const actions = document.createElement("div");
   actions.className = "client-editor-actions announce-modal-actions";
+  const announceType = getAnnounceType(announceModalState);
+  const isPropagation = announceType === "lxmf.propagation";
+  const rememberedPropagation = isPropagation
+    ? findRememberedPropagationNode(announceModalState)
+    : null;
 
-  const addContactButton = document.createElement("button");
-  addContactButton.type = "button";
-  addContactButton.textContent = "Add contact";
-  addContactButton.onclick = () => addAnnounceContact(announceModalState);
-  actions.appendChild(addContactButton);
+  const primaryButton = document.createElement("button");
+  primaryButton.type = "button";
+
+  if (isPropagation) {
+    primaryButton.textContent = rememberedPropagation === null ? "Remember node" : "Remembered";
+    primaryButton.disabled = rememberedPropagation !== null;
+    primaryButton.onclick = () => rememberPropagationNode(announceModalState);
+  } else {
+    primaryButton.textContent = "Add contact";
+    primaryButton.onclick = () => addAnnounceContact(announceModalState);
+  }
+
+  actions.appendChild(primaryButton);
 
   const bookmarkButton = document.createElement("button");
   bookmarkButton.type = "button";
-  bookmarkButton.textContent = isNomadNetBookmarkSaved(announceToNomadNetBookmarkCandidate(announceModalState))
+  bookmarkButton.textContent = isNomadNetBookmarkSaved(
+    announceToNomadNetBookmarkCandidate(announceModalState)
+  )
     ? "Bookmarked"
     : "Bookmark";
-  bookmarkButton.disabled = getAnnounceType(announceModalState) !== "nomadnet";
+  bookmarkButton.disabled = announceType !== "nomadnet";
   bookmarkButton.onclick = () => bookmarkAnnounceNode(announceModalState);
   actions.appendChild(bookmarkButton);
 
@@ -3986,11 +4378,14 @@ function renderAnnounceModal() {
   const pageButton = document.createElement("button");
   pageButton.type = "button";
   pageButton.textContent = "Open page";
-  pageButton.disabled = getAnnounceType(announceModalState) !== "nomadnet";
+  pageButton.disabled = announceType !== "nomadnet";
   pageButton.onclick = () => openAnnounceNomadnetPage(announceModalState);
   actions.appendChild(pageButton);
 
-  const copyButton = renderCopyButton("Copy", () => formatAnnounceCardForClipboard(announceModalState));
+  const copyButton = renderCopyButton(
+    "Copy",
+    () => formatAnnounceCardForClipboard(announceModalState)
+  );
   copyButton.title = "Copy announce card";
   actions.appendChild(copyButton);
 
@@ -4018,7 +4413,8 @@ function renderAnnounceModal() {
 }
 
 function announceCanOpenChat(announce) {
-  return String(announce.lxmf || announce.destination_hash || "") !== "";
+  return String(announce?.aspect || "") === "lxmf.delivery"
+    && String(announce?.lxmf || announce?.destination_hash || "") !== "";
 }
 
 function announceToContact(announce) {
@@ -8421,7 +8817,7 @@ function render(tab = "Client") {
     clearNomadNetBookmarkDragState();
   }
 
-  document.querySelector("h1").textContent = tab;
+  document.querySelector("h1").textContent = getTabLabel(tab);
   renderChannelSecurityWarning();
   renderNav(tab);
   renderClientSummaryState(tab);
@@ -8650,7 +9046,7 @@ function updateSummaryCards(status) {
 }
 
 function getActiveTab() {
-  return document.querySelector("nav button.active")?.textContent || "Client";
+  return document.querySelector("nav button.active")?.dataset.tab || "Client";
 }
 
 async function fetchStatus() {
@@ -9633,6 +10029,9 @@ document.addEventListener("DOMContentLoaded", () => {
   fetchStatus()
     .then(() => {
       startClientUpdates();
+      loadPropagationNodes().catch((error) => {
+        appendUiError(error);
+      });
 
       if (!Boolean(currentStatus?.config?.nomadnet_enabled)) {
         return;
@@ -9658,8 +10057,24 @@ document.addEventListener("keydown", (event) => {
 
   if (clientAccountMenuState !== null) {
     clientAccountMenuState = null;
+  }
+  
+  if (clientPropertiesMenuState !== null) {
+    clientPropertiesMenuState = null;
     render("Client");
   }
+
+  if (propagationNodePropertiesState !== null) {
+    propagationNodePropertiesState = null;
+    render("Client");
+  }
+
+  if (clientPropertiesModalOpen) {
+    clientPropertiesModalOpen = false;
+    render("Client");
+  }	
+    render("Client");
+  
   
   if (messageMenuState !== null) {
     messageMenuState = null;

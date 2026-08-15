@@ -29,6 +29,7 @@ DEFAULT_NOMADNET_PAGES_DIR = DATA_DIR / "nomadnet-pages"
 DEFAULT_DATABASE_PATH = DATA_DIR / "db" / "friendlynode.sqlite3"
 DEFAULT_CLIENTS_DIR = DATA_DIR / "clients"
 DEFAULT_LOCAL_IDENTITIES_DIR = DATA_DIR / "identities"
+DEFAULT_PROPAGATION_NODES_PATH = DATA_DIR / "config" / "propagation_nodes.json"
 
 SUPPORTED_INTERFACE_TYPES = (
     "AutoInterface",

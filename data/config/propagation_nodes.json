@@ -1,0 +1,29 @@
+{
+  "nodes": [
+    {
+      "destination_hash": "39fb0ac9d0c84ee6f1b239cfb60c7bf2",
+      "enabled": true,
+      "identity_hash": "8578f9fe348b6c32b0185d8ad9d337f2",
+      "name": "NEMO Propagation Node"
+    },
+    {
+      "destination_hash": "90ab9d448f17f3a121dc0f1230af39be",
+      "enabled": false,
+      "identity_hash": "dde1660247453ae03ba4abce2c41e7df",
+      "name": "WDGWars Node"
+    },
+    {
+      "destination_hash": "e97ed3213f4ad5d65a51b0568866e296",
+      "enabled": false,
+      "identity_hash": "197301d7c753e36e3f07daaf660cda18",
+      "name": "ValleyMesh Propagation"
+    },
+    {
+      "destination_hash": "7e179a07bc4ab882c080ac59660d0b9b",
+      "enabled": false,
+      "identity_hash": "1934a27e4bd5271a07b50d8c9469f551",
+      "name": "Rhein-Main Propagation Node"
+    }
+  ],
+  "version": 1
+}

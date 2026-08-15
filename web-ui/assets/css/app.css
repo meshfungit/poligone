@@ -76,6 +76,92 @@ main {
 .topbar.client-summary-toggle:hover {
   border-color: var(--accent);
 }
+.topbar.lxmf-conversations-topbar {
+  justify-content: flex-start;
+  gap: 8px;
+}
+
+.topbar.lxmf-conversations-topbar .actions {
+  display: inline-flex;
+  align-items: center;
+}
+
+.topbar.lxmf-conversations-topbar .actions button {
+  margin-left: 0;
+}
+
+.lxmf-conversations-properties-button {
+  min-width: 34px;
+}
+
+.lxmf-conversations-properties-modal {
+  width: min(680px, 100%);
+}
+
+.propagation-properties > summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.propagation-node-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.propagation-node-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr) max-content;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  padding: 8px 10px;
+}
+
+.propagation-node-enabled {
+  display: grid;
+  place-items: center;
+}
+
+.propagation-node-summary {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.propagation-node-summary strong,
+.propagation-node-summary code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.propagation-node-summary code {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.propagation-node-properties-button {
+  width: 34px;
+  min-width: 34px;
+  height: 30px;
+  padding: 2px 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel2);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.propagation-node-properties-button:hover {
+  border-color: var(--accent);
+}
+
+.propagation-node-properties-modal {
+  width: min(620px, 100%);
+}
 .channel-security-warning {
   margin-bottom: 10px;
   border: 1px solid #ef4444;

@@ -6,7 +6,12 @@ import subprocess
 import sys
 from typing import Any
 from friendlynode.config.app_config import AppConfig
-from friendlynode.config.defaults import IMPORT_EXPORT_DIR, INTERFACES_EXPORT_PATH
+from friendlynode.config.defaults import (
+    DEFAULT_PROPAGATION_NODES_PATH,
+    IMPORT_EXPORT_DIR,
+    INTERFACES_EXPORT_PATH,
+)
+from friendlynode.propagation import PropagationNodeStore
 from friendlynode.controller.access import (
     build_channel_security_status,
     build_network_interfaces_status,
@@ -104,6 +109,7 @@ class ControllerApp:
         self.config = config or AppConfig.load()
         self.state = StateCache()
         self.runtime_manager = RuntimeManager()
+        self.propagation_store = PropagationNodeStore(DEFAULT_PROPAGATION_NODES_PATH)
 
         self.client_store: Any | None = None
         self.client_contact_store: Any | None = None
@@ -568,6 +574,66 @@ class ControllerApp:
             "client_contact_store_loaded": self.client_contact_store is not None,
             "nomadnet_enabled": self.config.nomadnet_enabled,
             "nomadnet_browser_store_loaded": self.nomadnet_browser_store is not None,
+        }
+
+    def list_propagation_nodes(self) -> dict[str, object]:
+        nodes = self.propagation_store.list_nodes()
+        return {
+            "nodes": [node.to_dict() for node in nodes],
+            "enabled_count": sum(1 for node in nodes if node.enabled),
+        }
+
+    def remember_propagation_node(self, payload: dict[str, object]) -> dict[str, object]:
+        node, created = self.propagation_store.remember_node(payload)
+        self.state.append_log(
+            "info",
+            "propagation",
+            (
+                f"Propagation node {'remembered' if created else 'updated'}: "
+                f"{node.name} ({node.destination_hash})"
+            ),
+        )
+        return {
+            "node": node.to_dict(),
+            "created": created,
+            **self.list_propagation_nodes(),
+        }
+
+    def update_propagation_node(
+        self,
+        destination_hash: str,
+        payload: dict[str, object],
+    ) -> dict[str, object]:
+        if "enabled" not in payload:
+            raise ValueError("Propagation node update requires enabled")
+
+        node = self.propagation_store.set_enabled(
+            destination_hash,
+            bool(payload.get("enabled")),
+        )
+        self.state.append_log(
+            "info",
+            "propagation",
+            (
+                f"Propagation node {'enabled' if node.enabled else 'disabled'}: "
+                f"{node.name} ({node.destination_hash})"
+            ),
+        )
+        return {
+            "node": node.to_dict(),
+            **self.list_propagation_nodes(),
+        }
+
+    def forget_propagation_node(self, destination_hash: str) -> dict[str, object]:
+        node = self.propagation_store.forget_node(destination_hash)
+        self.state.append_log(
+            "info",
+            "propagation",
+            f"Propagation node forgotten: {node.name} ({node.destination_hash})",
+        )
+        return {
+            "forgotten": node.to_dict(),
+            **self.list_propagation_nodes(),
         }
 
     def list_clients(self) -> dict[str, object]:
