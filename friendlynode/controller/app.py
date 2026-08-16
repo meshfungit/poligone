@@ -963,11 +963,13 @@ class ControllerApp:
         content = str(payload.get("content") or "")
         _, destination_hash = self._client_outbound_target(client_id, contact_id)
         delivery_method, propagation_nodes = self._client_message_delivery_context()
+        propagation_targets = self._propagation_target_records(propagation_nodes)
         message = self.client_contact_store.add_outbound_message(
             client_id,
             contact_id,
             content,
             delivery_method=delivery_method,
+            propagation_targets=propagation_targets,
         )
         self.state.notify_client_change()
         return self._queue_client_outbound_message(
@@ -977,6 +979,44 @@ class ControllerApp:
             destination_hash,
             propagation_nodes,
         )
+
+    def repeat_client_message(
+        self,
+        client_id: str,
+        contact_id: str,
+        message_id: str,
+    ) -> dict[str, object]:
+        _, destination_hash = self._client_outbound_target(client_id, contact_id)
+        delivery_method, propagation_nodes = self._client_message_delivery_context()
+        propagation_targets = self._propagation_target_records(propagation_nodes)
+        message = self.client_contact_store.prepare_outbound_retry(
+            client_id,
+            contact_id,
+            message_id,
+            delivery_method=delivery_method,
+            propagation_targets=propagation_targets,
+        )
+        self.state.notify_client_change()
+        return self._queue_client_outbound_message(
+            client_id,
+            contact_id,
+            message,
+            destination_hash,
+            propagation_nodes,
+        )
+
+    def _propagation_target_records(
+        self,
+        propagation_nodes: list[PropagationNode],
+    ) -> list[dict[str, str]]:
+        return [
+            {
+                "destination_hash": str(node.destination_hash or "").strip().lower(),
+                "name": str(node.name or "").strip(),
+            }
+            for node in propagation_nodes
+            if str(node.destination_hash or "").strip() != ""
+        ]
     def repeat_client_message(
         self,
         client_id: str,
@@ -1341,29 +1381,106 @@ class ControllerApp:
         self.state.notify_client_change()
 
     def _handle_lxmf_propagation_node_failed(self, payload: dict[str, Any]) -> None:
+        identity_id = str(payload.get("identity_id") or "").strip()
+        contact_id = str(payload.get("contact_id") or "").strip()
+        local_message_id = str(payload.get("local_message_id") or "").strip()
         node_hash = str(payload.get("propagation_node_hash") or "").strip().lower()
         node = self.propagation_store.get_node(node_hash) if node_hash != "" else None
         node_name = node.name if node is not None else node_hash or "unknown node"
+        error = str(payload.get("error") or "LXMF propagation failed")
+
+        if (
+            self.client_contact_store is not None
+            and identity_id != ""
+            and contact_id != ""
+            and local_message_id != ""
+        ):
+            self.client_contact_store.record_propagation_failure(
+                identity_id,
+                contact_id,
+                local_message_id,
+                propagation_node_hash=node_hash,
+                propagation_node_name=node_name,
+                error=error,
+            )
+            self.state.notify_client_change()
+
         self.state.append_log(
             "warning",
             "client",
             (
-                f"Propagation node failed for message "
-                f"{payload.get('local_message_id')}: {node_name} ({node_hash})"
-                f" - {payload.get('error') or 'LXMF propagation failed'}"
+                f"Propagation failed for {local_message_id}: "
+                f"{node_name} ({node_hash}); "
+                f"message={payload.get('message_id') or '-'}; "
+                f"transient={payload.get('transient_id') or '-'}; "
+                f"error={error}"
             ),
         )
-
     def _handle_lxmf_propagation_replication_complete(self, payload: dict[str, Any]) -> None:
+        identity_id = str(payload.get("identity_id") or "").strip()
+        contact_id = str(payload.get("contact_id") or "").strip()
+        local_message_id = str(payload.get("local_message_id") or "").strip()
+        accepted_count = int(payload.get("accepted_count") or 0)
+        node_count = int(payload.get("node_count") or 0)
+        message = None
+
+        if (
+            self.client_contact_store is not None
+            and identity_id != ""
+            and contact_id != ""
+            and local_message_id != ""
+        ):
+            message = self.client_contact_store.complete_propagation_replication(
+                identity_id,
+                contact_id,
+                local_message_id,
+                accepted_count=accepted_count,
+                node_count=node_count,
+            )
+            self.state.notify_client_change()
+
+        accepted_nodes: list[str] = []
+        failed_nodes: list[str] = []
+        not_attempted_nodes: list[str] = []
+
+        if isinstance(message, dict):
+            for result in message.get("propagation_results") or []:
+                if not isinstance(result, dict):
+                    continue
+
+                node_name = str(result.get("name") or "").strip()
+                node_hash = str(result.get("destination_hash") or "").strip()
+                node_label = f"{node_name} ({node_hash})" if node_name != "" else node_hash
+                status = str(result.get("status") or "").strip().lower()
+
+                if status == "accepted":
+                    accepted_nodes.append(node_label)
+                elif status == "failed":
+                    error = str(result.get("error") or "").strip()
+                    failed_nodes.append(
+                        f"{node_label}: {error}" if error != "" else node_label
+                    )
+                elif status == "not_attempted":
+                    not_attempted_nodes.append(node_label)
+
+        summary_parts = [
+            f"Propagation replication complete for {local_message_id}",
+            f"accepted={accepted_count}/{node_count}",
+        ]
+
+        if accepted_nodes:
+            summary_parts.append(f"accepted_nodes=[{'; '.join(accepted_nodes)}]")
+        if failed_nodes:
+            summary_parts.append(f"failed_nodes=[{'; '.join(failed_nodes)}]")
+        if not_attempted_nodes:
+            summary_parts.append(
+                f"not_attempted=[{'; '.join(not_attempted_nodes)}]"
+            )
+
         self.state.append_log(
-            "info",
+            "info" if accepted_count > 0 else "error",
             "client",
-            (
-                f"Propagation replication complete for message "
-                f"{payload.get('local_message_id')}: "
-                f"accepted={payload.get('accepted_count') or 0}/"
-                f"{payload.get('node_count') or 0}"
-            ),
+            "; ".join(summary_parts),
         )
     def _handle_lxmf_outbound_state(self, topic: str, payload: dict[str, Any]) -> None:
         if self.client_contact_store is None:
@@ -1376,6 +1493,9 @@ class ControllerApp:
         if identity_id == "" or contact_id == "" or local_message_id == "":
             self.state.append_log("error", "client", "Incomplete outbound LXMF state metadata")
             return
+
+        propagation_node_name = ""
+        propagation_node_hash = ""
 
         if topic == "lxmf.message_propagated":
             propagation_node_hash = str(payload.get("propagation_node_hash") or "").strip().lower()
@@ -1424,14 +1544,27 @@ class ControllerApp:
             )
             return
 
-        self.state.append_log(
-            "info" if state != "failed" else "error",
-            "client",
-            (
-                f"LXMF message {state}: {identity_id}/{contact_id}/"
-                f"{payload.get('message_id')}"
-            ),
-        )
+        if topic == "lxmf.message_propagated":
+            self.state.append_log(
+                "info",
+                "client",
+                (
+                    f"Propagation accepted for {local_message_id}: "
+                    f"{propagation_node_name} ({propagation_node_hash}); "
+                    f"message={payload.get('message_id') or '-'}; "
+                    f"transient={payload.get('transient_id') or '-'}"
+                ),
+            )
+        else:
+            self.state.append_log(
+                "info" if state != "failed" else "error",
+                "client",
+                (
+                    f"LXMF message {state}: {identity_id}/{contact_id}/"
+                    f"{payload.get('message_id')}"
+                ),
+            )
+
         self.state.notify_client_change()
     def _handle_lxmf_message_received(self, payload: dict[str, Any]) -> None:
         if self.client_contact_store is None:

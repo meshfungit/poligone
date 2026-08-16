@@ -17,6 +17,10 @@ MESSAGE_STATE_RECEIVED = "received"
 MESSAGE_STATE_PROPAGATED = "propagated"
 MESSAGE_DELIVERY_METHOD_DIRECT = "direct"
 MESSAGE_DELIVERY_METHOD_PROPAGATION = "propagation"
+PROPAGATION_RESULT_PENDING = "pending"
+PROPAGATION_RESULT_ACCEPTED = "accepted"
+PROPAGATION_RESULT_FAILED = "failed"
+PROPAGATION_RESULT_NOT_ATTEMPTED = "not_attempted"
 MESSAGE_SUCCESS_STATES = frozenset({
     MESSAGE_STATE_DELIVERED,
     MESSAGE_STATE_PROPAGATED,
@@ -35,6 +39,9 @@ OUTBOUND_MESSAGE_MUTABLE_FIELDS = frozenset({
     "propagation_node_hash",
     "propagation_node_name",
     "propagation_nodes",
+    "propagation_results",
+    "propagation_accepted_count",
+    "propagation_node_count",
     "lxmf_message_id",
     "destination_hash",
     "error",
@@ -241,6 +248,7 @@ class ClientContactStore:
         content: str,
         *,
         delivery_method: str = MESSAGE_DELIVERY_METHOD_DIRECT,
+        propagation_targets: list[dict[str, str]] | None = None,
     ) -> dict[str, object]:
         text = content.strip()
 
@@ -249,6 +257,7 @@ class ClientContactStore:
 
         messages = self.list_messages(identity_id, contact_id)
         created_at = self._now_iso()
+        propagation_results = self._build_propagation_results(propagation_targets or [])
         message = {
             "id": f"outbound-{secrets.token_hex(8)}",
             "direction": "outbound",
@@ -261,6 +270,9 @@ class ClientContactStore:
             "propagation_node_hash": "",
             "propagation_node_name": "",
             "propagation_nodes": [],
+            "propagation_results": propagation_results,
+            "propagation_accepted_count": 0,
+            "propagation_node_count": len(propagation_results),
             "lxmf_message_id": "",
             "destination_hash": "",
             "error": "",
@@ -318,6 +330,7 @@ class ClientContactStore:
         message_id: str,
         *,
         delivery_method: str = MESSAGE_DELIVERY_METHOD_DIRECT,
+        propagation_targets: list[dict[str, str]] | None = None,
     ) -> dict[str, object]:
         messages = self.list_messages(identity_id, contact_id)
 
@@ -338,6 +351,7 @@ class ClientContactStore:
             if content == "":
                 raise ValueError("Message content cannot be empty")
 
+            propagation_results = self._build_propagation_results(propagation_targets or [])
             message["state"] = MESSAGE_STATE_SENDING
             message["state_datetime"] = self._now_iso()
             message["delivery_attempts"] = self._normalise_delivery_attempts(message.get("delivery_attempts")) + 1
@@ -345,6 +359,9 @@ class ClientContactStore:
             message["propagation_node_hash"] = ""
             message["propagation_node_name"] = ""
             message["propagation_nodes"] = []
+            message["propagation_results"] = propagation_results
+            message["propagation_accepted_count"] = 0
+            message["propagation_node_count"] = len(propagation_results)
             message["lxmf_message_id"] = ""
             message["error"] = ""
             self._write_messages(identity_id, contact_id, messages)
@@ -385,6 +402,18 @@ class ClientContactStore:
                 })
 
             message["propagation_nodes"] = accepted_nodes
+            message["propagation_results"] = self._set_propagation_result(
+                message.get("propagation_results"),
+                propagation_node_hash=clean_node_hash,
+                propagation_node_name=propagation_node_name,
+                status=PROPAGATION_RESULT_ACCEPTED,
+                error="",
+            )
+            message["propagation_accepted_count"] = sum(
+                1
+                for result in message["propagation_results"]
+                if result.get("status") == PROPAGATION_RESULT_ACCEPTED
+            )
 
             if accepted_nodes:
                 first_node = accepted_nodes[0]
@@ -412,6 +441,68 @@ class ClientContactStore:
             return message
 
         return None
+    def record_propagation_failure(
+        self,
+        identity_id: str,
+        contact_id: str,
+        message_id: str,
+        *,
+        propagation_node_hash: str,
+        propagation_node_name: str,
+        error: str,
+    ) -> dict[str, object] | None:
+        messages = self.list_messages(identity_id, contact_id)
+
+        for message in messages:
+            if str(message.get("id") or "") != message_id:
+                continue
+            if message.get("direction") != "outbound":
+                return None
+
+            message["propagation_results"] = self._set_propagation_result(
+                message.get("propagation_results"),
+                propagation_node_hash=propagation_node_hash,
+                propagation_node_name=propagation_node_name,
+                status=PROPAGATION_RESULT_FAILED,
+                error=error,
+            )
+            self._write_messages(identity_id, contact_id, messages)
+            return message
+
+        return None
+
+    def complete_propagation_replication(
+        self,
+        identity_id: str,
+        contact_id: str,
+        message_id: str,
+        *,
+        accepted_count: int,
+        node_count: int,
+    ) -> dict[str, object] | None:
+        messages = self.list_messages(identity_id, contact_id)
+
+        for message in messages:
+            if str(message.get("id") or "") != message_id:
+                continue
+            if message.get("direction") != "outbound":
+                return None
+
+            results = self._normalise_propagation_results(message.get("propagation_results"))
+
+            for result in results:
+                if result["status"] == PROPAGATION_RESULT_PENDING:
+                    result["status"] = PROPAGATION_RESULT_NOT_ATTEMPTED
+                    result["error"] = "Propagation attempt was not executed"
+
+            message["propagation_results"] = results
+            message["propagation_accepted_count"] = max(0, int(accepted_count))
+            message["propagation_node_count"] = max(0, int(node_count))
+            self._write_messages(identity_id, contact_id, messages)
+            return message
+
+        return None
+
     def fail_pending_outbound_messages(
         self,
         identity_id: str | None,
@@ -545,7 +636,124 @@ class ClientContactStore:
                     else []
                 )
 
+            normalised["propagation_results"] = self._normalise_propagation_results(
+                normalised.get("propagation_results")
+            )
+
+            if len(normalised["propagation_results"]) == 0:
+                normalised["propagation_results"] = [
+                    {
+                        "destination_hash": str(node.get("destination_hash") or ""),
+                        "name": str(node.get("name") or ""),
+                        "status": PROPAGATION_RESULT_ACCEPTED,
+                        "error": "",
+                    }
+                    for node in normalised["propagation_nodes"]
+                ]
+
+            if "propagation_accepted_count" not in normalised:
+                normalised["propagation_accepted_count"] = sum(
+                    1
+                    for result in normalised["propagation_results"]
+                    if result.get("status") == PROPAGATION_RESULT_ACCEPTED
+                )
+
+            if "propagation_node_count" not in normalised:
+                normalised["propagation_node_count"] = len(normalised["propagation_results"])
+
         return normalised
+    def _build_propagation_results(
+        self,
+        targets: list[dict[str, str]],
+    ) -> list[dict[str, str]]:
+        results: list[dict[str, str]] = []
+        seen: set[str] = set()
+
+        for target in targets:
+            destination_hash = str(target.get("destination_hash") or "").strip().lower()
+
+            if destination_hash == "" or destination_hash in seen:
+                continue
+
+            seen.add(destination_hash)
+            results.append({
+                "destination_hash": destination_hash,
+                "name": str(target.get("name") or "").strip(),
+                "status": PROPAGATION_RESULT_PENDING,
+                "error": "",
+            })
+
+        return results
+
+    def _normalise_propagation_results(self, value: object) -> list[dict[str, str]]:
+        if not isinstance(value, list):
+            return []
+
+        results: list[dict[str, str]] = []
+        seen: set[str] = set()
+
+        for raw_result in value:
+            if not isinstance(raw_result, dict):
+                continue
+
+            destination_hash = str(raw_result.get("destination_hash") or "").strip().lower()
+
+            if destination_hash == "" or destination_hash in seen:
+                continue
+
+            seen.add(destination_hash)
+            status = str(raw_result.get("status") or PROPAGATION_RESULT_PENDING).strip().lower()
+
+            if status not in {
+                PROPAGATION_RESULT_PENDING,
+                PROPAGATION_RESULT_ACCEPTED,
+                PROPAGATION_RESULT_FAILED,
+                PROPAGATION_RESULT_NOT_ATTEMPTED,
+            }:
+                status = PROPAGATION_RESULT_PENDING
+
+            results.append({
+                "destination_hash": destination_hash,
+                "name": str(raw_result.get("name") or "").strip(),
+                "status": status,
+                "error": str(raw_result.get("error") or "").strip(),
+            })
+
+        return results
+
+    def _set_propagation_result(
+        self,
+        value: object,
+        *,
+        propagation_node_hash: str,
+        propagation_node_name: str,
+        status: str,
+        error: str,
+    ) -> list[dict[str, str]]:
+        results = self._normalise_propagation_results(value)
+        clean_hash = propagation_node_hash.strip().lower()
+
+        for result in results:
+            if result["destination_hash"] != clean_hash:
+                continue
+
+            if propagation_node_name.strip() != "":
+                result["name"] = propagation_node_name.strip()
+
+            result["status"] = status
+            result["error"] = error.strip()
+            return results
+
+        if clean_hash != "":
+            results.append({
+                "destination_hash": clean_hash,
+                "name": propagation_node_name.strip(),
+                "status": status,
+                "error": error.strip(),
+            })
+
+        return results
+
     def _normalise_delivery_attempts(self, value: object) -> int:
         try:
             attempts = int(value)
