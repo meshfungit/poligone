@@ -20,8 +20,10 @@ from friendlynode.config.defaults import (
     DEFAULT_DATABASE_PATH,
     DEFAULT_ENGINE_NAME,
     DEFAULT_LXMF_ENABLED,
+    DEFAULT_LXMF_SETTINGS_PATH,
     DEFAULT_NOMADNET_ENABLED,
     DEFAULT_NOMADNET_PAGES_DIR,
+    DEFAULT_PROPAGATION_NODES_PATH,
     DEFAULT_RNS_CONFIG_DIR,
     DEFAULT_TAILSCALE_ACCESS_ENABLED,
 )
@@ -49,6 +51,8 @@ class AppConfig:
     nomadnet_pages_dir: Path = DEFAULT_NOMADNET_PAGES_DIR
     clients_dir: Path = DEFAULT_CLIENTS_DIR
     local_identities_dir: Path = DEFAULT_LOCAL_IDENTITIES_DIR
+    propagation_nodes_path: Path = DEFAULT_PROPAGATION_NODES_PATH
+    lxmf_settings_path: Path = DEFAULT_LXMF_SETTINGS_PATH
 
     runtime_python: Path | None = None
     runtime_source_path: Path | None = None
@@ -86,6 +90,16 @@ class AppConfig:
             "local_identities_dir",
             config.local_identities_dir,
         )
+        config.propagation_nodes_path = config._read_path(
+            raw,
+            "propagation_nodes_path",
+            config.propagation_nodes_path,
+        )
+        config.lxmf_settings_path = config._read_path(
+            raw,
+            "lxmf_settings_path",
+            config.lxmf_settings_path,
+        )
         config.nomadnet_pages_dir = config._read_path(
             raw,
             "nomadnet_pages_dir",
@@ -118,6 +132,8 @@ class AppConfig:
             "nomadnet_pages_dir": str(self.nomadnet_pages_dir),
             "clients_dir": str(self.clients_dir),
             "local_identities_dir": str(self.local_identities_dir),
+            "propagation_nodes_path": str(self.propagation_nodes_path),
+            "lxmf_settings_path": str(self.lxmf_settings_path),
         }
 
         self.app_config_path.write_text(
@@ -153,7 +169,8 @@ class AppConfig:
         self.nomadnet_pages_dir.mkdir(parents=True, exist_ok=True)
         self.clients_dir.mkdir(parents=True, exist_ok=True)
         self.local_identities_dir.mkdir(parents=True, exist_ok=True)
-
+        self.propagation_nodes_path.parent.mkdir(parents=True, exist_ok=True)
+        self.lxmf_settings_path.parent.mkdir(parents=True, exist_ok=True)
     def to_dict(self) -> dict[str, object]:
         return {
             "controller_host": self.controller_host,
@@ -172,6 +189,8 @@ class AppConfig:
             "nomadnet_pages_dir": str(self.nomadnet_pages_dir),
             "clients_dir": str(self.clients_dir),
             "local_identities_dir": str(self.local_identities_dir),
+            "propagation_nodes_path": str(self.propagation_nodes_path),
+            "lxmf_settings_path": str(self.lxmf_settings_path),
             "runtime_python": str(self.runtime_python) if self.runtime_python is not None else None,
             "runtime_source_path": (
                 str(self.runtime_source_path) if self.runtime_source_path is not None else None
@@ -180,7 +199,6 @@ class AppConfig:
                 str(self.lxmf_source_path) if self.lxmf_source_path is not None else None
             ),
         }
-
     def controller_listen_hosts(self) -> list[str]:
         hosts: list[str] = ["127.0.0.1"]
 

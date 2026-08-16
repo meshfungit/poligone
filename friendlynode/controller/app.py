@@ -7,8 +7,6 @@ import sys
 from typing import Any
 from friendlynode.config.app_config import AppConfig
 from friendlynode.config.defaults import (
-    DEFAULT_LXMF_SETTINGS_PATH,
-    DEFAULT_PROPAGATION_NODES_PATH,
     IMPORT_EXPORT_DIR,
     INTERFACES_EXPORT_PATH,
 )
@@ -115,8 +113,8 @@ class ControllerApp:
         self.config = config or AppConfig.load()
         self.state = StateCache()
         self.runtime_manager = RuntimeManager()
-        self.propagation_store = PropagationNodeStore(DEFAULT_PROPAGATION_NODES_PATH)
-        self.lxmf_settings_store = LxmfSettingsStore(DEFAULT_LXMF_SETTINGS_PATH)
+        self.propagation_store = PropagationNodeStore(self.config.propagation_nodes_path)
+        self.lxmf_settings_store = LxmfSettingsStore(self.config.lxmf_settings_path)
 
         self.client_store: Any | None = None
         self.client_contact_store: Any | None = None

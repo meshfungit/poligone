@@ -3,20 +3,22 @@
 .venv-*/
 venv/
 
-# FriendlyNode local runtime state
-data/config/friendlynode.json
-data/config/reticulum/
-data/db/
-data/logs/
-data/identities/
-data/clients/
-data/attachments/
+# FriendlyNode instance-local runtime state
+data/config/*
+!data/config/.gitkeep
+data/import-export/*
+!data/import-export/.gitkeep
+data/db/*
+!data/db/.gitkeep
+data/logs/*
+!data/logs/.gitkeep
+data/identities/*
+!data/identities/.gitkeep
+data/clients/*
+!data/clients/.gitkeep
+data/attachments/*
+!data/attachments/.gitkeep
 data/nomadnet-pages/
-
-# Local Python environments
-.venv/
-.venv-*/
-venv/
 
 # Python cache
 __pycache__/
@@ -26,18 +28,6 @@ __pycache__/
 # PyCharm / IDE
 .idea/
 *.iml
-
-# Runtime-local data
-data/db/*
-data/logs/*
-data/identities/*
-data/clients/*
-data/attachments/*
-!data/db/.gitkeep
-!data/logs/.gitkeep
-!data/identities/.gitkeep
-!data/clients/.gitkeep
-!data/attachments/.gitkeep
 
 # Local Reticulum runtimes and copied upstream sources
 runtimes/*/venv/
