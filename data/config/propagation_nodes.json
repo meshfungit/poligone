@@ -8,7 +8,7 @@
     },
     {
       "destination_hash": "90ab9d448f17f3a121dc0f1230af39be",
-      "enabled": false,
+      "enabled": true,
       "identity_hash": "dde1660247453ae03ba4abce2c41e7df",
       "name": "WDGWars Node"
     },
@@ -26,7 +26,7 @@
     },
     {
       "destination_hash": "eb33ae26edd21211407b9b665dd9b05e",
-      "enabled": true,
+      "enabled": false,
       "identity_hash": "95a16e26560990d39792a1547ccfcc96",
       "name": "Catz Propagation Node"
     }
