@@ -117,7 +117,7 @@ class EngineMain:
         contact_id: str,
         title: str = "",
         delivery_method: str = "direct",
-        propagation_node_hash: str = "",
+        propagation_node_hashes: list[str] | None = None,
     ) -> dict[str, object]:
         if self.lxmf_process_manager is None:
             raise RuntimeError("LXMF process manager is disabled")
@@ -130,7 +130,7 @@ class EngineMain:
             contact_id=contact_id,
             title=title,
             delivery_method=delivery_method,
-            propagation_node_hash=propagation_node_hash,
+            propagation_node_hashes=propagation_node_hashes,
         )
     def make_announce(
         self,

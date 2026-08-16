@@ -157,7 +157,7 @@ class LxmfProcessManager:
         contact_id: str,
         title: str = "",
         delivery_method: str = "direct",
-        propagation_node_hash: str = "",
+        propagation_node_hashes: list[str] | None = None,
     ) -> dict[str, object]:
         worker = self._workers.get(identity_id)
 
@@ -172,7 +172,7 @@ class LxmfProcessManager:
             "local_message_id": local_message_id,
             "contact_id": contact_id,
             "delivery_method": delivery_method,
-            "propagation_node_hash": propagation_node_hash,
+            "propagation_node_hashes": list(propagation_node_hashes or []),
         }
         response = self._send_control_json(worker, request, timeout=LXMF_WORKER_SEND_TIMEOUT_SECONDS)
 

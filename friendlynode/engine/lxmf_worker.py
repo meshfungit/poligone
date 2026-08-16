@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 import json
+import queue
 import signal
 import socket
 import sys
@@ -39,6 +41,20 @@ MESSAGE_DELIVERY_METHODS = (
     MESSAGE_DELIVERY_DIRECT,
     MESSAGE_DELIVERY_PROPAGATION,
 )
+PROPAGATION_REPLICATION_THREAD_NAME = "friendlynode-lxmf-propagation"
+PROPAGATION_PENDING_POLL_SECONDS = 0.05
+PROPAGATION_QUEUE_STOP = object()
+
+
+@dataclass(slots=True)
+class PropagationSendJob:
+    message: Any
+    destination_hash: str
+    local_message_id: str
+    contact_id: str
+    propagation_node_hashes: tuple[str, ...]
+
+
 
 
 class LxmfWorkerRuntime:
@@ -67,6 +83,9 @@ class LxmfWorkerRuntime:
         self._auto_announce_enabled = False
         self._auto_announce_interval_seconds: int | None = None
         self._next_auto_announce_at: float | None = None
+        self._propagation_queue: queue.Queue[PropagationSendJob | object] = queue.Queue()
+        self._propagation_stop_event = threading.Event()
+        self._propagation_thread: threading.Thread | None = None
 
     def start(self) -> None:
         self._configure_module_paths()
@@ -108,6 +127,14 @@ class LxmfWorkerRuntime:
         self._validate_network_identity(local_identity, identity_hash, destination_hash)
         self.identity_store.update_network_identity(local_identity.id, identity_hash, destination_hash)
 
+        self._propagation_stop_event.clear()
+        self._propagation_thread = threading.Thread(
+            target=self._propagation_loop,
+            name=PROPAGATION_REPLICATION_THREAD_NAME,
+            daemon=True,
+        )
+        self._propagation_thread.start()
+
         print(
             f"[friendlynode-lxmf:{local_identity.id}] ready "
             f"identity={identity_hash} destination={destination_hash}",
@@ -137,7 +164,7 @@ class LxmfWorkerRuntime:
         local_message_id: str = "",
         contact_id: str = "",
         delivery_method: str = MESSAGE_DELIVERY_DIRECT,
-        propagation_node_hash: str = "",
+        propagation_node_hashes: list[str] | None = None,
     ) -> dict[str, object]:
         if self.router is None or self.delivery_destination is None or self.RNS is None or self.LXMF is None:
             raise RuntimeError("LXMF worker is not ready")
@@ -148,46 +175,16 @@ class LxmfWorkerRuntime:
             raise ValueError(f"Unsupported LXMF delivery method: {clean_delivery_method}")
 
         clean_destination_hash = destination_hash.strip().lower()
-        destination_hash_bytes = bytes.fromhex(clean_destination_hash)
-        expected_length = self.RNS.Identity.TRUNCATED_HASHLENGTH // 8
-
-        if len(destination_hash_bytes) != expected_length:
-            raise ValueError(f"Invalid LXMF destination hash length: {clean_destination_hash}")
-
-        clean_propagation_node_hash = propagation_node_hash.strip().lower()
-
-        if clean_delivery_method == MESSAGE_DELIVERY_PROPAGATION:
-            propagation_node_bytes = bytes.fromhex(clean_propagation_node_hash)
-
-            if len(propagation_node_bytes) != expected_length:
-                raise ValueError(
-                    f"Invalid propagation node hash length: {clean_propagation_node_hash}"
-                )
-
-            self.router.set_outbound_propagation_node(propagation_node_bytes)
-
-        recipient_identity = self.RNS.Identity.recall(destination_hash_bytes)
-
-        if recipient_identity is None:
-            self.RNS.Transport.request_path(destination_hash_bytes)
-            deadline = time.monotonic() + OUTBOUND_IDENTITY_LOOKUP_TIMEOUT_SECONDS
-
-            while recipient_identity is None and time.monotonic() < deadline:
-                time.sleep(OUTBOUND_IDENTITY_LOOKUP_POLL_SECONDS)
-                recipient_identity = self.RNS.Identity.recall(destination_hash_bytes)
-
-        if recipient_identity is None:
-            raise RuntimeError(
-                f"Destination identity is not available after path lookup: {clean_destination_hash}"
-            )
-
-        destination = self.RNS.Destination(
-            recipient_identity,
-            self.RNS.Destination.OUT,
-            self.RNS.Destination.SINGLE,
-            "lxmf",
-            "delivery",
+        destination = self._resolve_lxmf_destination(clean_destination_hash)
+        clean_propagation_node_hashes = self._normalise_propagation_node_hashes(
+            propagation_node_hashes or []
         )
+
+        if (
+            clean_delivery_method == MESSAGE_DELIVERY_PROPAGATION
+            and len(clean_propagation_node_hashes) == 0
+        ):
+            raise ValueError("Propagation delivery requires at least one propagation node")
 
         desired_method = (
             self.LXMF.LXMessage.PROPAGATED
@@ -208,25 +205,37 @@ class LxmfWorkerRuntime:
             title,
             **message_kwargs,
         )
-        message.register_delivery_callback(
-            lambda succeeded_message: self._outbound_succeeded(
-                succeeded_message,
-                local_message_id=local_message_id,
-                contact_id=contact_id,
-                delivery_method=clean_delivery_method,
-                propagation_node_hash=clean_propagation_node_hash,
+
+        if clean_delivery_method == MESSAGE_DELIVERY_DIRECT:
+            message.register_delivery_callback(
+                lambda succeeded_message: self._outbound_succeeded(
+                    succeeded_message,
+                    local_message_id=local_message_id,
+                    contact_id=contact_id,
+                    delivery_method=clean_delivery_method,
+                    propagation_node_hash="",
+                )
             )
-        )
-        message.register_failed_callback(
-            lambda failed_message: self._outbound_failed(
-                failed_message,
-                local_message_id=local_message_id,
-                contact_id=contact_id,
-                delivery_method=clean_delivery_method,
-                propagation_node_hash=clean_propagation_node_hash,
+            message.register_failed_callback(
+                lambda failed_message: self._outbound_failed(
+                    failed_message,
+                    local_message_id=local_message_id,
+                    contact_id=contact_id,
+                    delivery_method=clean_delivery_method,
+                    propagation_node_hash="",
+                )
             )
-        )
-        self.router.handle_outbound(message)
+            self.router.handle_outbound(message)
+        else:
+            self._propagation_queue.put(
+                PropagationSendJob(
+                    message=message,
+                    destination_hash=clean_destination_hash,
+                    local_message_id=local_message_id,
+                    contact_id=contact_id,
+                    propagation_node_hashes=tuple(clean_propagation_node_hashes),
+                )
+            )
 
         message_id = self._hex_value(getattr(message, "hash", b""))
         print(
@@ -234,7 +243,7 @@ class LxmfWorkerRuntime:
             f"destination={clean_destination_hash} id={message_id} "
             f"mode={clean_delivery_method}"
             + (
-                f" propagation_node={clean_propagation_node_hash}"
+                f" propagation_nodes={len(clean_propagation_node_hashes)}"
                 if clean_delivery_method == MESSAGE_DELIVERY_PROPAGATION
                 else ""
             ),
@@ -248,8 +257,322 @@ class LxmfWorkerRuntime:
             "message_id": message_id,
             "destination_hash": clean_destination_hash,
             "delivery_method": clean_delivery_method,
-            "propagation_node_hash": clean_propagation_node_hash,
+            "propagation_node_hashes": clean_propagation_node_hashes,
         }
+    def _resolve_lxmf_destination(self, destination_hash: str) -> Any:
+        if self.RNS is None:
+            raise RuntimeError("RNS module is not loaded")
+
+        destination_hash_bytes = bytes.fromhex(destination_hash)
+        expected_length = self.RNS.Identity.TRUNCATED_HASHLENGTH // 8
+
+        if len(destination_hash_bytes) != expected_length:
+            raise ValueError(f"Invalid LXMF destination hash length: {destination_hash}")
+
+        recipient_identity = self.RNS.Identity.recall(destination_hash_bytes)
+
+        if recipient_identity is None:
+            self.RNS.Transport.request_path(destination_hash_bytes)
+            deadline = time.monotonic() + OUTBOUND_IDENTITY_LOOKUP_TIMEOUT_SECONDS
+
+            while recipient_identity is None and time.monotonic() < deadline:
+                time.sleep(OUTBOUND_IDENTITY_LOOKUP_POLL_SECONDS)
+                recipient_identity = self.RNS.Identity.recall(destination_hash_bytes)
+
+        if recipient_identity is None:
+            raise RuntimeError(
+                f"Destination identity is not available after path lookup: {destination_hash}"
+            )
+
+        return self.RNS.Destination(
+            recipient_identity,
+            self.RNS.Destination.OUT,
+            self.RNS.Destination.SINGLE,
+            "lxmf",
+            "delivery",
+        )
+
+    def _normalise_propagation_node_hashes(self, node_hashes: list[str]) -> list[str]:
+        if self.RNS is None:
+            raise RuntimeError("RNS module is not loaded")
+
+        expected_length = self.RNS.Identity.TRUNCATED_HASHLENGTH // 8
+        result: list[str] = []
+        seen: set[str] = set()
+
+        for raw_hash in node_hashes:
+            node_hash = str(raw_hash or "").strip().lower()
+
+            if node_hash == "" or node_hash in seen:
+                continue
+
+            node_hash_bytes = bytes.fromhex(node_hash)
+
+            if len(node_hash_bytes) != expected_length:
+                raise ValueError(f"Invalid propagation node hash length: {node_hash}")
+
+            seen.add(node_hash)
+            result.append(node_hash)
+
+        return result
+
+    def _propagation_loop(self) -> None:
+        while not self._propagation_stop_event.is_set():
+            job = self._propagation_queue.get()
+
+            try:
+                if job is PROPAGATION_QUEUE_STOP:
+                    return
+
+                if not isinstance(job, PropagationSendJob):
+                    continue
+
+                self._replicate_propagation_message(job)
+            except Exception as exc:
+                print(
+                    f"[friendlynode-lxmf:{self.identity_id}] propagation replication error: "
+                    f"{type(exc).__name__}: {exc}",
+                    flush=True,
+                )
+
+                if isinstance(job, PropagationSendJob):
+                    self._emit_final_propagation_failure(
+                        job,
+                        f"{type(exc).__name__}: {exc}",
+                    )
+            finally:
+                self._propagation_queue.task_done()
+
+    def _replicate_propagation_message(self, job: PropagationSendJob) -> None:
+        if self.router is None:
+            raise RuntimeError("LXMF router is not ready")
+
+        candidates = self._propagation_candidates(job)
+        accepted_count = 0
+
+        for node_hash, stamp_cost in candidates:
+            if self._propagation_stop_event.is_set():
+                return
+
+            succeeded, error = self._attempt_propagation_node(
+                job,
+                node_hash,
+                stamp_cost,
+            )
+
+            if succeeded:
+                accepted_count += 1
+                payload = self._outbound_event_payload(
+                    job.message,
+                    local_message_id=job.local_message_id,
+                    contact_id=job.contact_id,
+                    state="propagated",
+                    delivery_method=MESSAGE_DELIVERY_PROPAGATION,
+                    propagation_node_hash=node_hash,
+                )
+                self._emit_worker_event("lxmf.message_propagated", payload)
+                print(
+                    f"[friendlynode-lxmf:{self.identity_id}] message propagated "
+                    f"destination={payload['destination_hash']} id={payload['message_id']} "
+                    f"transient_id={payload['transient_id']} propagation_node={node_hash}",
+                    flush=True,
+                )
+            else:
+                self._emit_propagation_node_failed(job, node_hash, error)
+
+                if bool(getattr(job.message, "stamp_generation_failed", False)):
+                    break
+
+        completion_payload = {
+            "identity_id": self.identity_id,
+            "contact_id": job.contact_id,
+            "local_message_id": job.local_message_id,
+            "message_id": self._hex_value(getattr(job.message, "hash", b"")),
+            "transient_id": self._hex_value(getattr(job.message, "transient_id", b"")),
+            "destination_hash": job.destination_hash,
+            "accepted_count": accepted_count,
+            "node_count": len(job.propagation_node_hashes),
+        }
+        self._emit_worker_event("lxmf.propagation_replication_complete", completion_payload)
+        print(
+            f"[friendlynode-lxmf:{self.identity_id}] propagation replication complete "
+            f"id={completion_payload['message_id']} transient_id={completion_payload['transient_id']} "
+            f"accepted={accepted_count}/{len(job.propagation_node_hashes)}",
+            flush=True,
+        )
+
+        if accepted_count == 0:
+            self._emit_final_propagation_failure(
+                job,
+                "All enabled propagation nodes failed",
+            )
+
+    def _propagation_candidates(
+        self,
+        job: PropagationSendJob,
+    ) -> list[tuple[str, int]]:
+        if self.router is None:
+            raise RuntimeError("LXMF router is not ready")
+
+        candidates: list[tuple[str, int]] = []
+
+        for node_hash in job.propagation_node_hashes:
+            try:
+                self.router.set_outbound_propagation_node(bytes.fromhex(node_hash))
+                stamp_cost = self.router.get_outbound_propagation_cost()
+
+                if stamp_cost is None:
+                    self._emit_propagation_node_failed(
+                        job,
+                        node_hash,
+                        "Propagation stamp cost unavailable",
+                    )
+                    continue
+
+                candidates.append((node_hash, int(stamp_cost)))
+            except Exception as exc:
+                self._emit_propagation_node_failed(
+                    job,
+                    node_hash,
+                    f"{type(exc).__name__}: {exc}",
+                )
+
+        if len(candidates) == 0:
+            return []
+
+        stamp_seed = max(candidates, key=lambda candidate: candidate[1])
+        return [
+            stamp_seed,
+            *[
+                candidate
+                for candidate in candidates
+                if candidate[0] != stamp_seed[0]
+            ],
+        ]
+
+    def _attempt_propagation_node(
+        self,
+        job: PropagationSendJob,
+        node_hash: str,
+        stamp_cost: int,
+    ) -> tuple[bool, str]:
+        if self.router is None:
+            return False, "LXMF router is not ready"
+
+        message = job.message
+        completion = threading.Event()
+        outcome: dict[str, object] = {
+            "succeeded": False,
+            "error": "LXMF propagation failed",
+        }
+
+        def succeeded_callback(_: object) -> None:
+            outcome["succeeded"] = True
+            outcome["error"] = ""
+            completion.set()
+
+        def failed_callback(_: object) -> None:
+            outcome["succeeded"] = False
+            outcome["error"] = (
+                "LXMF propagation stamp generation failed"
+                if bool(getattr(message, "stamp_generation_failed", False))
+                else "LXMF propagation delivery failed"
+            )
+            completion.set()
+
+        self.router.set_outbound_propagation_node(bytes.fromhex(node_hash))
+        self._reset_propagation_message_for_attempt(message)
+        message.register_delivery_callback(succeeded_callback)
+        message.register_failed_callback(failed_callback)
+
+        print(
+            f"[friendlynode-lxmf:{self.identity_id}] propagation attempt "
+            f"id={self._hex_value(getattr(message, 'hash', b''))} "
+            f"node={node_hash} stamp_cost={stamp_cost}",
+            flush=True,
+        )
+
+        try:
+            self.router.handle_outbound(message)
+        except Exception as exc:
+            outcome["succeeded"] = False
+            outcome["error"] = f"{type(exc).__name__}: {exc}"
+            completion.set()
+
+        completion.wait()
+        self._wait_for_propagation_message_release(message)
+        return bool(outcome["succeeded"]), str(outcome["error"])
+
+    def _reset_propagation_message_for_attempt(self, message: object) -> None:
+        if self.LXMF is None:
+            raise RuntimeError("LXMF module is not loaded")
+
+        message.delivery_attempts = 0
+        message.progress = 0.0
+        message.state = self.LXMF.LXMessage.GENERATING
+        message.resource_representation = None
+        message.set_delivery_destination(None)
+
+        if hasattr(message, "next_delivery_attempt"):
+            delattr(message, "next_delivery_attempt")
+
+    def _wait_for_propagation_message_release(self, message: object) -> None:
+        if self.router is None:
+            return
+
+        while not self._propagation_stop_event.is_set():
+            in_outbound = message in self.router.pending_outbound
+            in_deferred = message in self.router.pending_deferred_stamps.values()
+
+            if not in_outbound and not in_deferred:
+                return
+
+            self.router.process_outbound()
+            time.sleep(PROPAGATION_PENDING_POLL_SECONDS)
+
+    def _emit_propagation_node_failed(
+        self,
+        job: PropagationSendJob,
+        node_hash: str,
+        error: str,
+    ) -> None:
+        payload = self._outbound_event_payload(
+            job.message,
+            local_message_id=job.local_message_id,
+            contact_id=job.contact_id,
+            state="node_failed",
+            delivery_method=MESSAGE_DELIVERY_PROPAGATION,
+            propagation_node_hash=node_hash,
+        )
+        payload["error"] = error
+        self._emit_worker_event("lxmf.propagation_node_failed", payload)
+        print(
+            f"[friendlynode-lxmf:{self.identity_id}] propagation node failed "
+            f"id={payload['message_id']} node={node_hash} error={error}",
+            flush=True,
+        )
+
+    def _emit_final_propagation_failure(
+        self,
+        job: PropagationSendJob,
+        error: str,
+    ) -> None:
+        payload = self._outbound_event_payload(
+            job.message,
+            local_message_id=job.local_message_id,
+            contact_id=job.contact_id,
+            state="failed",
+            delivery_method=MESSAGE_DELIVERY_PROPAGATION,
+            propagation_node_hash="",
+        )
+        payload["error"] = error
+        self._emit_worker_event("lxmf.message_failed", payload)
+        print(
+            f"[friendlynode-lxmf:{self.identity_id}] message failed "
+            f"destination={payload['destination_hash']} id={payload['message_id']} "
+            f"mode={MESSAGE_DELIVERY_PROPAGATION} error={error}",
+            flush=True,
+        )
     def process_periodic_tasks(self) -> None:
         try:
             local_identity = self._get_identity()
@@ -287,12 +610,22 @@ class LxmfWorkerRuntime:
             self._next_auto_announce_at = now + interval_seconds
 
     def stop(self) -> None:
+        self._propagation_stop_event.set()
+        self._propagation_queue.put(PROPAGATION_QUEUE_STOP)
+
+        if (
+            self._propagation_thread is not None
+            and self._propagation_thread is not threading.current_thread()
+        ):
+            self._propagation_thread.join(timeout=WORKER_WAIT_INTERVAL_SECONDS)
+
+        self._propagation_thread = None
+
         if self.RNS is None:
             return
 
         reticulum_class = getattr(self.RNS, "Reticulum", None)
         exit_handler = getattr(reticulum_class, "exit_handler", None)
-
         if callable(exit_handler):
             try:
                 exit_handler()
@@ -307,7 +640,6 @@ class LxmfWorkerRuntime:
         self.router = None
         self.rns_identity = None
         self.reticulum = None
-
     def _configure_module_paths(self) -> None:
         for path in (self.lxmf_source_path, self.rns_source_path):
             if path is None:
@@ -465,6 +797,7 @@ class LxmfWorkerRuntime:
             "contact_id": contact_id,
             "local_message_id": local_message_id,
             "message_id": self._hex_value(getattr(message, "hash", b"")),
+            "transient_id": self._hex_value(getattr(message, "transient_id", b"")),
             "destination_hash": self._hex_value(getattr(message, "destination_hash", b"")),
             "state": state,
             "delivery_method": delivery_method,
@@ -606,6 +939,12 @@ def _control_loop(
                     continue
 
                 try:
+                    raw_propagation_nodes = request.get("propagation_node_hashes")
+                    propagation_node_hashes = (
+                        [str(value or "") for value in raw_propagation_nodes]
+                        if isinstance(raw_propagation_nodes, list)
+                        else []
+                    )
                     result = runtime.send_message(
                         str(request.get("destination_hash") or ""),
                         str(request.get("content") or ""),
@@ -613,7 +952,7 @@ def _control_loop(
                         local_message_id=str(request.get("local_message_id") or ""),
                         contact_id=str(request.get("contact_id") or ""),
                         delivery_method=str(request.get("delivery_method") or MESSAGE_DELIVERY_DIRECT),
-                        propagation_node_hash=str(request.get("propagation_node_hash") or ""),
+                        propagation_node_hashes=propagation_node_hashes,
                     )
                     connection.sendall((json.dumps(result, separators=(",", ":")) + "\n").encode("utf-8"))
                 except Exception as exc:

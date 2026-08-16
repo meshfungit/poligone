@@ -758,7 +758,7 @@ function renderClientPropertiesModal() {
 
   const hint = document.createElement("div");
   hint.className = "settings-hint";
-  hint.textContent = "Enabled nodes form an ordered pool. More than one node may be enabled.";
+  hint.textContent = "Every enabled node is a propagation replication target.";
   propagation.appendChild(hint);
 
   const list = document.createElement("div");
@@ -5394,6 +5394,37 @@ async function deleteStoredMessage() {
   }
 }
 
+function formatMessagePropagationNodes(message) {
+  const nodes = Array.isArray(message?.propagation_nodes)
+    ? message.propagation_nodes
+    : [];
+
+  if (nodes.length > 0) {
+    return nodes
+      .map((node) => {
+        const name = String(node?.name || "").trim();
+        const destination = String(node?.destination_hash || "").trim();
+
+        if (name !== "" && destination !== "") {
+          return `${name} (${destination})`;
+        }
+
+        return name || destination;
+      })
+      .filter((value) => value !== "")
+      .join("; ");
+  }
+
+  const legacyName = String(message?.propagation_node_name || "").trim();
+  const legacyHash = String(message?.propagation_node_hash || "").trim();
+
+  if (legacyName !== "" && legacyHash !== "") {
+    return `${legacyName} (${legacyHash})`;
+  }
+
+  return legacyName || legacyHash;
+}
+
 function renderMessagePropertiesModal() {
   const overlay = document.createElement("div");
   overlay.className = "client-editor-overlay";
@@ -5413,8 +5444,7 @@ function renderMessagePropertiesModal() {
     ["Created at", messagePropertiesState.created_at],
     ["Delivery attempts", messagePropertiesState.delivery_attempts],
     ["Delivery method", messagePropertiesState.delivery_method],
-    ["Propagation node", messagePropertiesState.propagation_node_name],
-    ["Propagation node hash", messagePropertiesState.propagation_node_hash],
+    ["Propagation nodes", formatMessagePropagationNodes(messagePropertiesState)],
     ["LXMF message id", messagePropertiesState.lxmf_message_id],
     ["Source hash", messagePropertiesState.source_hash],
     ["Destination hash", messagePropertiesState.destination_hash],

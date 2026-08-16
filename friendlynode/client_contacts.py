@@ -34,6 +34,7 @@ OUTBOUND_MESSAGE_MUTABLE_FIELDS = frozenset({
     "delivery_method",
     "propagation_node_hash",
     "propagation_node_name",
+    "propagation_nodes",
     "lxmf_message_id",
     "destination_hash",
     "error",
@@ -240,8 +241,6 @@ class ClientContactStore:
         content: str,
         *,
         delivery_method: str = MESSAGE_DELIVERY_METHOD_DIRECT,
-        propagation_node_hash: str = "",
-        propagation_node_name: str = "",
     ) -> dict[str, object]:
         text = content.strip()
 
@@ -259,8 +258,9 @@ class ClientContactStore:
             "state_datetime": created_at,
             "delivery_attempts": 1,
             "delivery_method": delivery_method,
-            "propagation_node_hash": propagation_node_hash,
-            "propagation_node_name": propagation_node_name,
+            "propagation_node_hash": "",
+            "propagation_node_name": "",
+            "propagation_nodes": [],
             "lxmf_message_id": "",
             "destination_hash": "",
             "error": "",
@@ -318,8 +318,6 @@ class ClientContactStore:
         message_id: str,
         *,
         delivery_method: str = MESSAGE_DELIVERY_METHOD_DIRECT,
-        propagation_node_hash: str = "",
-        propagation_node_name: str = "",
     ) -> dict[str, object]:
         messages = self.list_messages(identity_id, contact_id)
 
@@ -344,14 +342,76 @@ class ClientContactStore:
             message["state_datetime"] = self._now_iso()
             message["delivery_attempts"] = self._normalise_delivery_attempts(message.get("delivery_attempts")) + 1
             message["delivery_method"] = delivery_method
-            message["propagation_node_hash"] = propagation_node_hash
-            message["propagation_node_name"] = propagation_node_name
+            message["propagation_node_hash"] = ""
+            message["propagation_node_name"] = ""
+            message["propagation_nodes"] = []
             message["lxmf_message_id"] = ""
             message["error"] = ""
             self._write_messages(identity_id, contact_id, messages)
             return message
 
         raise ValueError(f"Message does not exist: {message_id}")
+    def record_propagation_success(
+        self,
+        identity_id: str,
+        contact_id: str,
+        message_id: str,
+        *,
+        propagation_node_hash: str,
+        propagation_node_name: str,
+        lxmf_message_id: str,
+        destination_hash: str,
+    ) -> dict[str, object] | None:
+        messages = self.list_messages(identity_id, contact_id)
+        clean_node_hash = propagation_node_hash.strip().lower()
+
+        for index, message in enumerate(messages):
+            if str(message.get("id") or "") != message_id:
+                continue
+            if message.get("direction") != "outbound":
+                return None
+
+            previous_state = str(message.get("state") or "")
+            accepted_nodes = list(message.get("propagation_nodes") or [])
+
+            if clean_node_hash != "" and not any(
+                str(node.get("destination_hash") or "").strip().lower() == clean_node_hash
+                for node in accepted_nodes
+                if isinstance(node, dict)
+            ):
+                accepted_nodes.append({
+                    "destination_hash": clean_node_hash,
+                    "name": propagation_node_name,
+                })
+
+            message["propagation_nodes"] = accepted_nodes
+
+            if accepted_nodes:
+                first_node = accepted_nodes[0]
+                message["propagation_node_hash"] = str(first_node.get("destination_hash") or "")
+                message["propagation_node_name"] = str(first_node.get("name") or "")
+
+            message["delivery_method"] = MESSAGE_DELIVERY_METHOD_PROPAGATION
+            message["lxmf_message_id"] = lxmf_message_id
+            message["destination_hash"] = destination_hash
+            message["error"] = ""
+
+            if previous_state != MESSAGE_STATE_PROPAGATED:
+                message["state"] = MESSAGE_STATE_PROPAGATED
+                message["state_datetime"] = self._now_iso()
+
+            delivery_attempts = self._normalise_delivery_attempts(message.get("delivery_attempts"))
+
+            if (
+                previous_state not in MESSAGE_SUCCESS_STATES
+                and delivery_attempts > 1
+            ):
+                messages.append(messages.pop(index))
+
+            self._write_messages(identity_id, contact_id, messages)
+            return message
+
+        return None
     def fail_pending_outbound_messages(
         self,
         identity_id: str | None,
@@ -464,6 +524,26 @@ class ClientContactStore:
             normalised["delivery_attempts"] = self._normalise_delivery_attempts(
                 normalised.get("delivery_attempts")
             )
+            raw_nodes = normalised.get("propagation_nodes")
+
+            if isinstance(raw_nodes, list):
+                normalised["propagation_nodes"] = [
+                    {
+                        "destination_hash": str(node.get("destination_hash") or "").strip().lower(),
+                        "name": str(node.get("name") or "").strip(),
+                    }
+                    for node in raw_nodes
+                    if isinstance(node, dict)
+                    and str(node.get("destination_hash") or "").strip() != ""
+                ]
+            else:
+                legacy_hash = str(normalised.get("propagation_node_hash") or "").strip().lower()
+                legacy_name = str(normalised.get("propagation_node_name") or "").strip()
+                normalised["propagation_nodes"] = (
+                    [{"destination_hash": legacy_hash, "name": legacy_name}]
+                    if legacy_hash != ""
+                    else []
+                )
 
         return normalised
     def _normalise_delivery_attempts(self, value: object) -> int:
