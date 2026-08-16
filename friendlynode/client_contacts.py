@@ -14,6 +14,13 @@ MESSAGE_STATE_SENDING = "sending"
 MESSAGE_STATE_DELIVERED = "delivered"
 MESSAGE_STATE_FAILED = "failed"
 MESSAGE_STATE_RECEIVED = "received"
+MESSAGE_STATE_PROPAGATED = "propagated"
+MESSAGE_DELIVERY_METHOD_DIRECT = "direct"
+MESSAGE_DELIVERY_METHOD_PROPAGATION = "propagation"
+MESSAGE_SUCCESS_STATES = frozenset({
+    MESSAGE_STATE_DELIVERED,
+    MESSAGE_STATE_PROPAGATED,
+})
 MESSAGE_PENDING_STATES = frozenset({
     "sending",
     "queueing",
@@ -24,6 +31,9 @@ OUTBOUND_MESSAGE_MUTABLE_FIELDS = frozenset({
     "state",
     "state_datetime",
     "delivery_attempts",
+    "delivery_method",
+    "propagation_node_hash",
+    "propagation_node_name",
     "lxmf_message_id",
     "destination_hash",
     "error",
@@ -223,7 +233,16 @@ class ClientContactStore:
         messages.append(message)
         self._write_messages(identity_id, contact_id, messages)
         return message
-    def add_outbound_message(self, identity_id: str, contact_id: str, content: str) -> dict[str, object]:
+    def add_outbound_message(
+        self,
+        identity_id: str,
+        contact_id: str,
+        content: str,
+        *,
+        delivery_method: str = MESSAGE_DELIVERY_METHOD_DIRECT,
+        propagation_node_hash: str = "",
+        propagation_node_name: str = "",
+    ) -> dict[str, object]:
         text = content.strip()
 
         if text == "":
@@ -239,6 +258,9 @@ class ClientContactStore:
             "state": MESSAGE_STATE_SENDING,
             "state_datetime": created_at,
             "delivery_attempts": 1,
+            "delivery_method": delivery_method,
+            "propagation_node_hash": propagation_node_hash,
+            "propagation_node_name": propagation_node_name,
             "lxmf_message_id": "",
             "destination_hash": "",
             "error": "",
@@ -279,8 +301,8 @@ class ClientContactStore:
             delivery_attempts = self._normalise_delivery_attempts(message.get("delivery_attempts"))
 
             if (
-                requested_state == MESSAGE_STATE_DELIVERED
-                and previous_state != MESSAGE_STATE_DELIVERED
+                requested_state in MESSAGE_SUCCESS_STATES
+                and previous_state not in MESSAGE_SUCCESS_STATES
                 and delivery_attempts > 1
             ):
                 messages.append(messages.pop(index))
@@ -294,6 +316,10 @@ class ClientContactStore:
         identity_id: str,
         contact_id: str,
         message_id: str,
+        *,
+        delivery_method: str = MESSAGE_DELIVERY_METHOD_DIRECT,
+        propagation_node_hash: str = "",
+        propagation_node_name: str = "",
     ) -> dict[str, object]:
         messages = self.list_messages(identity_id, contact_id)
 
@@ -317,13 +343,15 @@ class ClientContactStore:
             message["state"] = MESSAGE_STATE_SENDING
             message["state_datetime"] = self._now_iso()
             message["delivery_attempts"] = self._normalise_delivery_attempts(message.get("delivery_attempts")) + 1
+            message["delivery_method"] = delivery_method
+            message["propagation_node_hash"] = propagation_node_hash
+            message["propagation_node_name"] = propagation_node_name
             message["lxmf_message_id"] = ""
             message["error"] = ""
             self._write_messages(identity_id, contact_id, messages)
             return message
 
         raise ValueError(f"Message does not exist: {message_id}")
-
     def fail_pending_outbound_messages(
         self,
         identity_id: str | None,
@@ -429,6 +457,9 @@ class ClientContactStore:
         elif direction == "outbound":
             if state in ("queueing", "queued"):
                 normalised["state"] = MESSAGE_STATE_SENDING
+
+            if str(normalised.get("delivery_method") or "").strip() == "":
+                normalised["delivery_method"] = MESSAGE_DELIVERY_METHOD_DIRECT
 
             normalised["delivery_attempts"] = self._normalise_delivery_attempts(
                 normalised.get("delivery_attempts")

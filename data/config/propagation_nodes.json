@@ -2,7 +2,7 @@
   "nodes": [
     {
       "destination_hash": "39fb0ac9d0c84ee6f1b239cfb60c7bf2",
-      "enabled": true,
+      "enabled": false,
       "identity_hash": "8578f9fe348b6c32b0185d8ad9d337f2",
       "name": "NEMO Propagation Node"
     },
@@ -23,6 +23,12 @@
       "enabled": false,
       "identity_hash": "1934a27e4bd5271a07b50d8c9469f551",
       "name": "Rhein-Main Propagation Node"
+    },
+    {
+      "destination_hash": "eb33ae26edd21211407b9b665dd9b05e",
+      "enabled": true,
+      "identity_hash": "95a16e26560990d39792a1547ccfcc96",
+      "name": "Catz Propagation Node"
     }
   ],
   "version": 1

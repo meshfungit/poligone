@@ -156,6 +156,8 @@ class LxmfProcessManager:
         local_message_id: str,
         contact_id: str,
         title: str = "",
+        delivery_method: str = "direct",
+        propagation_node_hash: str = "",
     ) -> dict[str, object]:
         worker = self._workers.get(identity_id)
 
@@ -169,6 +171,8 @@ class LxmfProcessManager:
             "title": title,
             "local_message_id": local_message_id,
             "contact_id": contact_id,
+            "delivery_method": delivery_method,
+            "propagation_node_hash": propagation_node_hash,
         }
         response = self._send_control_json(worker, request, timeout=LXMF_WORKER_SEND_TIMEOUT_SECONDS)
 
@@ -177,7 +181,6 @@ class LxmfProcessManager:
             raise RuntimeError(f"LXMF send failed for {identity_id}: {message}")
 
         return response
-
     def stop_all(self) -> None:
         for identity_id in list(self._workers):
             self.stop(identity_id)

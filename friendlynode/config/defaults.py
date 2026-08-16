@@ -30,6 +30,7 @@ DEFAULT_DATABASE_PATH = DATA_DIR / "db" / "friendlynode.sqlite3"
 DEFAULT_CLIENTS_DIR = DATA_DIR / "clients"
 DEFAULT_LOCAL_IDENTITIES_DIR = DATA_DIR / "identities"
 DEFAULT_PROPAGATION_NODES_PATH = DATA_DIR / "config" / "propagation_nodes.json"
+DEFAULT_LXMF_SETTINGS_PATH = DATA_DIR / "config" / "lxmf_settings.json"
 
 SUPPORTED_INTERFACE_TYPES = (
     "AutoInterface",

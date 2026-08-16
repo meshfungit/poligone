@@ -7,11 +7,17 @@ import sys
 from typing import Any
 from friendlynode.config.app_config import AppConfig
 from friendlynode.config.defaults import (
+    DEFAULT_LXMF_SETTINGS_PATH,
     DEFAULT_PROPAGATION_NODES_PATH,
     IMPORT_EXPORT_DIR,
     INTERFACES_EXPORT_PATH,
 )
 from friendlynode.propagation import PropagationNodeStore
+from friendlynode.lxmf_settings import (
+    MESSAGE_MODE_DIRECT,
+    MESSAGE_MODE_PROPAGATION,
+    LxmfSettingsStore,
+)
 from friendlynode.controller.access import (
     build_channel_security_status,
     build_network_interfaces_status,
@@ -110,6 +116,7 @@ class ControllerApp:
         self.state = StateCache()
         self.runtime_manager = RuntimeManager()
         self.propagation_store = PropagationNodeStore(DEFAULT_PROPAGATION_NODES_PATH)
+        self.lxmf_settings_store = LxmfSettingsStore(DEFAULT_LXMF_SETTINGS_PATH)
 
         self.client_store: Any | None = None
         self.client_contact_store: Any | None = None
@@ -576,6 +583,20 @@ class ControllerApp:
             "nomadnet_browser_store_loaded": self.nomadnet_browser_store is not None,
         }
 
+    def get_lxmf_settings(self) -> dict[str, object]:
+        return self.lxmf_settings_store.get().to_dict()
+
+    def update_lxmf_settings(self, payload: dict[str, object]) -> dict[str, object]:
+        settings = self.lxmf_settings_store.set_message_mode(
+            str(payload.get("message_mode") or "")
+        )
+        self.state.append_log(
+            "info",
+            "lxmf",
+            f"LXMF message mode changed: {settings.message_mode}",
+        )
+        return settings.to_dict()
+
     def list_propagation_nodes(self) -> dict[str, object]:
         nodes = self.propagation_store.list_nodes()
         return {
@@ -942,8 +963,18 @@ class ControllerApp:
         payload: dict[str, object],
     ) -> dict[str, object]:
         content = str(payload.get("content") or "")
-        contact, destination_hash = self._client_outbound_target(client_id, contact_id)
-        message = self.client_contact_store.add_outbound_message(client_id, contact_id, content)
+        _, destination_hash = self._client_outbound_target(client_id, contact_id)
+        delivery_method, propagation_node = self._client_message_delivery_context()
+        propagation_node_hash = "" if propagation_node is None else propagation_node.destination_hash
+        propagation_node_name = "" if propagation_node is None else propagation_node.name
+        message = self.client_contact_store.add_outbound_message(
+            client_id,
+            contact_id,
+            content,
+            delivery_method=delivery_method,
+            propagation_node_hash=propagation_node_hash,
+            propagation_node_name=propagation_node_name,
+        )
         self.state.notify_client_change()
         return self._queue_client_outbound_message(
             client_id,
@@ -952,6 +983,125 @@ class ControllerApp:
             destination_hash,
         )
 
+    def repeat_client_message(
+        self,
+        client_id: str,
+        contact_id: str,
+        message_id: str,
+    ) -> dict[str, object]:
+        _, destination_hash = self._client_outbound_target(client_id, contact_id)
+        delivery_method, propagation_node = self._client_message_delivery_context()
+        propagation_node_hash = "" if propagation_node is None else propagation_node.destination_hash
+        propagation_node_name = "" if propagation_node is None else propagation_node.name
+        message = self.client_contact_store.prepare_outbound_retry(
+            client_id,
+            contact_id,
+            message_id,
+            delivery_method=delivery_method,
+            propagation_node_hash=propagation_node_hash,
+            propagation_node_name=propagation_node_name,
+        )
+        self.state.notify_client_change()
+        return self._queue_client_outbound_message(
+            client_id,
+            contact_id,
+            message,
+            destination_hash,
+        )
+
+    def _client_message_delivery_context(self) -> tuple[str, object | None]:
+        message_mode = self.lxmf_settings_store.get().message_mode
+
+        if message_mode == MESSAGE_MODE_DIRECT:
+            return MESSAGE_MODE_DIRECT, None
+
+        if message_mode == MESSAGE_MODE_PROPAGATION:
+            enabled_nodes = self.propagation_store.enabled_nodes()
+            return MESSAGE_MODE_PROPAGATION, enabled_nodes[0] if len(enabled_nodes) > 0 else None
+
+        raise ValueError(f"Unsupported LXMF message mode: {message_mode}")
+
+    def _queue_client_outbound_message(
+        self,
+        client_id: str,
+        contact_id: str,
+        message: dict[str, object],
+        destination_hash: str,
+    ) -> dict[str, object]:
+        local_message_id = str(message.get("id") or "")
+        content = str(message.get("content") or "")
+        delivery_method = str(message.get("delivery_method") or MESSAGE_MODE_DIRECT)
+        propagation_node_hash = str(message.get("propagation_node_hash") or "")
+        propagation_node_name = str(message.get("propagation_node_name") or "")
+
+        try:
+            if delivery_method == MESSAGE_MODE_PROPAGATION and propagation_node_hash == "":
+                raise RuntimeError("No enabled propagation nodes")
+
+            result = self.engine_supervisor.send_lxmf_message(
+                client_id,
+                destination_hash,
+                content,
+                local_message_id=local_message_id,
+                contact_id=contact_id,
+                delivery_method=delivery_method,
+                propagation_node_hash=propagation_node_hash,
+            )
+            message = self.client_contact_store.update_outbound_message(
+                client_id,
+                contact_id,
+                local_message_id,
+                {
+                    "delivery_method": delivery_method,
+                    "propagation_node_hash": propagation_node_hash,
+                    "propagation_node_name": propagation_node_name,
+                    "lxmf_message_id": str(result.get("message_id") or ""),
+                    "destination_hash": destination_hash,
+                    "error": "",
+                },
+                expected_state="sending",
+            ) or message
+            self.state.append_log(
+                "info",
+                "client",
+                (
+                    f"LXMF message queued: {client_id}/{contact_id}/"
+                    f"{result.get('message_id')} mode={delivery_method}"
+                ),
+            )
+        except Exception as exc:
+            message = self.client_contact_store.update_outbound_message(
+                client_id,
+                contact_id,
+                local_message_id,
+                {
+                    "state": "failed",
+                    "delivery_method": delivery_method,
+                    "propagation_node_hash": propagation_node_hash,
+                    "propagation_node_name": propagation_node_name,
+                    "destination_hash": destination_hash,
+                    "error": f"{type(exc).__name__}: {exc}",
+                },
+                expected_state="sending",
+            ) or message
+            self.state.append_log(
+                "error",
+                "client",
+                (
+                    f"LXMF message queue failed: {client_id}/{contact_id}: "
+                    f"{type(exc).__name__}: {exc}"
+                ),
+            )
+            self.state.notify_client_change()
+            raise
+
+        self.state.notify_client_change()
+        return {
+            "client_id": client_id,
+            "contact_id": contact_id,
+            "message": message,
+            "messages": self.client_contact_store.list_messages(client_id, contact_id),
+        }
     def repeat_client_message(
         self,
         client_id: str,
@@ -1234,7 +1384,11 @@ class ControllerApp:
             self._handle_lxmf_message_received(event.payload)
             return
 
-        if event.topic in ("lxmf.message_delivered", "lxmf.message_failed"):
+        if event.topic in (
+            "lxmf.message_delivered",
+            "lxmf.message_propagated",
+            "lxmf.message_failed",
+        ):
             self._handle_lxmf_outbound_state(event.topic, event.payload)
             return
 
@@ -1279,16 +1433,24 @@ class ControllerApp:
             self.state.append_log("error", "client", "Incomplete outbound LXMF state metadata")
             return
 
-        state = "delivered" if topic == "lxmf.message_delivered" else "failed"
+        if topic == "lxmf.message_delivered":
+            state = "delivered"
+        elif topic == "lxmf.message_propagated":
+            state = "propagated"
+        else:
+            state = "failed"
+
         message = self.client_contact_store.update_outbound_message(
             identity_id,
             contact_id,
             local_message_id,
             {
                 "state": state,
+                "delivery_method": str(payload.get("delivery_method") or ""),
+                "propagation_node_hash": str(payload.get("propagation_node_hash") or ""),
                 "lxmf_message_id": str(payload.get("message_id") or ""),
                 "destination_hash": str(payload.get("destination_hash") or ""),
-                "error": "" if state == "delivered" else "LXMF delivery failed",
+                "error": "" if state != "failed" else "LXMF delivery failed",
             },
         )
 
@@ -1301,12 +1463,14 @@ class ControllerApp:
             return
 
         self.state.append_log(
-            "info" if state == "delivered" else "error",
+            "info" if state != "failed" else "error",
             "client",
-            f"LXMF message {state}: {identity_id}/{contact_id}/{payload.get('message_id')}",
+            (
+                f"LXMF message {state}: {identity_id}/{contact_id}/"
+                f"{payload.get('message_id')}"
+            ),
         )
         self.state.notify_client_change()
-
     def _handle_lxmf_message_received(self, payload: dict[str, Any]) -> None:
         if self.client_contact_store is None:
             return

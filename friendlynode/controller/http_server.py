@@ -542,6 +542,10 @@ class ControllerHttpServer:
                     }
                     self._send_json(app.fetch_nomadnet_page(destination_hash, path, discovery_hints=discovery_hints))
                     return
+                if parsed.path == "/api/lxmf/settings":
+                    self._send_json(app.get_lxmf_settings())
+                    return
+
                 if parsed.path == "/api/propagation/nodes":
                     self._send_json(app.list_propagation_nodes())
                     return
@@ -748,6 +752,11 @@ class ControllerHttpServer:
                 if parsed.path == "/api/nomadnet/browser-state":
                     payload = self._read_json_body()
                     self._send_json(app.save_nomadnet_browser_state(payload))
+                    return
+
+                if parsed.path == "/api/lxmf/settings":
+                    payload = self._read_json_body()
+                    self._send_json(app.update_lxmf_settings(payload))
                     return
 
                 if parsed.path == "/api/propagation/nodes":

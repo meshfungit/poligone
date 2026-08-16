@@ -33,6 +33,10 @@ let clientPropertiesModalOpen = false;
 let propagationNodePropertiesState = null;
 let propagationNodes = [];
 let propagationNodesLoaded = false;
+let lxmfSettings = {
+  message_mode: "direct",
+};
+let lxmfSettingsLoaded = false;
 let contactModalState = null;
 let announceModalState = null;
 let clearMessagesState = null;
@@ -686,7 +690,10 @@ function renderClientPropertiesMenu() {
     clientPropertiesModalOpen = true;
 
     try {
-      await loadPropagationNodes();
+      await Promise.all([
+        loadLxmfSettings(),
+        loadPropagationNodes(),
+      ]);
     } catch (error) {
       appendUiError(error);
     }
@@ -708,6 +715,38 @@ function renderClientPropertiesModal() {
   const title = document.createElement("h2");
   title.textContent = "Properties";
   dialog.appendChild(title);
+
+  const messageModeField = document.createElement("label");
+  messageModeField.className = "rns-field";
+
+  const messageModeLabel = document.createElement("span");
+  messageModeLabel.textContent = "Message Mode";
+  messageModeField.appendChild(messageModeLabel);
+
+  const messageModeSelect = document.createElement("select");
+
+  for (const [value, label] of [
+    ["direct", "Direct"],
+    ["propagation", "Propagation"],
+  ]) {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = label;
+    option.selected = lxmfSettings.message_mode === value;
+    messageModeSelect.appendChild(option);
+  }
+
+  messageModeSelect.disabled = !lxmfSettingsLoaded;
+  messageModeSelect.onchange = () => setLxmfMessageMode(messageModeSelect.value);
+  messageModeField.appendChild(messageModeSelect);
+  dialog.appendChild(messageModeField);
+
+  const modeHint = document.createElement("div");
+  modeHint.className = "settings-hint";
+  modeHint.textContent = lxmfSettings.message_mode === "propagation"
+    ? "Propagation uses the first enabled node in the ordered list below."
+    : "Direct sends to the recipient LXMF delivery destination.";
+  dialog.appendChild(modeHint);
 
   const propagation = document.createElement("details");
   propagation.className = "settings-block propagation-properties";
@@ -857,6 +896,50 @@ function renderPropagationNodePropertiesModal() {
   dialog.appendChild(actions);
   overlay.appendChild(dialog);
   return overlay;
+}
+
+async function loadLxmfSettings() {
+  const response = await fetch("/api/lxmf/settings", {
+    method: "GET",
+    headers: {
+      Accept: "application/json",
+    },
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    throw new Error(`LXMF settings request failed: HTTP ${response.status}`);
+  }
+
+  lxmfSettings = await response.json();
+  lxmfSettingsLoaded = true;
+  return lxmfSettings;
+}
+
+async function setLxmfMessageMode(messageMode) {
+  try {
+    const response = await fetch("/api/lxmf/settings", {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        message_mode: String(messageMode || ""),
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`LXMF settings update failed: HTTP ${response.status}`);
+    }
+
+    lxmfSettings = await response.json();
+    lxmfSettingsLoaded = true;
+    render("Client");
+  } catch (error) {
+    appendUiError(error);
+    render("Logs");
+  }
 }
 
 async function loadPropagationNodes() {
@@ -4997,6 +5080,10 @@ function formatMessageState(state) {
     return "Delivered";
   }
 
+  if (value === "propagated") {
+    return "Propagated";
+  }
+
   if (value === "failed") {
     return "Fail";
   }
@@ -5325,6 +5412,9 @@ function renderMessagePropertiesModal() {
     ["State datetime", messagePropertiesState.state_datetime],
     ["Created at", messagePropertiesState.created_at],
     ["Delivery attempts", messagePropertiesState.delivery_attempts],
+    ["Delivery method", messagePropertiesState.delivery_method],
+    ["Propagation node", messagePropertiesState.propagation_node_name],
+    ["Propagation node hash", messagePropertiesState.propagation_node_hash],
     ["LXMF message id", messagePropertiesState.lxmf_message_id],
     ["Source hash", messagePropertiesState.source_hash],
     ["Destination hash", messagePropertiesState.destination_hash],
@@ -10029,7 +10119,10 @@ document.addEventListener("DOMContentLoaded", () => {
   fetchStatus()
     .then(() => {
       startClientUpdates();
-      loadPropagationNodes().catch((error) => {
+      Promise.all([
+        loadLxmfSettings(),
+        loadPropagationNodes(),
+      ]).catch((error) => {
         appendUiError(error);
       });
 

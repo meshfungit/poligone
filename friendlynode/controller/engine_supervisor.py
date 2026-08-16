@@ -92,6 +92,8 @@ class EngineSupervisor:
         local_message_id: str,
         contact_id: str,
         title: str = "",
+        delivery_method: str = "direct",
+        propagation_node_hash: str = "",
     ) -> dict[str, object]:
         if self.engine is None:
             raise RuntimeError("Engine is not running")
@@ -103,9 +105,9 @@ class EngineSupervisor:
             local_message_id=local_message_id,
             contact_id=contact_id,
             title=title,
+            delivery_method=delivery_method,
+            propagation_node_hash=propagation_node_hash,
         )
-
-
     def make_announce(
         self,
         *,
